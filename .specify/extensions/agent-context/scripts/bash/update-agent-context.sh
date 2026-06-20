@@ -26,13 +26,17 @@ if [[ ! -f "$EXT_CONFIG" ]]; then
   exit 0
 fi
 
-# Locate a suitable Python interpreter (python3, then python).
+# Locate a suitable Python interpreter.  Prefer `python` first because on
+# Windows `python3` is often a Microsoft Store stub that prints an install
+# prompt instead of running.  Verify each candidate actually reports
+# "Python 3" before using it.
 _python=""
-if command -v python3 >/dev/null 2>&1; then
-  _python="python3"
-elif command -v python >/dev/null 2>&1 && python --version 2>&1 | grep -q "^Python 3"; then
-  _python="python"
-fi
+for _cand in python python3; do
+  if command -v "$_cand" >/dev/null 2>&1 && "$_cand" --version 2>&1 | grep -q "^Python 3"; then
+    _python="$_cand"
+    break
+  fi
+done
 
 if [[ -z "$_python" ]]; then
   echo "agent-context: Python 3 not found on PATH; skipping update." >&2
@@ -84,6 +88,9 @@ fi
 
 _opts_lines=()
 while IFS= read -r _line || [[ -n "$_line" ]]; do
+  # Strip trailing CR — on Windows, Python's print() emits \r\n in text mode,
+  # so each parsed field ends up with a stray \r that breaks file paths.
+  _line="${_line%$'\r'}"
   _opts_lines+=("$_line")
 done < <(printf '%s\n' "$_raw_opts")
 if (( ${#_opts_lines[@]} < 3 )); then
