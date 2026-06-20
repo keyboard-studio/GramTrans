@@ -64,6 +64,24 @@ class SkipReason(enum.Enum):
     UNSUPPORTED_LCM_TYPE = "unsupported_lcm_type"
     BARE_BONES_MISSING_CLOSURE = "bare_bones_missing_closure"
     ALREADY_PRESENT_BY_GUID = "already_present_by_guid"  # FR-009 informational
+    INTERACTIVE_SKIP = "interactive_skip"  # Phase 2 (FR-204): user picked SKIP
+    UNMAPPED_WS_USER_CHOSE_SKIP = "unmapped_ws_user_chose_skip"  # Phase 2 (FR-211)
+
+
+class MergeResolution(enum.Enum):
+    """Phase 2 (FR-202) — per-field user resolution for a conflict prompt."""
+    TAKE_SOURCE = "take_source"
+    KEEP_TARGET = "keep_target"
+    MERGE = "merge"
+    SKIP = "skip"
+    EDIT_CUSTOM = "edit_custom"
+
+
+class WSChoice(enum.Enum):
+    """Phase 2 (FR-209) — user resolution for a writing-system mismatch."""
+    MAP = "map"
+    CREATE = "create"
+    SKIP = "skip"
 
 
 # ============================================================================
@@ -113,6 +131,11 @@ class Selection:
     pos_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — POS GUIDs
     enable_overwrite: bool = False  # Phase 1 (FR-101/FR-108): when True,
     # already-present-by-GUID items become PlannedOverwrites instead of skips.
+    interactive_merge: bool = False  # Phase 2 (FR-201): when True, per-field
+    # conflicts on overwrite-candidate objects raise a ConflictPrompt instead
+    # of falling through to FR-109 source-wins.
+    ws_mapping_choices: tuple = ()  # Phase 2 (FR-209): tuple[WSMappingChoice, ...]
+    # populated by the WSWizard before plan build.
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -126,6 +149,11 @@ class Selection:
         if self.pos_picks and self.categories.get(GrammarCategory.POS) is not True:
             raise ValueError(
                 "pos_picks non-empty requires categories[POS] to be True"
+            )
+        if self.interactive_merge and not self.enable_overwrite:
+            raise ValueError(
+                "interactive_merge=True requires enable_overwrite=True "
+                "(interactive merge only fires on overwrite candidates)"
             )
 
     def is_on(self, category: GrammarCategory) -> bool:
@@ -231,9 +259,150 @@ class RunPlan:
     skips: tuple = ()  # tuple[Skip, ...]
     identity_remap: dict = field(default_factory=dict)  # str -> str
     overwrites: tuple = ()  # tuple[PlannedOverwrite, ...] — Phase 1 (FR-101)
+    conflicts: tuple = ()  # tuple[ConflictPrompt, ...] — Phase 2 (FR-201)
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
+
+
+# ============================================================================
+# Phase 2 — Interactive Merge entities (E11–E16)
+# ============================================================================
+
+@dataclass(frozen=True)
+class MergeDecision:
+    """E11 — one user resolution for a single conflicted field."""
+    field_name: str
+    resolution: MergeResolution
+    left_value: object = None   # target's pre-overwrite value
+    right_value: object = None  # source's value
+    custom_value: object = None  # only set when resolution == EDIT_CUSTOM
+    prior_run_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.field_name:
+            raise ValueError("MergeDecision.field_name must be non-empty")
+        if self.resolution == MergeResolution.EDIT_CUSTOM:
+            if self.custom_value is None:
+                raise ValueError("EDIT_CUSTOM requires custom_value to be non-None")
+        else:
+            if self.custom_value is not None:
+                raise ValueError(
+                    f"custom_value must be None for resolution={self.resolution.value}"
+                )
+
+
+@dataclass(frozen=True)
+class MergeDecisionLog:
+    """E12 — ordered set of MergeDecisions for one target object.
+
+    Serialized into the residue tag's `merge=` segment as base64(json).
+    """
+    target_guid: str
+    decisions: tuple = ()  # tuple[MergeDecision, ...]
+
+    def __post_init__(self) -> None:
+        seen = set()
+        for d in self.decisions:
+            if d.field_name in seen:
+                raise ValueError(
+                    f"duplicate MergeDecision for field {d.field_name!r}"
+                )
+            seen.add(d.field_name)
+
+    def to_json(self) -> str:
+        import json
+        payload = {
+            "target_guid": self.target_guid,
+            "decisions": [
+                {
+                    "field_name": d.field_name,
+                    "resolution": d.resolution.value,
+                    "left_value": d.left_value,
+                    "right_value": d.right_value,
+                    "custom_value": d.custom_value,
+                    "prior_run_id": d.prior_run_id,
+                }
+                for d in self.decisions
+            ],
+        }
+        return json.dumps(payload, sort_keys=True, default=repr)
+
+    @classmethod
+    def from_json(cls, s: str) -> "MergeDecisionLog":
+        import json
+        data = json.loads(s)
+        decs = tuple(
+            MergeDecision(
+                field_name=d["field_name"],
+                resolution=MergeResolution(d["resolution"]),
+                left_value=d.get("left_value"),
+                right_value=d.get("right_value"),
+                custom_value=d.get("custom_value"),
+                prior_run_id=d.get("prior_run_id", ""),
+            )
+            for d in data["decisions"]
+        )
+        return cls(target_guid=data["target_guid"], decisions=decs)
+
+
+@dataclass(frozen=True)
+class ConflictPrompt:
+    """E13 — one pending per-field conflict surfaced during planning."""
+    target_guid: str
+    target_class_name: str
+    field_name: str
+    left_value: object = None
+    right_value: object = None
+    prior_decision: object = None  # Optional[MergeDecision]
+    merge_eligible: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.target_guid:
+            raise ValueError("ConflictPrompt.target_guid must be non-empty")
+        if not self.target_class_name:
+            raise ValueError("ConflictPrompt.target_class_name must be non-empty")
+        if not self.field_name:
+            raise ValueError("ConflictPrompt.field_name must be non-empty")
+
+
+@dataclass(frozen=True)
+class WSMismatch:
+    """E14 — one source-WS-not-in-target detected at wizard launch."""
+    source_ws_id: str
+    source_ws_kind: WSKind
+    target_ws_candidates: tuple = ()  # tuple[str, ...] similarity-sorted
+
+    def __post_init__(self) -> None:
+        if not self.source_ws_id:
+            raise ValueError("WSMismatch.source_ws_id must be non-empty")
+
+
+@dataclass(frozen=True)
+class WSMappingChoice:
+    """E15 — user resolution for one WSMismatch."""
+    source_ws_id: str
+    source_ws_kind: WSKind
+    choice: WSChoice
+    target_ws_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.choice == WSChoice.MAP:
+            if not self.target_ws_id:
+                raise ValueError("WSChoice.MAP requires target_ws_id")
+        else:
+            if self.target_ws_id:
+                raise ValueError(
+                    f"target_ws_id must be empty for choice={self.choice.value}"
+                )
+
+
+@dataclass(frozen=True)
+class InteractiveSession:
+    """E16 — user-interactive state for one Move run."""
+    ws_mapping_choices: tuple = ()  # tuple[WSMappingChoice, ...]
+    merge_decisions_by_guid: dict = field(default_factory=dict)  # str -> MergeDecisionLog
+    cancelled: bool = False
 
 
 # ============================================================================
@@ -246,6 +415,11 @@ class CategoryReport:
     skipped: int = 0
     closure_pulled_in: int = 0
     overwritten: int = 0  # Phase 1 (FR-110)
+    interactive_resolved: int = 0  # Phase 2 (FR-208): non-default user resolutions
+    interactive_skipped: int = 0   # Phase 2 (FR-204): SKIP resolutions
+    ws_mapped: int = 0             # Phase 2
+    ws_created: int = 0
+    ws_skipped: int = 0
 
 
 @dataclass(frozen=True)

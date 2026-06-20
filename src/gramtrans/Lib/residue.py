@@ -24,6 +24,7 @@ from typing import Optional
 _GT_TAG_LINE_MARKER = "[GT-Tag]: "
 _RUN_ID_PATTERN = re.compile(r"^GT-\d{8}-\d{6}$")
 _SNAP_PREFIX = "snap="
+_MERGE_PREFIX = "merge="
 
 
 # Carrier-A class names (research.md R7 — validated 2026-06-19).
@@ -62,6 +63,8 @@ class ImportResidueTag:
     prefix: str = "GT"
     snapshot_b64: Optional[str] = None  # FR-106: base64(json) of target's
     # pre-overwrite syncable props; absent on additive (Phase 0) runs.
+    merge_b64: Optional[str] = None  # Phase 2 (FR-206): base64(json) of the
+    # MergeDecisionLog for this object; absent on non-interactive runs.
 
     def __post_init__(self) -> None:
         if self.prefix != "GT":
@@ -84,10 +87,14 @@ class ImportResidueTag:
         return cls(run_id=run_id, source_project_name=source_project_name, timestamp=timestamp)
 
     def serialize(self) -> str:
-        base = f"{self.prefix}|{self.run_id}|{self.source_project_name}|{self.timestamp}"
+        parts = [
+            f"{self.prefix}|{self.run_id}|{self.source_project_name}|{self.timestamp}"
+        ]
         if self.snapshot_b64:
-            return f"{base}|{_SNAP_PREFIX}{self.snapshot_b64}"
-        return base
+            parts.append(f"{_SNAP_PREFIX}{self.snapshot_b64}")
+        if self.merge_b64:
+            parts.append(f"{_MERGE_PREFIX}{self.merge_b64}")
+        return "|".join(parts)
 
     def with_snapshot(self, props: dict) -> "ImportResidueTag":
         """FR-106: return a tag clone with `props` encoded as base64(json)
@@ -111,6 +118,33 @@ class ImportResidueTag:
         except (ValueError, json.JSONDecodeError):
             return None
 
+    def with_merge_log(self, log) -> "ImportResidueTag":
+        """Phase 2 (FR-206): return a tag clone with `log.to_json()` encoded
+        as base64 into merge_b64.  `log` is a MergeDecisionLog (typed
+        loosely to avoid an import cycle with models)."""
+        raw = log.to_json().encode("utf-8")
+        b64 = base64.b64encode(raw).decode("ascii")
+        return replace(self, merge_b64=b64)
+
+    def decode_merge_log(self):
+        """Recover the MergeDecisionLog from merge_b64, or None if absent /
+        corrupted.  FR-215: a corrupted tag returns None rather than raising
+        so callers fall back to fresh-prompt behaviour.
+        """
+        if not self.merge_b64:
+            return None
+        try:
+            raw = base64.b64decode(self.merge_b64.encode("ascii"))
+            s = raw.decode("utf-8")
+            # Lazy import to avoid cycle with models.py.
+            if __package__:
+                from .models import MergeDecisionLog
+            else:
+                from models import MergeDecisionLog
+            return MergeDecisionLog.from_json(s)
+        except (ValueError, json.JSONDecodeError, KeyError, TypeError):
+            return None
+
     @classmethod
     def parse(cls, s: Optional[str]) -> Optional["ImportResidueTag"]:
         """Recover an ImportResidueTag from either Carrier A (raw tag string)
@@ -127,19 +161,33 @@ class ImportResidueTag:
             lines = s.splitlines() or [s]
             line = lines[0].strip()
         parts = line.split("|")
-        if len(parts) < 4 or len(parts) > 5 or parts[0] != "GT":
+        # Phase 2: accept 4, 5, or 6 segments.  Optional segments 5+ are
+        # recognised by prefix, not column position; `snap=` MUST precede
+        # `merge=` if both are present.
+        if len(parts) < 4 or len(parts) > 6 or parts[0] != "GT":
             return None
         if not _RUN_ID_PATTERN.match(parts[1]):
             return None
         snapshot_b64 = None
-        if len(parts) == 5:
-            if not parts[4].startswith(_SNAP_PREFIX):
-                return None
-            snapshot_b64 = parts[4][len(_SNAP_PREFIX):] or None
+        merge_b64 = None
+        seen_merge = False
+        for seg in parts[4:]:
+            if seg.startswith(_SNAP_PREFIX):
+                if snapshot_b64 is not None or seen_merge:
+                    return None  # snap= must appear at most once, before merge=
+                snapshot_b64 = seg[len(_SNAP_PREFIX):] or None
+            elif seg.startswith(_MERGE_PREFIX):
+                if merge_b64 is not None:
+                    return None  # merge= must appear at most once
+                seen_merge = True
+                merge_b64 = seg[len(_MERGE_PREFIX):] or None
+            else:
+                return None  # unknown segment prefix
         try:
             return cls(prefix="GT", run_id=parts[1],
                        source_project_name=parts[2], timestamp=parts[3],
-                       snapshot_b64=snapshot_b64)
+                       snapshot_b64=snapshot_b64,
+                       merge_b64=merge_b64)
         except ValueError:
             return None
 
