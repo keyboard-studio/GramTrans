@@ -161,15 +161,32 @@ def apply_carrier_a(obj, ws, tag: ImportResidueTag) -> bool:
     system `ws`. `obj` MUST be a concrete-typed LCM object exposing
     `LiftResidue` (Lex*, MoForm, IMo*Msa classes).
 
-    Returns True if the write succeeded, False if `LiftResidue` was None
-    (uninitialized multistring on a freshly-created object) — callers can
-    fall through to Carrier B in that case.
+    Handles five observable LiftResidue shapes:
+    - attribute absent on object   -> returns False (let Carrier B handle)
+    - attribute is None            -> returns False (let Carrier B handle)
+    - attribute is str (empty)     -> setattr path, returns True
+    - attribute is str (populated) -> setattr overwrites, returns True
+    - attribute is ITsMultiString  -> set_String path, returns True
+
+    In LCM 9.x, ILexEntry / IMoAffixAllomorph / IMoInflAffMsa expose
+    LiftResidue as a plain Unicode single-string, not an ITsMultiString.
+    The old code called lift.set_String() unconditionally, which silently
+    failed (AttributeError swallowed) on those types.  The fix checks for
+    set_String before calling it, and falls back to setattr otherwise.
+
+    Returns True if the write succeeded, False if LiftResidue was absent
+    or None (uninitialized) -- callers can fall through to Carrier B in that
+    case.
     """
-    from SIL.LCModel.Core.Text import TsStringUtils  # lazy
-    lift = getattr(obj, "LiftResidue", None)
-    if lift is None:
+    _MISSING = object()
+    lift = getattr(obj, "LiftResidue", _MISSING)
+    if lift is _MISSING or lift is None:
         return False
-    lift.set_String(ws, TsStringUtils.MakeString(tag.serialize(), ws))
+    if hasattr(lift, "set_String"):
+        from SIL.LCModel.Core.Text import TsStringUtils  # lazy -- only when needed
+        lift.set_String(ws, TsStringUtils.MakeString(tag.serialize(), ws))
+    else:
+        setattr(obj, "LiftResidue", tag.serialize())
     return True
 
 

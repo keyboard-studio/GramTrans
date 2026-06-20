@@ -100,3 +100,107 @@ def test_apply_carrier_b_preserves_existing_description_prose() -> None:
     assert written_value == expected, (
         f"Expected exact value {expected!r}, got {written_value!r}"
     )
+
+
+# ===========================================================================
+# T025: apply_carrier_a -- five observable LiftResidue shapes (FR-106 fix)
+# ===========================================================================
+# TsStringUtils.MakeString is monkeypatched on the residue module so tests
+# run without pythonnet / LCM on the path.
+# ===========================================================================
+
+from gramtrans.Lib.residue import apply_carrier_a
+import gramtrans.Lib.residue as _residue_mod
+
+
+@pytest.fixture()
+def patch_ts(monkeypatch):
+    """Inject fake SIL.LCM.Core.Text.TsStringUtils so tests run without pythonnet."""
+
+    class _FakeTsStringUtils:
+        @staticmethod
+        def MakeString(text, ws):
+            return text  # identity -- val_arg == TAG.serialize() in assertions
+
+    import sys, types
+    fake_pkg    = types.ModuleType("SIL")
+    fake_lcmodel = types.ModuleType("SIL.LCModel")
+    fake_core   = types.ModuleType("SIL.LCModel.Core")
+    fake_text   = types.ModuleType("SIL.LCModel.Core.Text")
+    fake_text.TsStringUtils = _FakeTsStringUtils
+    fake_core.Text    = fake_text
+    fake_lcmodel.Core = fake_core
+    fake_pkg.LCModel  = fake_lcmodel
+    monkeypatch.setitem(sys.modules, "SIL",                    fake_pkg)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel",            fake_lcmodel)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel.Core",       fake_core)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel.Core.Text",  fake_text)
+    yield _FakeTsStringUtils
+
+
+# Shape 1: attribute absent -> False, no write
+def test_carrier_a_absent_attribute_returns_false(patch_ts):
+    """LiftResidue absent: returns False without touching the object."""
+    class _NoLift:
+        pass
+    obj = _NoLift()
+    result = apply_carrier_a(obj, WS, TAG)
+    assert result is False
+    assert not hasattr(obj, "LiftResidue")
+
+
+# Shape 2: attribute is None -> False, no write
+def test_carrier_a_none_attribute_returns_false(patch_ts):
+    """LiftResidue=None: returns False (uninitialized multistring path)."""
+    class _NullLift:
+        LiftResidue = None
+    obj = _NullLift()
+    result = apply_carrier_a(obj, WS, TAG)
+    assert result is False
+    assert obj.LiftResidue is None  # unchanged
+
+
+# Shape 3: attribute is empty str -> setattr path, returns True
+def test_carrier_a_empty_str_uses_setattr(patch_ts):
+    """LiftResidue='' (plain Unicode): setattr path writes serialized tag."""
+    class _StrLift:
+        LiftResidue = ""
+    obj = _StrLift()
+    result = apply_carrier_a(obj, WS, TAG)
+    assert result is True
+    assert obj.LiftResidue == TAG.serialize()
+
+
+# Shape 4: attribute is populated str -> setattr overwrites, returns True
+def test_carrier_a_populated_str_overwrites(patch_ts):
+    """LiftResidue already has a value (plain Unicode): overwritten, returns True."""
+    class _StrLift:
+        LiftResidue = "GT|GT-20200101-000000|old-proj|2020-01-01T00:00:00"
+    obj = _StrLift()
+    result = apply_carrier_a(obj, WS, TAG)
+    assert result is True
+    assert obj.LiftResidue == TAG.serialize()
+
+
+# Shape 5: attribute is ITsMultiString (has set_String) -> set_String path, returns True
+def test_carrier_a_multistring_calls_set_string(patch_ts):
+    """LiftResidue is ITsMultiString: set_String is called with MakeString output."""
+    class _FakeMultiStringLift:
+        def __init__(self):
+            self.calls = []
+
+        def set_String(self, ws, value):
+            self.calls.append((ws, value))
+
+    class _MultiLift:
+        def __init__(self):
+            self.LiftResidue = _FakeMultiStringLift()
+
+    obj = _MultiLift()
+    result = apply_carrier_a(obj, WS, TAG)
+    assert result is True
+    assert len(obj.LiftResidue.calls) == 1
+    ws_arg, val_arg = obj.LiftResidue.calls[0]
+    assert ws_arg == WS
+    # patch_ts.MakeString is identity, so val_arg == TAG.serialize()
+    assert val_arg == TAG.serialize()
