@@ -295,6 +295,29 @@ def _filter(actions, category: GrammarCategory) -> Iterable[PlannedAction]:
     return (a for a in actions if a.category == category)
 
 
+def _dedupe_custom_fields(src_props, tgt_pre_props):
+    """FR-107: drop custom-field keys from `src_props` whose value already
+    matches the target's pre-overwrite value.  Keys not in `tgt_pre_props`
+    are left in `src_props` (overwrite path).  Keys present in
+    `tgt_pre_props` but not in `src_props` are preserved by virtue of
+    ApplySyncableProperties only touching keys it receives.
+
+    Custom fields are identified by name prefix "Custom" (flexlibs2 emits
+    them as "Custom_<FieldName>" in the syncable props dict).  Non-custom
+    properties pass through unchanged so FR-109 (source wins) still applies.
+
+    Returns a new dict; does not mutate inputs.
+    """
+    if not isinstance(src_props, dict) or not isinstance(tgt_pre_props, dict):
+        return src_props
+    out = {}
+    for k, v in src_props.items():
+        if str(k).startswith("Custom") and k in tgt_pre_props and tgt_pre_props[k] == v:
+            continue  # identical custom field -- skip the no-op write
+        out[k] = v
+    return out
+
+
 def _first_pos_guid(plan: RunPlan):
     for a in plan.actions:
         if a.category == GrammarCategory.POS:
@@ -797,7 +820,9 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             report_sink.Warning(f"  [OW] POS {src_guid[:8]} not found in source or target")
             return
         tgt_pre_props = target.POS.GetSyncableProperties(tgt_obj)
-        src_props = source.POS.GetSyncableProperties(src_obj)
+        src_props = _dedupe_custom_fields(
+            source.POS.GetSyncableProperties(src_obj), tgt_pre_props
+        )
         target.POS.ApplySyncableProperties(tgt_obj, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
@@ -881,7 +906,9 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             report_sink.Warning(f"  [OW] Source LexEntry {src_guid[:8]} vanished")
             return
         tgt_pre_props = target.LexEntry.GetSyncableProperties(tgt_entry)
-        src_props = source.LexEntry.GetSyncableProperties(src_entry)
+        src_props = _dedupe_custom_fields(
+            source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
+        )
         target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
@@ -928,7 +955,9 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             report_sink.Warning(f"  [OW] Source LexSense {src_guid[:8]} vanished")
             return
         tgt_pre_props = target.Senses.GetSyncableProperties(tgt_sense)
-        src_props = source.Senses.GetSyncableProperties(src_sense)
+        src_props = _dedupe_custom_fields(
+            source.Senses.GetSyncableProperties(src_sense), tgt_pre_props
+        )
         target.Senses.ApplySyncableProperties(tgt_sense, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_sense, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
@@ -1039,7 +1068,9 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                     break
         tgt_pre_props = target.Allomorphs.GetSyncableProperties(tgt_allo)
         if src_allo is not None:
-            src_props = source.Allomorphs.GetSyncableProperties(src_allo)
+            src_props = _dedupe_custom_fields(
+                source.Allomorphs.GetSyncableProperties(src_allo), tgt_pre_props
+            )
             target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_allo, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
