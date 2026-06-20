@@ -796,10 +796,11 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_obj is None or tgt_obj is None:
             report_sink.Warning(f"  [OW] POS {src_guid[:8]} not found in source or target")
             return
+        tgt_pre_props = target.POS.GetSyncableProperties(tgt_obj)
         src_props = source.POS.GetSyncableProperties(src_obj)
         target.POS.ApplySyncableProperties(tgt_obj, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_obj, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
         return
 
@@ -824,10 +825,11 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if tgt_tpl is None:
             report_sink.Warning(f"  [OW] Template {tgt_guid[:8]} not in target")
             return
+        tgt_pre_props = target.MorphRules.GetSyncableProperties(tgt_tpl)
         src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
         target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_tpl, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_tpl, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  Template overwritten  guid={src_guid}")
         return
 
@@ -878,10 +880,11 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_entry is None:
             report_sink.Warning(f"  [OW] Source LexEntry {src_guid[:8]} vanished")
             return
+        tgt_pre_props = target.LexEntry.GetSyncableProperties(tgt_entry)
         src_props = source.LexEntry.GetSyncableProperties(src_entry)
         target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_entry, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  LexEntry overwritten  guid={src_guid}")
         return
 
@@ -924,10 +927,11 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_sense is None:
             report_sink.Warning(f"  [OW] Source LexSense {src_guid[:8]} vanished")
             return
+        tgt_pre_props = target.Senses.GetSyncableProperties(tgt_sense)
         src_props = source.Senses.GetSyncableProperties(src_sense)
         target.Senses.ApplySyncableProperties(tgt_sense, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_sense, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_sense, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
         return
 
@@ -967,6 +971,13 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 if str(ICmObject(smsa).Guid).lower() == src_guid:
                     src_msa = smsa
                     break
+        # Pre-overwrite snapshot: target's current SlotsRC + PartOfSpeechRA
+        tgt_pre_props = {
+            "slots": sorted(str(ICmObject(sl).Guid).lower()
+                            for sl in IMoInflAffMsa(tgt_msa).SlotsRC),
+            "pos": (str(ICmObject(IMoInflAffMsa(tgt_msa).PartOfSpeechRA).Guid).lower()
+                    if IMoInflAffMsa(tgt_msa).PartOfSpeechRA is not None else None),
+        }
         if src_msa is not None:
             src_ia = IMoInflAffMsa(src_msa)
             new_ia = IMoInflAffMsa(tgt_msa)
@@ -988,7 +999,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                         if tgt_slot is not None:
                             new_ia.SlotsRC.Add(tgt_slot)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_msa, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_msa, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return
 
@@ -1026,11 +1037,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 if _guid_str(_unwrap(sallo)) == src_guid:
                     src_allo = _unwrap(sallo)
                     break
+        tgt_pre_props = target.Allomorphs.GetSyncableProperties(tgt_allo)
         if src_allo is not None:
             src_props = source.Allomorphs.GetSyncableProperties(src_allo)
             target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_allo, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_allo, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return
 
@@ -1047,6 +1059,11 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                     break
         except AttributeError:
             pass
+        tgt_pre_props = {}
+        try:
+            tgt_pre_props = target.Environments.GetSyncableProperties(tgt_env)
+        except AttributeError:
+            pass
         if src_env is not None:
             try:
                 src_props = source.Environments.GetSyncableProperties(src_env)
@@ -1054,7 +1071,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             except AttributeError:
                 pass
         cache = getattr(target, "Cache")
-        apply_residue(tgt_env, cache.DefaultAnalWs, tag)
+        apply_residue(tgt_env, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  PhEnvironment overwritten  guid={src_guid}")
         return
 

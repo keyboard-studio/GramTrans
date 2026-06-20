@@ -74,3 +74,47 @@ def test_carrier_b_picks_last_marker_when_multiple_runs_present() -> None:
     )
     parsed = ImportResidueTag.parse(value)
     assert parsed == VALID
+
+
+# ============================================================================
+# FR-106: pre-overwrite snapshot in residue
+# ============================================================================
+
+def test_with_snapshot_round_trip() -> None:
+    snap = {"name": "old", "abbr": "OLD", "n": 7}
+    tagged = VALID.with_snapshot(snap)
+    assert tagged.snapshot_b64 is not None
+    parsed = ImportResidueTag.parse(tagged.serialize())
+    assert parsed == tagged
+    assert parsed.decode_snapshot() == snap
+
+
+def test_with_snapshot_serialize_appends_snap_segment() -> None:
+    tagged = VALID.with_snapshot({"k": "v"})
+    s = tagged.serialize()
+    assert s.startswith("GT|GT-20260619-140000|Ejagham Mini|2026-06-19T14:00:00|snap=")
+    assert s.count("|") == 4
+
+
+def test_no_snapshot_serializes_to_4_segments() -> None:
+    assert VALID.snapshot_b64 is None
+    assert VALID.serialize().count("|") == 3
+
+
+def test_parse_rejects_malformed_snap_segment() -> None:
+    bad = "GT|GT-20260619-140000|Ejagham Mini|2026-06-19T14:00:00|notsnap=zzz"
+    assert ImportResidueTag.parse(bad) is None
+
+
+def test_decode_snapshot_returns_none_without_snapshot() -> None:
+    assert VALID.decode_snapshot() is None
+
+
+def test_with_snapshot_handles_unserializable_values() -> None:
+    class _NotJson:
+        def __repr__(self) -> str:
+            return "<NotJson>"
+    tagged = VALID.with_snapshot({"obj": _NotJson()})
+    assert tagged.snapshot_b64 is not None
+    decoded = tagged.decode_snapshot()
+    assert decoded == {"obj": "<NotJson>"}

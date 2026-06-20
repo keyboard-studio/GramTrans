@@ -13,14 +13,17 @@ Tag wire format: `GT|<run_id>|<source_project_name>|<iso_timestamp>`.
 """
 from __future__ import annotations
 
+import base64
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Optional
 
 
 _GT_TAG_LINE_MARKER = "[GT-Tag]: "
 _RUN_ID_PATTERN = re.compile(r"^GT-\d{8}-\d{6}$")
+_SNAP_PREFIX = "snap="
 
 
 # Carrier-A class names (research.md R7 — validated 2026-06-19).
@@ -57,6 +60,8 @@ class ImportResidueTag:
     source_project_name: str
     timestamp: str
     prefix: str = "GT"
+    snapshot_b64: Optional[str] = None  # FR-106: base64(json) of target's
+    # pre-overwrite syncable props; absent on additive (Phase 0) runs.
 
     def __post_init__(self) -> None:
         if self.prefix != "GT":
@@ -79,7 +84,32 @@ class ImportResidueTag:
         return cls(run_id=run_id, source_project_name=source_project_name, timestamp=timestamp)
 
     def serialize(self) -> str:
-        return f"{self.prefix}|{self.run_id}|{self.source_project_name}|{self.timestamp}"
+        base = f"{self.prefix}|{self.run_id}|{self.source_project_name}|{self.timestamp}"
+        if self.snapshot_b64:
+            return f"{base}|{_SNAP_PREFIX}{self.snapshot_b64}"
+        return base
+
+    def with_snapshot(self, props: dict) -> "ImportResidueTag":
+        """FR-106: return a tag clone with `props` encoded as base64(json)
+        into snapshot_b64. JSON serialization is lossy — non-stringifiable
+        values are coerced to repr() so the snapshot is best-effort audit
+        trail rather than a reversible undo."""
+        try:
+            raw = json.dumps(props, default=repr, sort_keys=True).encode("utf-8")
+        except (TypeError, ValueError):
+            raw = json.dumps({"_snapshot_error": "unserializable_props"}).encode("utf-8")
+        b64 = base64.b64encode(raw).decode("ascii")
+        return replace(self, snapshot_b64=b64)
+
+    def decode_snapshot(self) -> Optional[dict]:
+        """Recover the snapshot dict from snapshot_b64, or None if absent."""
+        if not self.snapshot_b64:
+            return None
+        try:
+            raw = base64.b64decode(self.snapshot_b64.encode("ascii"))
+            return json.loads(raw.decode("utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            return None
 
     @classmethod
     def parse(cls, s: Optional[str]) -> Optional["ImportResidueTag"]:
@@ -97,13 +127,19 @@ class ImportResidueTag:
             lines = s.splitlines() or [s]
             line = lines[0].strip()
         parts = line.split("|")
-        if len(parts) != 4 or parts[0] != "GT":
+        if len(parts) < 4 or len(parts) > 5 or parts[0] != "GT":
             return None
         if not _RUN_ID_PATTERN.match(parts[1]):
             return None
+        snapshot_b64 = None
+        if len(parts) == 5:
+            if not parts[4].startswith(_SNAP_PREFIX):
+                return None
+            snapshot_b64 = parts[4][len(_SNAP_PREFIX):] or None
         try:
             return cls(prefix="GT", run_id=parts[1],
-                       source_project_name=parts[2], timestamp=parts[3])
+                       source_project_name=parts[2], timestamp=parts[3],
+                       snapshot_b64=snapshot_b64)
         except ValueError:
             return None
 
