@@ -553,12 +553,23 @@ def _plan_layer3_verb_affixes_inner(
                         continue
                     seen_env_guids.add(env_guid)
                     if _target_has_environment_guid(target, env_guid):
-                        skips.append(Skip(
-                            category=GrammarCategory.PH_ENVIRONMENT,
-                            source_guid=env_guid,
-                            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                            detail="PhEnvironment already present in target by GUID",
-                        ))
+                        if selection.enable_overwrite:
+                            overwrites.append(PlannedOverwrite(
+                                category=GrammarCategory.PH_ENVIRONMENT,
+                                source_guid=env_guid,
+                                target_guid=env_guid,
+                                summary="PhEnvironment overwrite (referenced by allomorph(s))",
+                                match_via="guid",
+                                pulled_in_by=(allo_guid,),
+                                owner_guid="",
+                            ))
+                        else:
+                            skips.append(Skip(
+                                category=GrammarCategory.PH_ENVIRONMENT,
+                                source_guid=env_guid,
+                                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                                detail="PhEnvironment already present in target by GUID",
+                            ))
                     else:
                         actions.append(PlannedAction(
                             category=GrammarCategory.PH_ENVIRONMENT,
@@ -622,12 +633,23 @@ def _plan_layer3_verb_affixes_inner(
                 # existing object instead of trying to Create a duplicate
                 # GUID (which LCM rejects).
                 if _target_has_environment_guid(target, env_guid):
-                    skips.append(Skip(
-                        category=GrammarCategory.PH_ENVIRONMENT,
-                        source_guid=env_guid,
-                        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                        detail=f"PhEnvironment already present in target by GUID",
-                    ))
+                    if selection.enable_overwrite:
+                        overwrites.append(PlannedOverwrite(
+                            category=GrammarCategory.PH_ENVIRONMENT,
+                            source_guid=env_guid,
+                            target_guid=env_guid,
+                            summary=f"PhEnvironment overwrite (referenced by allomorph(s))",
+                            match_via="guid",
+                            pulled_in_by=(allo_guid,),
+                            owner_guid="",
+                        ))
+                    else:
+                        skips.append(Skip(
+                            category=GrammarCategory.PH_ENVIRONMENT,
+                            source_guid=env_guid,
+                            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                            detail=f"PhEnvironment already present in target by GUID",
+                        ))
                 else:
                     actions.append(PlannedAction(
                         category=GrammarCategory.PH_ENVIRONMENT,

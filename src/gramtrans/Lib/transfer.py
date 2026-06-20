@@ -440,15 +440,16 @@ def _execute_layer3(
     Carrier B (Description-append) on PhEnvironment.
     """
     # Quick exits.
-    has_layer3 = any(
-        a.category in (
-            GrammarCategory.ENTRY,
-            GrammarCategory.SENSE,
-            GrammarCategory.MSA,
-            GrammarCategory.ALLOMORPH,
-            GrammarCategory.PH_ENVIRONMENT,
-        )
-        for a in plan.actions
+    layer3_cats = (
+        GrammarCategory.ENTRY,
+        GrammarCategory.SENSE,
+        GrammarCategory.MSA,
+        GrammarCategory.ALLOMORPH,
+        GrammarCategory.PH_ENVIRONMENT,
+    )
+    has_layer3 = (
+        any(a.category in layer3_cats for a in plan.actions)
+        or any(o.category in layer3_cats for o in getattr(plan, "overwrites", ()))
     )
     if not has_layer3:
         return
@@ -487,6 +488,12 @@ def _execute_layer3(
         if existing is not None:
             env_guid_to_target[skip.source_guid] = existing
             report_sink.Info(f"  PhEnvironment reused (already in target)  guid={skip.source_guid}")
+    for ow in getattr(plan, "overwrites", ()):
+        if ow.category != GrammarCategory.PH_ENVIRONMENT:
+            continue
+        existing = _find_target_env_by_guid(target, ow.target_guid)
+        if existing is not None:
+            env_guid_to_target[ow.source_guid] = existing
 
     # Map source slot GUIDs to target slot objects (Layer 2 created them).
     target_slot_by_guid = {}
@@ -1027,7 +1034,31 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return
 
+    if cat == GrammarCategory.PH_ENVIRONMENT:
+        tgt_env = _find_target_env_by_guid(target, tgt_guid)
+        if tgt_env is None:
+            report_sink.Warning(f"  [OW] PhEnvironment {tgt_guid[:8]} not in target")
+            return
+        src_env = None
+        try:
+            for e in source.Environments.GetAll():
+                if _guid_str(_unwrap(e)) == src_guid:
+                    src_env = _unwrap(e)
+                    break
+        except AttributeError:
+            pass
+        if src_env is not None:
+            try:
+                src_props = source.Environments.GetSyncableProperties(src_env)
+                target.Environments.ApplySyncableProperties(tgt_env, src_props)
+            except AttributeError:
+                pass
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_env, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  PhEnvironment overwritten  guid={src_guid}")
+        return
+
     # For other categories, Phase 1 just logs and skips the apply — the
     # extension lands as categories.py exposes ApplySyncableProperties for
     # each. The residue tag is still applied below for audit.
-    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.3 will extend)  guid={src_guid}")
+    report_sink.Info(f"  [OW] {cat.value} overwrite no-op  guid={src_guid}")
