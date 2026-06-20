@@ -413,6 +413,21 @@ def _plan_layer3_verb_affixes_inner(
 
     seen_env_guids = set()
 
+    # Build a GUID → target-entry index once for the duration of this walk
+    # (Phase 1 overwrite path uses it for direct-GUID lookup of entries/senses;
+    # they're factory-created with Guid preserved, so target.LexEntry.GetAll
+    # contains them under the source GUIDs).
+    target_entry_index = None  # lazily built when enable_overwrite is True
+
+    def _target_has_entry_guid(target, guid: str) -> bool:
+        nonlocal target_entry_index
+        if target_entry_index is None:
+            target_entry_index = {}
+            if hasattr(target, "LexEntry"):
+                for te in target.LexEntry.GetAll():
+                    target_entry_index[_guid_str(_unwrap(te))] = te
+        return guid in target_entry_index
+
     for entry in source.LexEntry.GetAll():
         entry_qualifies = False
         sense_actions = []
@@ -438,7 +453,86 @@ def _plan_layer3_verb_affixes_inner(
         entry_guid = _guid_str(entry)
         entry_hw = source.LexEntry.GetHeadword(entry)
 
-        # Entry, sense, MSA actions
+        # Phase 1 (FR-101/108): if enable_overwrite is set AND the entry's
+        # GUID already exists in the target, emit a PlannedOverwrite instead
+        # of an ADD. Senses are owned by entries; since entry GUIDs are
+        # factory-preserved in Phase 0, an entry already-in-target implies
+        # its senses are too (we promote both to overwrites in lockstep).
+        entry_is_overwrite = (
+            selection.enable_overwrite
+            and overwrites is not None
+            and _target_has_entry_guid(target, entry_guid)
+        )
+
+        if entry_is_overwrite:
+            overwrites.append(PlannedOverwrite(
+                category=GrammarCategory.ENTRY,
+                source_guid=entry_guid,
+                target_guid=entry_guid,
+                summary=f"LexEntry {entry_hw!r}",
+                match_via="guid",
+                pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY) else (src_verb_guid,),
+                owner_guid="",  # LexEntries are LexDb-owned; no parent ref needed
+            ))
+            for _sense, sense_guid in sense_actions:
+                overwrites.append(PlannedOverwrite(
+                    category=GrammarCategory.SENSE,
+                    source_guid=sense_guid,
+                    target_guid=sense_guid,
+                    summary=f"Sense of {entry_hw!r}",
+                    match_via="guid",
+                    pulled_in_by=(entry_guid,),
+                    owner_guid=entry_guid,
+                ))
+            # MSAs and Allomorphs continue as adds (their GUIDs were
+            # re-assigned in Phase 0 via factory.Create() without Guid;
+            # fingerprint matching for them is Phase 1.2).
+            for _msa, msa_guid, sense_guid in msa_actions:
+                actions.append(PlannedAction(
+                    category=GrammarCategory.MSA,
+                    source_guid=msa_guid,
+                    intended_target_guid=msa_guid,
+                    summary=f"InflAffMsa for {entry_hw!r}",
+                    pulled_in_by=(sense_guid,),
+                ))
+            # Allomorphs handled in the loop below.
+            for allo in source.Allomorphs.GetAll(entry):
+                allo_obj = _unwrap(allo)
+                allo_guid = _guid_str(allo_obj)
+                actions.append(PlannedAction(
+                    category=GrammarCategory.ALLOMORPH,
+                    source_guid=allo_guid,
+                    intended_target_guid=allo_guid,
+                    summary=f"Allomorph of {entry_hw!r}",
+                    pulled_in_by=(entry_guid,),
+                ))
+                envs = source.Allomorphs.GetPhoneEnv(allo)
+                if envs is None:
+                    continue
+                for env in envs:
+                    env_obj = _unwrap(env)
+                    env_guid = _guid_str(env_obj)
+                    if env_guid in seen_env_guids:
+                        continue
+                    seen_env_guids.add(env_guid)
+                    if _target_has_environment_guid(target, env_guid):
+                        skips.append(Skip(
+                            category=GrammarCategory.PH_ENVIRONMENT,
+                            source_guid=env_guid,
+                            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                            detail="PhEnvironment already present in target by GUID",
+                        ))
+                    else:
+                        actions.append(PlannedAction(
+                            category=GrammarCategory.PH_ENVIRONMENT,
+                            source_guid=env_guid,
+                            intended_target_guid=env_guid,
+                            summary="PhEnvironment referenced by allomorph(s)",
+                            pulled_in_by=(allo_guid,),
+                        ))
+            continue  # skip the Phase 0 add path below for this entry
+
+        # Entry, sense, MSA actions (Phase 0 path — entry not in target)
         actions.append(PlannedAction(
             category=GrammarCategory.ENTRY,
             source_guid=entry_guid,

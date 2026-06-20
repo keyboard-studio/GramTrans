@@ -852,7 +852,79 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
         return
 
+    if cat == GrammarCategory.ENTRY:
+        from SIL.LCModel import ICmObject  # lazy
+        tgt_entry = None
+        for te in target.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(te)).Guid).lower() == tgt_guid:
+                tgt_entry = _unwrap(te)
+                break
+        if tgt_entry is None:
+            report_sink.Warning(f"  [OW] LexEntry {tgt_guid[:8]} not in target")
+            return
+        # Find the source entry to read its syncable properties.
+        src_entry = None
+        for se in source.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(se)).Guid).lower() == src_guid:
+                src_entry = _unwrap(se)
+                break
+        if src_entry is None:
+            report_sink.Warning(f"  [OW] Source LexEntry {src_guid[:8]} vanished")
+            return
+        src_props = source.LexEntry.GetSyncableProperties(src_entry)
+        target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_entry, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  LexEntry overwritten  guid={src_guid}")
+        return
+
+    if cat == GrammarCategory.SENSE:
+        # owner_guid is the parent entry GUID; look up the entry first,
+        # then iterate its senses.
+        from SIL.LCModel import ICmObject  # lazy
+        owner_entry_guid = getattr(overwrite, "owner_guid", "")
+        if not owner_entry_guid:
+            report_sink.Warning(f"  [OW] Sense {src_guid[:8]} has no owner entry reference")
+            return
+        tgt_entry = None
+        for te in target.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(te)).Guid).lower() == owner_entry_guid:
+                tgt_entry = _unwrap(te)
+                break
+        if tgt_entry is None:
+            report_sink.Warning(f"  [OW] Sense owner entry {owner_entry_guid[:8]} not in target")
+            return
+        tgt_sense = None
+        for s in target.LexEntry.GetSenses(tgt_entry):
+            if str(ICmObject(_unwrap(s)).Guid).lower() == tgt_guid:
+                tgt_sense = _unwrap(s)
+                break
+        if tgt_sense is None:
+            report_sink.Warning(f"  [OW] LexSense {tgt_guid[:8]} not in target")
+            return
+        # Source-side lookup
+        src_sense = None
+        src_entry = None
+        for se in source.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(se)).Guid).lower() == owner_entry_guid:
+                src_entry = _unwrap(se)
+                break
+        if src_entry is not None:
+            for s in source.LexEntry.GetSenses(src_entry):
+                if str(ICmObject(_unwrap(s)).Guid).lower() == src_guid:
+                    src_sense = _unwrap(s)
+                    break
+        if src_sense is None:
+            report_sink.Warning(f"  [OW] Source LexSense {src_guid[:8]} vanished")
+            return
+        src_props = source.Senses.GetSyncableProperties(src_sense)
+        target.Senses.ApplySyncableProperties(tgt_sense, src_props)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_sense, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
+        return
+
     # For other categories, Phase 1 just logs and skips the apply — the
     # extension lands as categories.py exposes ApplySyncableProperties for
     # each. The residue tag is still applied below for audit.
-    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.1 will extend)  guid={src_guid}")
+    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.2 will extend)  guid={src_guid}")
