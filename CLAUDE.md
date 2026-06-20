@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at D:\Github\_Projects\_LEX\GramTrans\specs\002-phase1-overwrite\plan.md
+at D:\Github\_Projects\_LEX\GramTrans\specs\003-phase2-interactive-merge\plan.md
 <!-- SPECKIT END -->
 
 ## flexlibs2 fork dependency
