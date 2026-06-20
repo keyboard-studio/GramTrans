@@ -63,12 +63,17 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -
         a.source_guid for a in plan.actions if a.pulled_in_by
     )
 
-    # Execute the verb-vertical slice in dependency order: POS → Templates
-    # → Slots. Subsequent tasks will extend this with the remaining
-    # FR-004 categories. Mid-run exceptions bubble up to the FlexTools
-    # runner's UOW, which rolls back the entire transaction (R10).
-    _execute_verb_vertical(plan, source, target, report_sink, tag, pulled_in_guids)
-    _execute_layer3(plan, source, target, report_sink, tag)
+    # Find every POS the plan touches (as action or skip) and execute its
+    # closure: POS → Templates → Slots → LexEntries(MSA-points-at-POS) →
+    # Senses → MSAs → Allomorphs → PhEnvironments. Mid-run exceptions
+    # bubble up to the FlexTools runner's UOW, which rolls back the entire
+    # transaction (R10).
+    pos_guids = _pos_guids_from_plan(plan)
+    if not pos_guids:
+        report_sink.Info("[Move] No POSes in plan; nothing to execute.")
+    for pos_guid in pos_guids:
+        _execute_verb_vertical(plan, source, target, report_sink, tag, pulled_in_guids, pos_guid)
+        _execute_layer3(plan, source, target, report_sink, tag, pos_guid)
 
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
@@ -81,6 +86,23 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -
 # Verb-vertical executor (mirrors STATUS.md Layer 1+2 parity rubric)
 # ============================================================================
 
+def _pos_guids_from_plan(plan: RunPlan) -> list:
+    """Return the ordered list of source POS GUIDs the plan touches —
+    union of POS PlannedActions and POS Skips, preserving plan order with
+    no duplicates."""
+    seen = set()
+    ordered = []
+    for a in plan.actions:
+        if a.category == GrammarCategory.POS and a.source_guid not in seen:
+            seen.add(a.source_guid)
+            ordered.append(a.source_guid)
+    for s in plan.skips:
+        if s.category == GrammarCategory.POS and s.source_guid not in seen:
+            seen.add(s.source_guid)
+            ordered.append(s.source_guid)
+    return ordered
+
+
 def _execute_verb_vertical(
     plan: RunPlan,
     source,
@@ -88,6 +110,7 @@ def _execute_verb_vertical(
     report_sink,
     tag: ImportResidueTag,
     pulled_in_guids: frozenset,
+    src_pos_guid: str = None,
 ) -> None:
     """Apply POS + Template + Slot actions for the Verb vertical.
 
@@ -148,10 +171,18 @@ def _execute_verb_vertical(
 
     # ----- Slots — preserve source order in the template's prefix/suffix ref seqs -----
     # We need the source-side template wrapper so we can read prefix_slots /
-    # suffix_slots ordering. Find it from the first slot action's owner.
-    src_template_wrap = _find_source_verb_template(source)
+    # suffix_slots ordering. Find it scoped to the owner POS (src_pos_guid),
+    # or fall back to first-template-any-POS for the backward-compat path.
+    pos_lookup_guid = src_pos_guid or _first_pos_guid(plan)
+    if pos_lookup_guid is None:
+        report_sink.Warning("No POS in plan to scope the template lookup")
+        return
+    src_template_wrap = _find_source_first_template_for_pos(source, pos_lookup_guid)
     if src_template_wrap is None:
-        report_sink.Warning("Source Verb template not found at execute time; slot ordering lost")
+        report_sink.Warning(
+            f"Source POS {pos_lookup_guid[:8]}… has no template at execute time; "
+            "slot ordering lost"
+        )
         return
 
     ordered_src_slots = []  # list of (kind, slot, slot_guid)
@@ -281,25 +312,32 @@ def _find_source_pos_by_guid(source, guid_str: str):
     return None
 
 
-def _find_source_template_by_guid(source, guid_str: str):
+def _find_source_template_by_guid(source, guid_str: str, owner_pos_guid: str = None):
     """Returns the flexlibs2 template *wrapper* (we need its prefix_slots etc.),
-    not the bare LCM object."""
-    src_verb = source.POS.Find("Verb")
-    if src_verb is None:
-        return None
-    for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_verb):
-        concrete = t.concrete
-        if _guid_str(concrete) == guid_str:
-            return t
+    not the bare LCM object. If `owner_pos_guid` is given, only searches
+    that POS's templates; otherwise scans every POS."""
+    candidate_poses = []
+    if owner_pos_guid is not None:
+        p = _find_source_pos_by_guid(source, owner_pos_guid)
+        if p is not None:
+            candidate_poses.append(p)
+    else:
+        for pos in source.POS.GetAll(recursive=True):
+            candidate_poses.append(_unwrap(pos))
+    for src_pos in candidate_poses:
+        for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_pos):
+            concrete = t.concrete
+            if _guid_str(concrete) == guid_str:
+                return t
     return None
 
 
-def _find_source_verb_template(source):
-    """First template under the source Verb POS, as flexlibs2 wrapper."""
-    src_verb = source.POS.Find("Verb")
-    if src_verb is None:
+def _find_source_first_template_for_pos(source, owner_pos_guid: str):
+    """First template under the given source POS, as flexlibs2 wrapper."""
+    src_pos = _find_source_pos_by_guid(source, owner_pos_guid)
+    if src_pos is None:
         return None
-    for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_verb):
+    for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_pos):
         return t
     return None
 
@@ -371,6 +409,7 @@ def _execute_layer3(
     target,
     report_sink,
     tag: ImportResidueTag,
+    src_pos_guid: str = None,
 ) -> None:
     """Apply ENTRY / SENSE / MSA / ALLOMORPH / PH_ENVIRONMENT actions for the
     verb closure. Mirrors STATUS.md Layer 3 outline:
@@ -405,15 +444,22 @@ def _execute_layer3(
 
     identity_remap = dict(plan.identity_remap) if plan.identity_remap else {}
 
-    # Locate the source Verb POS and the target Verb POS (must exist by now).
-    src_verb = source.POS.Find("Verb")
-    if src_verb is None:
-        report_sink.Warning("[L3] Source has no Verb POS; skipping Layer 3.")
+    # Locate the source POS we're executing Layer 3 for. Caller supplies
+    # `src_pos_guid`; for the backward-compat path (no arg), fall back to
+    # the first POS GUID in the plan.
+    if src_pos_guid is None:
+        src_pos_guid = _first_pos_guid(plan)
+    if src_pos_guid is None:
+        report_sink.Warning("[L3] No POS in plan; skipping Layer 3.")
         return
-    src_verb_guid = _guid_str(src_verb)
+    src_verb = _find_source_pos_by_guid(source, src_pos_guid)
+    if src_verb is None:
+        report_sink.Warning(f"[L3] Source POS {src_pos_guid[:8]}… not found; skipping Layer 3.")
+        return
+    src_verb_guid = src_pos_guid
     target_verb = _find_target_pos_by_guid(target, src_verb_guid)
     if target_verb is None:
-        report_sink.Warning("[L3] Target has no Verb POS; Layer 3 needs Layer 1 first.")
+        report_sink.Warning(f"[L3] Target POS {src_pos_guid[:8]}… not present; Layer 3 needs Layer 1 first.")
         return
 
     # Pre-create environments (allomorphs reference them). Skipped

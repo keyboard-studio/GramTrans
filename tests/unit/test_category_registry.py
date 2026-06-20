@@ -79,8 +79,12 @@ def test_for_category_raises_keyerror_for_heavy_categories() -> None:
 
 
 def test_unimplemented_body_raises_not_implemented_with_task_pointer() -> None:
-    """Every body raises NotImplementedError and mentions the task ID
-    so it's easy to grep when implementing."""
-    bundle = categories.for_category(GrammarCategory.GRAM_CATEGORIES)
+    """Still-unimplemented bodies raise NotImplementedError with the task ID.
+
+    gram_categories / inflection_features / inflection_classes / stem_names /
+    exception_features are now implemented (T039 complete for those five).
+    Check a category that is still stubbed: custom_fields.
+    """
+    bundle = categories.for_category(GrammarCategory.CUSTOM_FIELDS)
     with pytest.raises(NotImplementedError, match="T039"):
         bundle["enumerate_source"](context=object(), selection=object())

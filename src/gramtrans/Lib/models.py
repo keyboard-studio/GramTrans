@@ -110,6 +110,7 @@ class Selection:
     include_closure: bool = True
     affix_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     template_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
+    pos_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — POS GUIDs
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -119,6 +120,10 @@ class Selection:
         if self.template_picks and self.categories.get(GrammarCategory.TEMPLATES) is not True:
             raise ValueError(
                 "template_picks non-empty requires categories[TEMPLATES] to be True"
+            )
+        if self.pos_picks and self.categories.get(GrammarCategory.POS) is not True:
+            raise ValueError(
+                "pos_picks non-empty requires categories[POS] to be True"
             )
 
     def is_on(self, category: GrammarCategory) -> bool:

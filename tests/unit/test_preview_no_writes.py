@@ -94,6 +94,10 @@ class _FakePOSOps:
         return self._verb if name == "Verb" else None
 
     def GetAll(self, recursive: bool = False):  # noqa: N802
+        # When the fake has a verb set, include it in GetAll so the
+        # multi-POS walker's _select_source_poses finds it.
+        if self._verb is not None and not self._all:
+            return [self._verb]
         return list(self._all)
 
     def GetSyncableProperties(self, pos):  # noqa: N802

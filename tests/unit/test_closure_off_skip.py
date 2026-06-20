@@ -63,7 +63,9 @@ class _POSOps:
         return self._verb if name == "Verb" else None
 
     def GetAll(self, recursive=False):  # noqa: N802
-        return []
+        # When the fake has a verb set, include it so the multi-POS walker
+        # in preview.build_run_plan finds it via _select_source_poses.
+        return [self._verb] if self._verb is not None else []
 
     def GetSyncableProperties(self, pos):  # noqa: N802
         return {}

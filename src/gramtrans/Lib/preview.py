@@ -66,11 +66,13 @@ def build_run_plan(
     skips: List[Skip] = []
     identity_remap: dict = {}
 
-    # Phase 0 MVP slice: only the Verb-vertical traversal is implemented here.
-    # Subsequent tasks add the rest of the FR-004 closure. We still build a
-    # full RunPlan so the Move executor's contract is stable from day one.
-    _plan_verb_vertical(source, target, selection, actions, skips)
-    _plan_layer3_verb_affixes(source, target, selection, actions, skips)
+    # Walk every selected POS (or all top-level POSes when categories[POS]
+    # is True and pos_picks is empty). For each POS, walk its closure:
+    # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
+    # → Allomorphs → PhEnvironments.
+    for src_pos in _select_source_poses(source, selection):
+        _plan_pos_closure(source, target, src_pos, selection, actions, skips)
+        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips)
 
     return RunPlan(
         context=context,
@@ -86,14 +88,79 @@ def build_run_plan(
 # Verb-vertical plan walk (mirrors STATUS.md Layer 1+2)
 # ============================================================================
 
-def _plan_verb_vertical(
+def _select_source_poses(source, selection: Selection) -> List:
+    """Return the list of source POS objects whose closure should be walked.
+
+    We walk a POS's closure whenever ANY category in the POS-or-downstream
+    closure is selected (POS itself, Templates, Slots, Entry, Sense, MSA,
+    Allomorph, PhEnvironment). Closure-off mode produces BARE_BONES skips
+    for non-selected layers; that's handled inside the walker.
+
+    POS picking:
+    - If `selection.pos_picks` is non-empty, walk only those POSes (by GUID).
+    - Otherwise walk every top-level POS in source.
+
+    Returns [] when no category in the POS closure is selected.
+    """
+    pos_closure_cats = (
+        GrammarCategory.POS,
+        GrammarCategory.TEMPLATES,
+        GrammarCategory.SLOTS,
+        GrammarCategory.ENTRY,
+        GrammarCategory.SENSE,
+        GrammarCategory.MSA,
+        GrammarCategory.ALLOMORPH,
+        GrammarCategory.PH_ENVIRONMENT,
+    )
+    if not any(selection.is_on(c) for c in pos_closure_cats):
+        return []
+    all_poses = list(source.POS.GetAll(recursive=True))
+    if not selection.pos_picks:
+        return [_unwrap(p) for p in all_poses]
+    picks = set(g.lower() for g in selection.pos_picks)
+    result = []
+    for p in all_poses:
+        concrete = _unwrap(p)
+        if _guid_str(concrete) in picks:
+            result.append(concrete)
+    return result
+
+
+def _plan_pos_closure(
     source,
     target,
+    src_pos,
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
 ) -> None:
-    """Mirror the source closure of the Verb POS into PlannedAction entries.
+    """POS → Template → Slot walk for a single source POS. Mirrors the
+    pre-multi-POS `_plan_verb_vertical` but parameterized on the POS."""
+    _plan_verb_vertical_inner(source, target, src_pos, selection, actions, skips)
+
+
+def _plan_layer3_for_pos(
+    source,
+    target,
+    src_pos,
+    selection: Selection,
+    actions: List[PlannedAction],
+    skips: List[Skip],
+) -> None:
+    """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
+    affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
+    _plan_layer3_verb_affixes_inner(source, target, src_pos, selection, actions, skips)
+
+
+def _plan_verb_vertical_inner(
+    source,
+    target,
+    src_pos,
+    selection: Selection,
+    actions: List[PlannedAction],
+    skips: List[Skip],
+) -> None:
+    """POS+Template+Slot closure for a single source POS.
 
     Each Add/Skip decision uses GUID-presence in the target; FR-009 still
     permits duplicates but the convention validated in STATUS.md is "if
@@ -109,15 +176,17 @@ def _plan_verb_vertical(
         (owner POS for templates, slots referenced by templates) are NOT
         also user-selected become `Skip(reason=BARE_BONES_MISSING_CLOSURE)`.
     """
-    src_verb = source.POS.Find("Verb")
-    if src_verb is None:
-        return  # nothing to plan; transfer.py will print a warning at execute time
+    # Caller already validated that `src_pos` belongs to source; if it's None
+    # (defensive), bail out.
+    if src_pos is None:
+        return
 
     closure_on = selection.include_closure
     pos_on = selection.is_on(GrammarCategory.POS)
     tpl_on = selection.is_on(GrammarCategory.TEMPLATES)
     slots_on = selection.is_on(GrammarCategory.SLOTS)
 
+    src_verb = src_pos  # historical local name preserved; "verb" → "POS" here
     src_verb_guid = _guid_str(src_verb)
 
     # ----- POS layer -----
@@ -224,18 +293,19 @@ def _plan_verb_vertical(
                     ))
 
 
-def _plan_layer3_verb_affixes(
+def _plan_layer3_verb_affixes_inner(
     source,
     target,
+    src_pos,
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
 ) -> None:
-    """Walk Layer 3: every source LexEntry whose Sense's MSA is an
-    IMoInflAffMsa pointing at the Verb POS. Each yields ENTRY+SENSE+MSA
-    actions; each Allomorph on the entry yields an ALLOMORPH action; each
-    PhEnvironment referenced by an allomorph (deduplicated) yields a
-    PH_ENVIRONMENT action.
+    """Walk Layer 3 for a single source POS: every source LexEntry whose
+    Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
+    ENTRY+SENSE+MSA actions; each Allomorph on the entry yields an
+    ALLOMORPH action; each PhEnvironment referenced by an allomorph
+    (deduplicated) yields a PH_ENVIRONMENT action.
 
     Layer 3 is gated by category toggles:
     - ENTRY / SENSE / MSA / ALLOMORPH / PH_ENVIRONMENT must each be selected
@@ -244,7 +314,7 @@ def _plan_layer3_verb_affixes(
     (POS + template + slots) — without them the MSA cross-references can't
     resolve.
     """
-    src_verb = source.POS.Find("Verb")
+    src_verb = src_pos  # name retained for in-function brevity
     if src_verb is None:
         return
 
