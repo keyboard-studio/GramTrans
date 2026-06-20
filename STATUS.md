@@ -6,6 +6,58 @@
 
 ---
 
+## ▶▶▶ Multi-POS walker + leaf categories + Phase 1 scaffold (2026-06-20)
+
+Phase 0 verb-vertical is now general-purpose:
+
+- `Lib/preview._select_source_poses(source, selection)` returns the list of
+  source POS objects to walk based on `selection.pos_picks` (frozenset of
+  GUIDs). Empty `pos_picks` + any POS-closure category on → walks every
+  top-level POS in source.
+- `Lib/preview._plan_pos_closure(...)` and `_plan_layer3_for_pos(...)` take
+  `src_pos` and run the same POS → Template → Slot → Entry → Sense → MSA
+  → Allomorph → PhEnvironment walk per POS.
+- `Lib/transfer.execute` iterates `_pos_guids_from_plan(plan)` (derived
+  from the plan's POS PlannedActions + POS Skips) and calls
+  `_execute_verb_vertical` + `_execute_layer3` for each, threading
+  `src_pos_guid` through.
+- `Selection.pos_picks: frozenset[str]` added per the spec model.
+
+Live MCP verification on freshly-restored target with
+`pos_picks=frozenset({verb_guid})`: **same 67 actions, 0 skips, 0.709s,
+lcm_undoable_action_count=69** — byte-equivalent to the pre-multi-POS run.
+
+**Leaf categories** implemented in `Lib/categories.py` (Stream 2 of the
+parallel work):
+
+- `gram_categories` (GOLD-aware via `CatalogSourceId`)
+- `inflection_features` (GOLD-aware; co-creates IFsSymFeatVal values)
+- `inflection_classes` (no GOLD; `IMoInflClassFactory.Create(Guid)`)
+- `stem_names` (no GOLD; `IMoStemNameFactory.Create(Guid)`)
+- `exception_features` (no GOLD; ref-wire only via target POS lookup)
+
+Stubs remain for `custom_fields`, `variant_types`, `complex_form_types`,
+`adhoc_rules`, `compound_rules`.
+
+**Phase 1 scaffold** (Stream 3):
+
+- `specs/002-phase1-overwrite/` with `spec.md` (FR-101..110 + SC-101..103)
+  and stubs for plan/research/data-model/quickstart/tasks.
+- `src/gramtrans/Lib/matcher.py`: `Match` frozen dataclass +
+  `lookup_target(source_guid, category, target, *, source_obj,
+  identity_remap, fingerprint_fn) → Match` that resolves via direct GUID
+  hit → identity_remap fallback → fingerprint fallback. Fingerprint
+  registry seeded with `fingerprint_for_msa` + `fingerprint_for_allomorph`.
+
+**Tests**: 141 unit (up from 101) + 5 integration scaffolds skipped on
+bare pytest.
+
+Non-fatal stderr warnings during the multi-POS Move run: 26 instances of
+`LexSenseOperations.GetSyncableProperties: 'ILangProject' object has no
+attribute 'PublicationsOA'`. Silently skipped by the BaseOperations
+patch's `cannot be converted to SIL.LCModel.` clause; queue for fork-level
+cleanup in Phase 0.5.
+
 ## ▶▶ Layer 3 end-to-end transfer landed (2026-06-19 night)
 
 After T-Spike closure, Layer 3 (LexEntry / LexSense / MSA / Allomorph /
