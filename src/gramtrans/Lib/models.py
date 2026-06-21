@@ -44,6 +44,12 @@ class GrammarCategory(enum.Enum):
     MSA = "msa"
     ALLOMORPH = "allomorph"
     PH_ENVIRONMENT = "ph_environment"
+    # Phase 3a (memo steps 2-5 + 5b) -- phonology block + strata.
+    PHONOLOGICAL_FEATURES = "phonological_features"
+    PHONEMES = "phonemes"
+    NATURAL_CLASSES = "natural_classes"
+    PHONOLOGICAL_RULES = "phonological_rules"
+    STRATA = "strata"
 
 
 class WSKind(enum.Enum):

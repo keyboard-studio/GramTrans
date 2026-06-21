@@ -30,6 +30,13 @@ LEAF_CATEGORIES = {
     GrammarCategory.COMPLEX_FORM_TYPES,
     GrammarCategory.ADHOC_RULES,
     GrammarCategory.COMPOUND_RULES,
+    # Phase 3a (memo steps 2-5 + 4b + 5b) -- phonology block + strata.
+    GrammarCategory.PHONOLOGICAL_FEATURES,
+    GrammarCategory.PHONEMES,
+    GrammarCategory.NATURAL_CLASSES,
+    GrammarCategory.PH_ENVIRONMENT,  # relocated from HEAVY in Phase 3a
+    GrammarCategory.PHONOLOGICAL_RULES,
+    GrammarCategory.STRATA,
 }
 
 # Heavy categories (AFFIXES, TEMPLATES, MSAs) live in their own files and
@@ -40,7 +47,7 @@ HEAVY_CATEGORIES = {
     GrammarCategory.SLOTS,
     GrammarCategory.MSA,
     GrammarCategory.ALLOMORPH,
-    GrammarCategory.PH_ENVIRONMENT,
+    # PH_ENVIRONMENT moved to LEAF_CATEGORIES in Phase 3a (memo step 4b).
     GrammarCategory.ENTRY,
     GrammarCategory.SENSE,
     GrammarCategory.POS,
@@ -59,9 +66,19 @@ def test_each_entry_has_the_required_keys() -> None:
 
 def test_dependencies_returns_empty_for_pure_leaves() -> None:
     """Pure leaf categories (no closure refs) MUST return empty tuples for
-    dependencies. Variant types are NOT pure-leaf — they reference
-    inflection features per FR-004 — so they're allowed to raise."""
-    pure_leaves = LEAF_CATEGORIES - {GrammarCategory.VARIANT_TYPES}
+    dependencies. Non-pure leaves are allowed to raise NotImplementedError
+    (they DO carry cross-references that the per-category callback must
+    walk):
+    - VARIANT_TYPES: references inflection features (FR-004)
+    - NATURAL_CLASSES: IPhNCSegments.SegmentsRC references phonemes (Phase 3a)
+    - PHONOLOGICAL_RULES: references phonemes + NCs + envs + stratum (FR-304)
+    """
+    non_pure = {
+        GrammarCategory.VARIANT_TYPES,
+        GrammarCategory.NATURAL_CLASSES,
+        GrammarCategory.PHONOLOGICAL_RULES,
+    }
+    pure_leaves = LEAF_CATEGORIES - non_pure
     for cat in pure_leaves:
         bundle = categories.LEAF_CATEGORIES[cat]
         assert tuple(bundle["dependencies"](piece=object())) == ()

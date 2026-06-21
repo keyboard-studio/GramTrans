@@ -945,6 +945,145 @@ def compound_rules_execute_action(action, context, ws_mapping, tag):
 # Category registry — engine dispatch
 # ============================================================================
 
+# ============================================================================
+# Phase 3a — phonology block + strata (memo steps 2-5 + 4b + 5b)
+# Six stub categories.  enumerate_source / dependencies /
+# required_writing_systems / plan_action / execute_action will be
+# filled in by the per-story tasks in specs/005-phonology-block/tasks.md.
+# ============================================================================
+
+# ----- phonological_features (memo step 2) ---------------------------------
+
+def phonological_features_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US1 T011")
+
+
+def phonological_features_dependencies(piece):
+    return ()
+
+
+def phonological_features_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US1 T011")
+
+
+def phonological_features_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US1 T012")
+
+
+def phonological_features_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US1 T012")
+
+
+# ----- phonemes (memo step 3) ----------------------------------------------
+
+def phonemes_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US1 T014")
+
+
+def phonemes_dependencies(piece):
+    return ()
+
+
+def phonemes_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US1 T015")
+
+
+def phonemes_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US1 T016")
+
+
+def phonemes_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US1 T017")
+
+
+# ----- natural_classes (memo step 4) ---------------------------------------
+
+def natural_classes_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US1 T019")
+
+
+def natural_classes_dependencies(piece):
+    raise NotImplementedError("Phase 3a US1 T020")
+
+
+def natural_classes_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US1 T020")
+
+
+def natural_classes_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US1 T021")
+
+
+def natural_classes_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US1 T021")
+
+
+# ----- phonological_rules (memo step 5) ------------------------------------
+
+def phonological_rules_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US1 T023")
+
+
+def phonological_rules_dependencies(piece):
+    raise NotImplementedError("Phase 3a US1 T024")
+
+
+def phonological_rules_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US1 T024")
+
+
+def phonological_rules_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US1 T025")
+
+
+def phonological_rules_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US1 T026")
+
+
+# ----- strata (memo step 5b) -----------------------------------------------
+
+def strata_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US2 T031")
+
+
+def strata_dependencies(piece):
+    return ()
+
+
+def strata_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US2 T031")
+
+
+def strata_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US2 T032")
+
+
+def strata_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US2 T032")
+
+
+# ----- ph_environment (memo step 4b -- relocated from allomorph-bundled) ---
+
+def ph_environment_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3a US3 T035")
+
+
+def ph_environment_dependencies(piece):
+    return ()
+
+
+def ph_environment_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3a US3 T035")
+
+
+def ph_environment_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3a US3 T035")
+
+
+def ph_environment_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3a US3 T035")
+
+
 LEAF_CATEGORIES = {
     GrammarCategory.GRAM_CATEGORIES: {
         "enumerate_source": gram_categories_enumerate_source,
@@ -1015,6 +1154,49 @@ LEAF_CATEGORIES = {
         "required_writing_systems": compound_rules_required_writing_systems,
         "plan_action": compound_rules_plan_action,
         "execute_action": compound_rules_execute_action,
+    },
+    # Phase 3a — phonology block + strata (steps 2-5 + 4b + 5b)
+    GrammarCategory.PHONOLOGICAL_FEATURES: {
+        "enumerate_source": phonological_features_enumerate_source,
+        "dependencies": phonological_features_dependencies,
+        "required_writing_systems": phonological_features_required_writing_systems,
+        "plan_action": phonological_features_plan_action,
+        "execute_action": phonological_features_execute_action,
+    },
+    GrammarCategory.PHONEMES: {
+        "enumerate_source": phonemes_enumerate_source,
+        "dependencies": phonemes_dependencies,
+        "required_writing_systems": phonemes_required_writing_systems,
+        "plan_action": phonemes_plan_action,
+        "execute_action": phonemes_execute_action,
+    },
+    GrammarCategory.NATURAL_CLASSES: {
+        "enumerate_source": natural_classes_enumerate_source,
+        "dependencies": natural_classes_dependencies,
+        "required_writing_systems": natural_classes_required_writing_systems,
+        "plan_action": natural_classes_plan_action,
+        "execute_action": natural_classes_execute_action,
+    },
+    GrammarCategory.PH_ENVIRONMENT: {
+        "enumerate_source": ph_environment_enumerate_source,
+        "dependencies": ph_environment_dependencies,
+        "required_writing_systems": ph_environment_required_writing_systems,
+        "plan_action": ph_environment_plan_action,
+        "execute_action": ph_environment_execute_action,
+    },
+    GrammarCategory.PHONOLOGICAL_RULES: {
+        "enumerate_source": phonological_rules_enumerate_source,
+        "dependencies": phonological_rules_dependencies,
+        "required_writing_systems": phonological_rules_required_writing_systems,
+        "plan_action": phonological_rules_plan_action,
+        "execute_action": phonological_rules_execute_action,
+    },
+    GrammarCategory.STRATA: {
+        "enumerate_source": strata_enumerate_source,
+        "dependencies": strata_dependencies,
+        "required_writing_systems": strata_required_writing_systems,
+        "plan_action": strata_plan_action,
+        "execute_action": strata_execute_action,
     },
 }
 
