@@ -101,6 +101,57 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             or []
         )
 
+    # Phase 3a leaf-category dispatch (execute side): for every
+    # PlannedAction whose category is in the leaf set, route through
+    # the registered execute_action callback.  Skips and overwrites
+    # are handled by the existing paths above.
+    _LEAF_DISPATCH_CATEGORIES = (
+        GrammarCategory.PHONOLOGICAL_FEATURES,
+        GrammarCategory.PHONEMES,
+        GrammarCategory.NATURAL_CLASSES,
+        GrammarCategory.PH_ENVIRONMENT,
+        GrammarCategory.PHONOLOGICAL_RULES,
+        GrammarCategory.STRATA,
+    )
+    if __package__:
+        from .categories import for_category as _for_category
+    else:
+        from categories import for_category as _for_category  # type: ignore
+    # Build a synthetic RunContext for execute_action since the per-category
+    # callbacks expect it (mirrors the planner's context).
+    if __package__:
+        from .models import RunContext as _RunContext
+    else:
+        from models import RunContext as _RunContext  # type: ignore
+    exec_ctx = _RunContext(
+        source_handle=source,
+        source_project_name=plan.context.source_project_name,
+        source_project_path=plan.context.source_project_path,
+        target_handle=target,
+        target_project_name=plan.context.target_project_name,
+        target_project_path=plan.context.target_project_path,
+        run_id=plan.context.run_id,
+        started_at=plan.context.started_at,
+    )
+    leaf_count = 0
+    for action in plan.actions:
+        if action.category not in _LEAF_DISPATCH_CATEGORIES:
+            continue
+        try:
+            bundle = _for_category(action.category)
+        except KeyError:
+            continue
+        try:
+            bundle["execute_action"](action, exec_ctx, plan.ws_mapping, tag)
+            leaf_count += 1
+        except Exception as exc:
+            report_sink.Warning(
+                f"  [{action.category.value}] execute_action raised "
+                f"{type(exc).__name__}: {exc}; skipping {action.source_guid[:8]}"
+            )
+    if leaf_count:
+        report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
+
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
     # the FR-018 invariant on RunReport.__post_init__ passes by construction

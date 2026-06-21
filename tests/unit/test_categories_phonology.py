@@ -8,6 +8,7 @@ tests/integration/test_phase3a_phonology_e2e.py).
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
@@ -266,3 +267,299 @@ def test_enumerate_empty_source_returns_empty(enumerator):
                    Environments=[], PhonRules=[], Strata=[])
     tgt = _project()
     assert enumerator(_ctx(src, tgt), SEL) == []
+
+
+# ============================================================================
+# _create_with_guid hardening tests
+# ============================================================================
+
+def _make_target_with_factory(factory_instance):
+    """Build a minimal fake `target` whose Cache.ServiceLocator.GetService()
+    returns `factory_instance`."""
+    sl = MagicMock()
+    sl.GetService.return_value = factory_instance
+    cache = MagicMock()
+    cache.ServiceLocator = sl
+    target = MagicMock()
+    target.Cache = cache
+    return target
+
+
+def test_create_with_guid_raises_runtime_error_on_add_failure():
+    """If Create(Guid) succeeds but Add raises, _create_with_guid must raise
+    RuntimeError mentioning 'Orphan risk' and must NOT stash the sentinel."""
+    sentinel = object()
+
+    factory = MagicMock()
+    factory.Create.return_value = sentinel
+
+    bad_collection = MagicMock()
+    bad_collection.Add.side_effect = ValueError("collection locked")
+
+    # factory_iface.__name__ used for the error message
+    factory_iface = MagicMock()
+    factory_iface.__name__ = "FakeFactory"
+
+    target = _make_target_with_factory(factory)
+
+    # Intercept `from System import Guid` inside _create_with_guid by
+    # injecting a fake System module into sys.modules.
+    import sys
+    guid_str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    fake_guid_class = MagicMock()
+    fake_guid_class.Parse.return_value = MagicMock(name="parsed_guid")
+    fake_system = MagicMock()
+    fake_system.Guid = fake_guid_class
+
+    original = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            categories._create_with_guid(factory_iface, bad_collection, guid_str, target)
+    finally:
+        if original is None:
+            del sys.modules["System"]
+        else:
+            sys.modules["System"] = original
+
+    msg = str(exc_info.value)
+    assert "Orphan risk" in msg, f"Expected 'Orphan risk' in: {msg}"
+    # Confirm sentinel is not reachable through any tracked collection
+    bad_collection.Add.assert_called_once_with(sentinel)
+    # The exception must have been raised — sentinel was never stored anywhere
+    # by the helper (it has no internal list/dict).  The call to Add was the
+    # only mutation attempted, and it raised, so the object is an orphan in
+    # LCM memory — the error message says so and the caller is responsible.
+
+
+def test_create_with_guid_raises_runtime_error_when_create_guid_unsupported():
+    """If factory.Create(guid) raises, _create_with_guid must raise
+    RuntimeError mentioning 'does not support Create(Guid)' and must never
+    call no-arg Create()."""
+    factory = MagicMock()
+    factory.Create.side_effect = TypeError("no Guid overload")
+
+    factory_iface = MagicMock()
+    factory_iface.__name__ = "FakeFactory"
+
+    owner_collection = MagicMock()
+
+    target = _make_target_with_factory(factory)
+
+    import sys
+    fake_guid_class = MagicMock()
+    fake_guid_class.Parse.return_value = MagicMock(name="parsed_guid")
+    fake_system = MagicMock()
+    fake_system.Guid = fake_guid_class
+
+    guid_str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    original = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            categories._create_with_guid(factory_iface, owner_collection, guid_str, target)
+    finally:
+        if original is None:
+            del sys.modules["System"]
+        else:
+            sys.modules["System"] = original
+
+    msg = str(exc_info.value)
+    assert "does not support Create(Guid)" in msg, f"Expected 'does not support Create(Guid)' in: {msg}"
+
+    # Create was called exactly once (with the parsed guid) — no no-arg fallback.
+    assert factory.Create.call_count == 1, (
+        f"Create() called {factory.Create.call_count} times; expected exactly 1 "
+        "(no no-arg fallback allowed)"
+    )
+    # Add must never have been called.
+    owner_collection.Add.assert_not_called()
+
+
+# ============================================================================
+# natural_classes_execute_action -- SegmentsRC wiring (P1-C)
+# ============================================================================
+
+def _fake_sys_guid(monkeypatch):
+    """Inject a fake System.Guid into sys.modules so _create_with_guid works."""
+    import sys
+    fake_guid_class = MagicMock()
+    # Parse returns an object whose str is the original guid_str; good enough.
+    fake_guid_class.Parse.side_effect = lambda s: s
+    fake_system = MagicMock()
+    fake_system.Guid = fake_guid_class
+    original = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+    return original
+
+
+def _restore_sys_guid(original):
+    import sys
+    if original is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original
+
+
+class _FakeCollection:
+    """Minimal stand-in for an LCM reference-collection (SegmentsRC etc.)."""
+    def __init__(self, items=()):
+        self._items = list(items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def Add(self, item):
+        self._items.append(item)
+
+    def __len__(self):
+        return len(self._items)
+
+
+class _FakePhoneme:
+    def __init__(self, guid):
+        self.guid = guid
+        self.Guid = guid
+
+
+class _FakeNCSegments:
+    """Fake IPhNCSegments source natural class."""
+    def __init__(self, guid, phoneme_refs):
+        self.guid = guid
+        self.Guid = guid
+        self.SegmentsRC = _FakeCollection(phoneme_refs)
+
+
+def _build_nc_execute_context(src_nc, src_phonemes, tgt_phonemes):
+    """Build fake source + target handles for natural_classes_execute_action."""
+    # Source handle
+    source = MagicMock()
+    source.NaturalClasses.GetAll.return_value = [src_nc]
+    source.NaturalClasses.GetSyncableProperties.return_value = {}
+    source.Phonemes.GetAll.return_value = src_phonemes
+
+    # Target NC object: has a mutable SegmentsRC collection.
+    tgt_nc = MagicMock()
+    tgt_nc.SegmentsRC = _FakeCollection()
+
+    # Factory returns the fake target NC.
+    factory = MagicMock()
+    factory.Create.return_value = tgt_nc
+
+    # Target owner collection.
+    owner_os = MagicMock()
+    owner_os.Add.return_value = None
+
+    # Cache chain.
+    sl = MagicMock()
+    sl.GetService.return_value = factory
+    cache = MagicMock()
+    cache.ServiceLocator = sl
+    cache.LangProject.PhonologicalDataOA.NaturalClassesOS = owner_os
+
+    target = MagicMock()
+    target.Cache = cache
+    target.NaturalClasses.ApplySyncableProperties.return_value = None
+    target.Phonemes.GetAll.return_value = tgt_phonemes
+
+    return source, target, tgt_nc
+
+
+def _stub_lcm_nc_imports(monkeypatch):
+    """Stub out SIL.LCModel NC interfaces so no real CLR is needed."""
+    import sys
+
+    class _PassthroughCast:
+        """IPhNCSegments(obj) -> obj  (cast no-op for fakes)."""
+        def __new__(cls, obj):
+            return obj
+
+    fake_lcm = MagicMock()
+    fake_lcm.IPhNCSegmentsFactory = MagicMock()
+    fake_lcm.IPhNCFeaturesFactory = MagicMock()
+    fake_lcm.IPhNCSegments = _PassthroughCast
+    # ICmObject(src_nc).ClassName => "PhNCSegments" for our fake.
+    fake_lcm.ICmObject.side_effect = lambda obj: obj
+    # Make sure obj.ClassName is "PhNCSegments" on our fakes
+    # (handled by _FakeNCSegments not having ClassName; the except branch fires).
+
+    original = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+    return original, fake_lcm
+
+
+def _restore_lcm(original):
+    import sys
+    if original is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original
+
+
+def test_nc_execute_wires_segments_rc():
+    """natural_classes_execute_action wires SegmentsRC with 2 target phonemes."""
+    import sys
+
+    p1_src = _FakePhoneme("ph-guid-1")
+    p2_src = _FakePhoneme("ph-guid-2")
+    p1_tgt = _FakePhoneme("ph-guid-1")
+    p2_tgt = _FakePhoneme("ph-guid-2")
+
+    src_nc = _FakeNCSegments("nc-guid-a", [p1_src, p2_src])
+    source, target, tgt_nc = _build_nc_execute_context(
+        src_nc, [p1_src, p2_src], [p1_tgt, p2_tgt]
+    )
+
+    action = MagicMock()
+    action.source_guid = "nc-guid-a"
+
+    ctx = _ctx(source, target)
+
+    orig_sys = _fake_sys_guid(None)
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        result = categories.natural_classes_execute_action(action, ctx, WSM, "test-tag")
+    finally:
+        _restore_sys_guid(orig_sys)
+        _restore_lcm(orig_lcm)
+
+    assert result is tgt_nc
+    added_guids = [_._FakePhoneme__dict__ if hasattr(_, "_FakePhoneme__dict__") else _.guid
+                   for _ in tgt_nc.SegmentsRC._items]
+    # Simpler: check the items in SegmentsRC are p1_tgt and p2_tgt.
+    assert p1_tgt in tgt_nc.SegmentsRC._items
+    assert p2_tgt in tgt_nc.SegmentsRC._items
+    assert len(tgt_nc.SegmentsRC._items) == 2
+
+
+def test_nc_execute_raises_on_unresolved_phoneme():
+    """natural_classes_execute_action raises RuntimeError when a source phoneme
+    GUID has no counterpart on the target side."""
+    import sys
+
+    p1_src = _FakePhoneme("ph-guid-1")
+    p2_src = _FakePhoneme("ph-guid-2")   # this one is NOT on target
+    p1_tgt = _FakePhoneme("ph-guid-1")   # only ph-guid-1 on target
+
+    src_nc = _FakeNCSegments("nc-guid-b", [p1_src, p2_src])
+    source, target, tgt_nc = _build_nc_execute_context(
+        src_nc, [p1_src, p2_src], [p1_tgt]  # tgt missing ph-guid-2
+    )
+
+    action = MagicMock()
+    action.source_guid = "nc-guid-b"
+
+    ctx = _ctx(source, target)
+
+    orig_sys = _fake_sys_guid(None)
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            categories.natural_classes_execute_action(action, ctx, WSM, "test-tag")
+    finally:
+        _restore_sys_guid(orig_sys)
+        _restore_lcm(orig_lcm)
+
+    msg = str(exc_info.value)
+    assert "ph-guid-2" in msg, f"Expected missing GUID in error: {msg}"
+    assert "nc-guid-b" in msg, f"Expected NC GUID in error: {msg}"

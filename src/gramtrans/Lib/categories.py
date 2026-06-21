@@ -989,47 +989,46 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
 def _create_with_guid(factory_iface, owner_collection, guid_str, target):
     """Create-with-Guid helper.
 
-    Tries factory.Create(Guid).  Falls back to factory.Create() +
-    owner_collection.Add() if the Guid overload raises (some LCM 9.x
-    factories reject Guid at runtime even when the signature exists).
+    Calls factory.Create(Guid) — no fallback.  All Phase 3a factories
+    (PhPhonemeFactory, PhNaturalClassFactory / PhNCSegmentsFactory,
+    PhEnvironmentFactory, PhPhonologicalFeatureFactory, PhPhonRuleFactory,
+    PhPhonemeSetFactory) expose Create(Guid); confirmed by MCP probes
+    T004-T009 (2026-06-20).
 
-    Returns the new object and a `bool` indicating whether the GUID was
-    preserved.  When False, callers should record an identity_remap
-    entry from the source GUID to ICmObject(new_obj).Guid.
+    If Create(Guid) raises, re-raises as RuntimeError to fail loud rather
+    than silently produce an object whose GUID does not match the source.
+
+    If Create(Guid) succeeds but Add-to-owner-collection raises, re-raises
+    as RuntimeError describing the orphan risk.  The created object is NOT
+    stashed anywhere so the caller cannot accidentally reference it.
+
+    Returns (new_obj, True).  The second element is always True; callers
+    that previously used it to decide whether to record an identity_remap
+    entry no longer need to — GUID preservation is now guaranteed or the
+    call fails.
     """
     from System import Guid as DotNetGuid
     cache = getattr(target, "Cache")
     sl = cache.ServiceLocator
     factory = sl.GetService(factory_iface)
+    factory_name = getattr(factory_iface, "__name__", repr(factory_iface))
     parsed_guid = DotNetGuid.Parse(guid_str)
     try:
         new_obj = factory.Create(parsed_guid)
-        owner_collection.Add(new_obj)
-        return new_obj, True
-    except Exception:
-        new_obj = factory.Create()
-        owner_collection.Add(new_obj)
-        return new_obj, False
-
-
-def _apply_props_and_residue(target, ops_attr, new_obj, src_obj, tag):
-    """Shared post-create: apply syncable properties + Carrier-B residue."""
-    if __package__:
-        from .residue import apply_carrier_b
-    else:
-        from residue import apply_carrier_b  # type: ignore
-    ops = getattr(target, ops_attr, None)
-    if ops is not None and hasattr(ops, "GetSyncableProperties"):
-        src_ops = getattr(context_source_for(src_obj), ops_attr, None) if False else None
-        # Source's Ops is implicitly fetched in callers via source.<ops_attr>.
-        # See per-category execute_action below for the actual call.
-        pass
-    cache = getattr(target, "Cache")
-    ws = cache.DefaultAnalWs
+    except Exception as e:
+        raise RuntimeError(
+            f"Factory {factory_name} does not support Create(Guid); "
+            f"cannot align GUID {guid_str}"
+        ) from e
     try:
-        apply_carrier_b(new_obj, ws, tag, strict=False)
-    except Exception:
-        pass
+        owner_collection.Add(new_obj)
+    except Exception as e:
+        raise RuntimeError(
+            f"Orphan risk: Create({guid_str}) succeeded for "
+            f"{factory_name} but Add-to-owner failed: {e!r}. "
+            f"Investigate target LCM state before retrying."
+        ) from e
+    return new_obj, True
 
 
 # ----- phonological_features (memo step 2) ---------------------------------
@@ -1178,7 +1177,7 @@ def natural_classes_plan_action(piece, context, ws_mapping):
 
 def natural_classes_execute_action(action, context, ws_mapping, tag):
     from SIL.LCModel import (
-        IPhNCSegmentsFactory, IPhNCFeaturesFactory, ICmObject,
+        IPhNCSegmentsFactory, IPhNCFeaturesFactory, IPhNCSegments, ICmObject,
     )
     if __package__:
         from .residue import apply_carrier_b
@@ -1210,6 +1209,43 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
         target.NaturalClasses.ApplySyncableProperties(new_nc, props)
     except (AttributeError, TypeError):
         pass
+    # PhNCSegments: wire SegmentsRC to target-side phonemes by GUID.
+    # PhNCFeatures: FeaturesOA is OA (owned) and was handled by
+    # ApplySyncableProperties above — no extra wiring needed.
+    if class_name != "PhNCFeatures":
+        try:
+            src_segs = IPhNCSegments(src_nc).SegmentsRC
+        except (AttributeError, TypeError):
+            src_segs = src_nc.SegmentsRC
+        # Build a GUID -> target phoneme lookup once.
+        tgt_phoneme_by_guid = {
+            _guid_str_from(p): p
+            for p in target.Phonemes.GetAll()
+        }
+        try:
+            nc_label = _guid_str_from(src_nc)
+            for src_phon in src_segs:
+                phon_guid = _guid_str_from(src_phon)
+                tgt_phon = tgt_phoneme_by_guid.get(phon_guid)
+                if tgt_phon is None:
+                    raise RuntimeError(
+                        f"natural_classes_execute_action: NC {nc_label} "
+                        f"references source phoneme {phon_guid} which has no "
+                        f"counterpart on the target.  Transfer the phoneme "
+                        f"before transferring natural classes."
+                    )
+                try:
+                    IPhNCSegments(new_nc).SegmentsRC.Add(tgt_phon)
+                except (AttributeError, TypeError):
+                    new_nc.SegmentsRC.Add(tgt_phon)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(
+                f"Orphan risk: NC {_guid_str_from(src_nc)} was added to target "
+                f"but SegmentsRC wiring failed mid-loop: {e!r}. "
+                f"Investigate target LCM state before retrying."
+            ) from e
     try:
         apply_carrier_b(new_nc, cache.DefaultAnalWs, tag, strict=False)
     except Exception:

@@ -77,6 +77,53 @@ def build_run_plan(
         _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
         _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites)
 
+    # Phase 3a leaf-category dispatch: iterate every Phase 3a category
+    # that's enabled in the selection.  Each category's registered
+    # callbacks live in Lib/categories.py.  Errors-as-skips: if an
+    # enumerate_source raises, the category is treated as empty (per
+    # FR-308 skip-empty semantics).
+    _LEAF_DISPATCH_CATEGORIES = (
+        GrammarCategory.PHONOLOGICAL_FEATURES,
+        GrammarCategory.PHONEMES,
+        GrammarCategory.NATURAL_CLASSES,
+        GrammarCategory.PH_ENVIRONMENT,
+        GrammarCategory.PHONOLOGICAL_RULES,
+        GrammarCategory.STRATA,
+    )
+    if __package__:
+        from .categories import for_category
+    else:
+        from categories import for_category  # type: ignore
+    for cat in _LEAF_DISPATCH_CATEGORIES:
+        if not selection.is_on(cat):
+            continue
+        try:
+            bundle = for_category(cat)
+        except KeyError:
+            continue
+        try:
+            pieces = list(bundle["enumerate_source"](context, selection))
+        except Exception:
+            pieces = []
+        for piece in pieces:
+            try:
+                result = bundle["plan_action"](piece, context, ws_mapping)
+            except Exception as exc:  # planner-level failures become skips
+                from .models import SkipReason as _SR  # noqa
+                actions.append(PlannedAction(
+                    category=cat,
+                    source_guid=str(getattr(piece, "Guid", "?")),
+                    intended_target_guid="",
+                    summary=f"plan_action raised {type(exc).__name__}: {exc}",
+                ))
+                continue
+            if isinstance(result, Skip):
+                skips.append(result)
+            elif isinstance(result, PlannedOverwrite):
+                overwrites.append(result)
+            elif isinstance(result, PlannedAction):
+                actions.append(result)
+
     return RunPlan(
         context=context,
         selection=selection,
@@ -155,7 +202,11 @@ def _select_source_poses(source, selection: Selection) -> List:
         GrammarCategory.SENSE,
         GrammarCategory.MSA,
         GrammarCategory.ALLOMORPH,
-        GrammarCategory.PH_ENVIRONMENT,
+        # Phase 3a: PH_ENVIRONMENT is now a project-wide LEAF category
+        # (memo step 4b). It no longer triggers the verb-vertical walker.
+        # Allomorph closure still resolves environments by GUID against
+        # the same plan, so the relocation is invisible to existing
+        # Phase 0/1/2 callers selecting ALLOMORPH.
     )
     if not any(selection.is_on(c) for c in pos_closure_cats):
         return []
