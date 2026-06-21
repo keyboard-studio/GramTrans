@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at D:\Github\_Projects\_LEX\GramTrans\specs\005-phonology-block\plan.md
+at D:\Github\_Projects\_LEX\GramTrans\specs\006-inflection-prep-block\plan.md
 <!-- SPECKIT END -->
 
 ## flexlibs2 fork dependency
