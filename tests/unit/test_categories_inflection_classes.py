@@ -42,7 +42,7 @@ class _FakeInflFeatureOps:
 class _FakeProject:
     def __init__(self, name: str, infl_classes=()) -> None:
         self.name = name
-        self.InflectionFeature = _FakeInflFeatureOps(infl_classes)
+        self.InflectionFeatures = _FakeInflFeatureOps(infl_classes)
 
     def ProjectName(self):
         return self.name

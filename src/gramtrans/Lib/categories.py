@@ -267,11 +267,11 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 #            IFsClosedFeatureFactory.Create(Guid) + FeaturesOC.Add().
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeature.FeatureGetAll()."""
+    """Walk source.InflectionFeatures.FeatureGetAll()."""
     source = context.source_handle
-    if not hasattr(source, "InflectionFeature"):
+    if not hasattr(source, "InflectionFeatures"):
         return ()
-    return list(source.InflectionFeature.FeatureGetAll())
+    return list(source.InflectionFeatures.FeatureGetAll())
 
 
 def inflection_features_dependencies(piece):
@@ -306,8 +306,8 @@ def inflection_features_plan_action(piece, context: RunContext, ws_mapping: WSMa
         )
     src_guid = _guid_str_from(piece)
     target = context.target_handle
-    if hasattr(target, "InflectionFeature"):
-        if _target_has_guid(target.InflectionFeature.FeatureGetAll(), src_guid):
+    if hasattr(target, "InflectionFeatures"):
+        if _target_has_guid(target.InflectionFeatures.FeatureGetAll(), src_guid):
             return Skip(
                 category=GrammarCategory.INFLECTION_FEATURES,
                 source_guid=src_guid,
@@ -347,7 +347,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
     # Locate source feature.
     src_feat = None
-    for f in source.InflectionFeature.FeatureGetAll():
+    for f in source.InflectionFeatures.FeatureGetAll():
         if _guid_str_from(f) == src_guid:
             src_feat = f
             break
@@ -588,11 +588,11 @@ def custom_fields_execute_action(action, context, ws_mapping, tag):
 # Factory: IMoInflClassFactory.Create(Guid) + Add to ProdRestrictOA.PossibilitiesOS.
 
 def inflection_classes_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeature.InflectionClassGetAll()."""
+    """Walk source.InflectionFeatures.InflectionClassGetAll()."""
     source = context.source_handle
-    if not hasattr(source, "InflectionFeature"):
+    if not hasattr(source, "InflectionFeatures"):
         return ()
-    return list(source.InflectionFeature.InflectionClassGetAll())
+    return list(source.InflectionFeatures.InflectionClassGetAll())
 
 
 def inflection_classes_dependencies(piece):
@@ -612,8 +612,8 @@ def inflection_classes_plan_action(piece, context: RunContext, ws_mapping: WSMap
     """No GOLD check; emit PlannedAction or ALREADY_PRESENT_BY_GUID skip."""
     src_guid = _guid_str_from(piece)
     target = context.target_handle
-    if hasattr(target, "InflectionFeature"):
-        if _target_has_guid(target.InflectionFeature.InflectionClassGetAll(), src_guid):
+    if hasattr(target, "InflectionFeatures"):
+        if _target_has_guid(target.InflectionFeatures.InflectionClassGetAll(), src_guid):
             return Skip(
                 category=GrammarCategory.INFLECTION_CLASSES,
                 source_guid=src_guid,
@@ -648,7 +648,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     src_guid = action.source_guid
 
     src_obj = None
-    for ic in source.InflectionFeature.InflectionClassGetAll():
+    for ic in source.InflectionFeatures.InflectionClassGetAll():
         if _guid_str_from(ic) == src_guid:
             src_obj = ic
             break
@@ -677,8 +677,8 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     new_ic = IMoInflClass(new_ic)
 
     # Apply syncable properties.
-    src_props = source.InflectionFeature.GetSyncableProperties(src_obj)
-    target.InflectionFeature.ApplySyncableProperties(new_ic, src_props)
+    src_props = source.InflectionFeatures.GetSyncableProperties(src_obj)
+    target.InflectionFeatures.ApplySyncableProperties(new_ic, src_props)
 
     apply_carrier_b(new_ic, ws, tag)
     return new_ic
