@@ -1,8 +1,22 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-21 (08:45)
+**Updated**: 2026-06-21 (09:00)
 **Branch**: `main`
-**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US2 (detect-only) + US3 + US4 SHIPPED**. US2 creation remains blocked at flexlibs2 layer pending Phase 2 transaction mode; detect-and-report posture adopted via LEX crew cycle-1 review (Option C unanimous). Phase 3c (affixes / stems, memo steps 14-18) pending spec.
+**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US2 (detect-only) + US3 + US4 SHIPPED, MERGE-GATE GREEN**. LEX crew cycles 1+2+3 all closed. US2 creation remains blocked at flexlibs2 layer pending Phase 2 transaction mode; detect-and-report posture adopted. Phase 3c (affixes / stems, memo steps 14-18) pending spec.
+
+### Note for future sessions — IDENTITY vs GUID skip semantics
+
+US2 uses two distinct `SkipReason` codes for already-present detection:
+
+- `ALREADY_PRESENT_BY_GUID` — real LCM Guid match (used by every other category with first-class ICmObject identity)
+- `ALREADY_PRESENT_BY_IDENTITY` — Phase 3b US2 only. Custom fields have no LCM Guid; identity is the `(class_id, name)` tuple. The synthetic guid `cf:<owner>:<name>` is an internal key, not an LCM identity.
+
+This distinction was deliberate (lex-domain ruling, cycle 3). Do not collapse the two codes when adding new no-Guid categories — pick `ALREADY_PRESENT_BY_IDENTITY` for tuple-keyed identity matches; reserve `ALREADY_PRESENT_BY_GUID` for real Guid matches.
+
+### Phase 3c deferred items
+
+- `contracts/custom-field-creation.md` still describes the would-be `AddCustomField` write path; rewrite during Phase 3c doc sweep.
+- Colon-in-name guid escaping fragility on `_CustomFieldRecord` (benign now, fragile if guid ever parsed). Phase 3c.
 
 ---
 
