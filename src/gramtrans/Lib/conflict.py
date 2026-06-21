@@ -367,6 +367,72 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
     return tuple(prompts)
 
 
+def load_prior_log(tgt_object):
+    """T040 / US3 -- read the target object's residue tag and recover the
+    MergeDecisionLog from its `merge=` segment, or None if absent /
+    unparseable.
+
+    Per FR-215 graceful degradation: a corrupted tag returns None so
+    the caller falls back to fresh-prompt behaviour for that field.
+
+    Args:
+        tgt_object: an LCM object exposing `LiftResidue` (str-typed on
+            ILexEntry / IMoAffixAllomorph / IMoInflAffMsa per Phase 1.3c)
+            or `Description` (multistring on Carrier-B objects).
+
+    Returns:
+        MergeDecisionLog or None.
+    """
+    if __package__:
+        from .residue import ImportResidueTag
+    else:
+        from residue import ImportResidueTag
+    if tgt_object is None:
+        return None
+    # Try LiftResidue first (Carrier A); fall back to Description (Carrier B).
+    lift = getattr(tgt_object, "LiftResidue", None)
+    text = None
+    if isinstance(lift, str) and lift:
+        text = lift
+    elif lift is not None and hasattr(lift, "get_String"):
+        # Multistring LiftResidue: pull best-available text.
+        try:
+            ts = lift.BestAnalysisAlternative
+            text = (ts.Text or "") if ts is not None else ""
+        except (AttributeError, TypeError):
+            text = ""
+    if not text:
+        desc = getattr(tgt_object, "Description", None)
+        if desc is not None:
+            try:
+                ts = desc.BestAnalysisAlternative
+                text = (ts.Text or "") if ts is not None else ""
+            except (AttributeError, TypeError):
+                text = ""
+    if not text:
+        return None
+    tag = ImportResidueTag.parse(text)
+    if tag is None:
+        return None
+    return tag.decode_merge_log()
+
+
+def load_prior_decision(tgt_object, field_name: str):
+    """T040 / US3 -- recover the prior-run MergeDecision for `field_name`
+    on `tgt_object`, or None if absent.
+
+    Convenience wrapper around `load_prior_log` for callers that want a
+    per-field lookup.
+    """
+    log = load_prior_log(tgt_object)
+    if log is None:
+        return None
+    for d in log.decisions:
+        if d.field_name == field_name:
+            return d
+    return None
+
+
 def build_session_from_resolutions(prompts, decisions):
     """Helper: given a tuple of ConflictPrompts and the matching tuple of
     MergeDecisions returned by a ConflictResolver, build an
