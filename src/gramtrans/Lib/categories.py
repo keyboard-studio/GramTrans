@@ -544,10 +544,11 @@ def custom_fields_plan_action(piece, context, ws_mapping):
         return Skip(
             category=GrammarCategory.CUSTOM_FIELDS,
             source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            reason=SkipReason.ALREADY_PRESENT_BY_IDENTITY,
             detail=(
                 f"Custom field {piece.owner_class}.{piece.name!r} already "
-                f"present in target."
+                f"present in target (matched by (class_id, name) identity; "
+                f"custom fields have no LCM Guid)."
             ),
         )
     return Skip(

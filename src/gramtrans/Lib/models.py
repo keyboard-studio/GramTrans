@@ -80,6 +80,11 @@ class SkipReason(enum.Enum):
     # schema creation, blocked by LCM at the flexlibs2 layer). Detail
     # string MUST cite the specific user action required.
     NEEDS_MANUAL = "needs_manual"
+    # Phase 3b US2: identity-tuple match for entities lacking a real
+    # LCM Guid (e.g. custom fields keyed by (class_id, name)). Distinct
+    # from ALREADY_PRESENT_BY_GUID so sync-report readers don't infer
+    # a Guid identity check occurred when none did.
+    ALREADY_PRESENT_BY_IDENTITY = "already_present_by_identity"
 
 
 class MergeResolution(enum.Enum):

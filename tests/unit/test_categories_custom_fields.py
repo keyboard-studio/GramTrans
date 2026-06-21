@@ -119,13 +119,16 @@ def test_plan_action_emits_needs_manual_when_target_absent() -> None:
 
 
 def test_plan_action_emits_already_present_when_target_has_field() -> None:
+    """Match by (class_id, name) -> ALREADY_PRESENT_BY_IDENTITY (distinct
+    from ALREADY_PRESENT_BY_GUID because custom fields have no LCM Guid)."""
     rec = categories._CustomFieldRecord("LexEntry", "Noun class")
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Noun class")]})
     tgt = _FakeProject(custom_fields={"LexEntry": [(7001, "Noun class")]})  # same name
     result = categories.custom_fields_plan_action(rec, _ctx(src, tgt), WSM)
     assert isinstance(result, Skip)
-    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
+    assert result.reason == SkipReason.ALREADY_PRESENT_BY_IDENTITY
     assert "already present" in result.detail
+    assert "(class_id, name) identity" in result.detail
 
 
 def test_plan_action_handles_target_without_customfields_accessor() -> None:
@@ -139,12 +142,40 @@ def test_plan_action_handles_target_without_customfields_accessor() -> None:
 
 def test_plan_action_never_emits_planned_action() -> None:
     """lex-qc P1 invariant: plan_action MUST emit Skip directly, not
-    a PlannedAction that re-skips at execute time."""
+    a PlannedAction that re-skips at execute time. Both branches
+    (target-absent and target-present) MUST honor this."""
+    rec = categories._CustomFieldRecord("LexEntry", "Foo")
+    src = _FakeProject(custom_fields={"LexEntry": [(5002, "Foo")]})
+
+    # Branch 1: target ABSENT -> NEEDS_MANUAL
+    tgt_absent = _FakeProject()
+    result_absent = categories.custom_fields_plan_action(rec, _ctx(src, tgt_absent), WSM)
+    assert not isinstance(result_absent, PlannedAction)
+    assert isinstance(result_absent, Skip)
+    assert result_absent.reason == SkipReason.NEEDS_MANUAL
+
+    # Branch 2: target PRESENT -> ALREADY_PRESENT_BY_IDENTITY
+    tgt_present = _FakeProject(custom_fields={"LexEntry": [(7001, "Foo")]})
+    result_present = categories.custom_fields_plan_action(rec, _ctx(src, tgt_present), WSM)
+    assert not isinstance(result_present, PlannedAction)
+    assert isinstance(result_present, Skip)
+    assert result_present.reason == SkipReason.ALREADY_PRESENT_BY_IDENTITY
+
+
+def test_plan_action_findfield_exception_degrades_to_needs_manual() -> None:
+    """lex-qc P2 coverage: when target's FindField raises, treat as absent
+    (silent-degrade-to-NEEDS_MANUAL path at categories.py)."""
+    class _RaisingCFOps(_FakeCFOps):
+        def FindField(self, owner_class, name):
+            raise RuntimeError("simulated MDC accessor failure")
+
     rec = categories._CustomFieldRecord("LexEntry", "Foo")
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Foo")]})
     tgt = _FakeProject()
+    tgt.CustomFields = _RaisingCFOps({})  # swap in raising ops
     result = categories.custom_fields_plan_action(rec, _ctx(src, tgt), WSM)
-    assert not isinstance(result, PlannedAction)
+    assert isinstance(result, Skip)
+    assert result.reason == SkipReason.NEEDS_MANUAL
 
 
 # ============================================================================
