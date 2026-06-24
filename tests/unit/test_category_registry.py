@@ -39,14 +39,22 @@ LEAF_CATEGORIES = {
     # Phase 3b (memo step 13b) -- semantic domains; other 8 Phase 3b
     # categories already listed above.
     GrammarCategory.SEMANTIC_DOMAINS,
+    # Phase 3c (memo steps 14-18) — registered as stubs; real callbacks
+    # land in Phase 3c US1-US4. AFFIXES / AFFIX_TEMPLATES / SLOTS moved
+    # from HEAVY to LEAF as part of the Phase 3c migration plan. STEMS is
+    # new in Phase 3c.
+    GrammarCategory.AFFIXES,
+    GrammarCategory.SLOTS,
+    GrammarCategory.AFFIX_TEMPLATES,
+    GrammarCategory.STEMS,
 }
 
-# Heavy categories (AFFIXES, AFFIX_TEMPLATES, MSAs) live in their own files and
-# are explicitly absent from the leaf registry.
+# Heavy categories (MSAs, ALLOMORPH, ENTRY, SENSE, POS, WRITING_SYSTEMS_CHECK)
+# live in inline verb-vertical / Layer-3 paths and are absent from the leaf
+# registry. AFFIXES / AFFIX_TEMPLATES / SLOTS migrated to LEAF in Phase 3c
+# (still served by inline paths during the migration window; leaf stubs
+# raise NotImplementedError so duplicate planning does not occur).
 HEAVY_CATEGORIES = {
-    GrammarCategory.AFFIXES,
-    GrammarCategory.AFFIX_TEMPLATES,
-    GrammarCategory.SLOTS,
     GrammarCategory.MSA,
     GrammarCategory.ALLOMORPH,
     # PH_ENVIRONMENT moved to LEAF_CATEGORIES in Phase 3a (memo step 4b).

@@ -279,6 +279,16 @@ class RunPlan:
     identity_remap: dict = field(default_factory=dict)  # str -> str
     overwrites: tuple = ()  # tuple[PlannedOverwrite, ...] — Phase 1 (FR-101)
     conflicts: tuple = ()  # tuple[ConflictPrompt, ...] — Phase 2 (FR-201)
+    # Phase 3c (FR-333): in-plan binding mappings populated during
+    # AFFIXES/STEMS plan_action and consumed by tail blocks on
+    # AFFIX_TEMPLATES.execute_action (17.1 sub-pass) and
+    # STEMS.execute_action (post-pass A). Ephemeral per run; not
+    # serialised into the run snapshot.
+    msa_slot_bindings: dict = field(default_factory=dict)  # Guid -> list[Guid]
+    # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
+    # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
+    # "PrimaryLexemesRS": [...]}}.
+    lexentry_ref_bindings: dict = field(default_factory=dict)
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)

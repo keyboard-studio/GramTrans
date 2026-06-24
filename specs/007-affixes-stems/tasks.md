@@ -27,10 +27,10 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add 5 new members (`AFFIXES`, `ADHOC_COMPOUND_RULES`, `SLOTS`, `AFFIX_TEMPLATES`, `STEMS`) to `GrammarCategory` enum in `src/gramtrans/Lib/models.py` per data-model.md E1
-- [ ] T002 Extend `RunPlan` dataclass in `src/gramtrans/Lib/models.py` with `msa_slot_bindings: dict[Guid, list[Guid]]` and `lexentry_ref_bindings: dict[Guid, dict[str, list[Guid]]]` fields per data-model.md E11; default-factory both (supports FR-333 + FR-340)
-- [ ] T003 Add 5 stub registry entries (`affixes`, `adhoc_compound_rules`, `slots`, `affix_templates`, `stems`) to `LEAF_CATEGORIES` in `src/gramtrans/Lib/categories.py`, each pointing at 5 placeholder functions that raise `NotImplementedError("Phase 3c stub")`
-- [ ] T004 Extend `_LEAF_DISPATCH_CATEGORIES` tuple in `src/gramtrans/Lib/preview.py` AND `src/gramtrans/Lib/transfer.py` to include the 5 Phase 3c categories per contracts/category-callbacks.md wiring section; order MUST be `AFFIXES → ADHOC_COMPOUND_RULES → SLOTS → AFFIX_TEMPLATES → STEMS` to satisfy 17.1 sub-pass timing
+- [X] T001 Add 5 new members (`AFFIXES`, `ADHOC_COMPOUND_RULES`, `SLOTS`, `AFFIX_TEMPLATES`, `STEMS`) to `GrammarCategory` enum in `src/gramtrans/Lib/models.py` per data-model.md E1 — shipped in `b1a060c` (rename commit: TEMPLATES→AFFIX_TEMPLATES, ADHOC_RULES+COMPOUND_RULES merged → ADHOC_COMPOUND_RULES, STEMS added, AFFIXES + SLOTS pre-existing)
+- [X] T002 Extend `RunPlan` dataclass in `src/gramtrans/Lib/models.py` with `msa_slot_bindings: dict[Guid, list[Guid]]` and `lexentry_ref_bindings: dict[Guid, dict[str, list[Guid]]]` fields per data-model.md E11; default-factory both (supports FR-333 + FR-340)
+- [X] T003 Add 5 stub registry entries (`affixes`, `adhoc_compound_rules`, `slots`, `affix_templates`, `stems`) to `LEAF_CATEGORIES` in `src/gramtrans/Lib/categories.py`, each pointing at 5 placeholder functions that raise `NotImplementedError("Phase 3c <task-id>")`; updated `test_category_registry.py` to migrate AFFIXES/SLOTS/AFFIX_TEMPLATES from HEAVY to LEAF + add STEMS to LEAF
+- [X] T004 Extend `_LEAF_DISPATCH_CATEGORIES` tuple in `src/gramtrans/Lib/preview.py` AND `src/gramtrans/Lib/transfer.py` to include the 5 Phase 3c categories per contracts/category-callbacks.md wiring section; order is `AFFIXES → ADHOC_COMPOUND_RULES → SLOTS → AFFIX_TEMPLATES → STEMS` to satisfy 17.1 sub-pass timing (FR-333)
 
 ---
 

@@ -100,6 +100,15 @@ def build_run_plan(
         GrammarCategory.VARIANT_TYPES,
         GrammarCategory.COMPLEX_FORM_TYPES,
         GrammarCategory.SEMANTIC_DOMAINS,
+        # Phase 3c (memo steps 14-18) — order matters: 17.1 sub-pass on
+        # AFFIX_TEMPLATES executor tail requires AFFIXES and SLOTS to have
+        # planned first; post-pass A on STEMS executor tail requires
+        # AFFIXES + STEMS planning to be complete.
+        GrammarCategory.AFFIXES,
+        GrammarCategory.ADHOC_COMPOUND_RULES,
+        GrammarCategory.SLOTS,
+        GrammarCategory.AFFIX_TEMPLATES,
+        GrammarCategory.STEMS,
     )
     if __package__:
         from .categories import for_category

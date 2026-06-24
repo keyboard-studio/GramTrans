@@ -123,6 +123,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         GrammarCategory.VARIANT_TYPES,
         GrammarCategory.COMPLEX_FORM_TYPES,
         GrammarCategory.SEMANTIC_DOMAINS,
+        # Phase 3c (memo steps 14-18) — same order as preview.py; required
+        # by FR-333 (17.1 sub-pass) + FR-340 (post-pass A) tail-block timing.
+        GrammarCategory.AFFIXES,
+        GrammarCategory.ADHOC_COMPOUND_RULES,
+        GrammarCategory.SLOTS,
+        GrammarCategory.AFFIX_TEMPLATES,
+        GrammarCategory.STEMS,
     )
     if __package__:
         from .categories import for_category as _for_category
