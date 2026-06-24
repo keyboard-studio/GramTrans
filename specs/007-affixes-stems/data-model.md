@@ -70,23 +70,38 @@ Identity for no-Guid-overload allomorphs: `identity_remap` per FR-303 (Phase 1 i
 - Slot not found in target → `Skip(DEPENDENCY_UNRESOLVED)` on the MSA (with detail "slot_guid={...} not in target after slot transfer").
 - Empty source `SlotsRC` → no binding stashed; MSA stays unbound (matches Phase 0 Layer 3's 1-unbound-affix case for Ejagham Mini's `ro~-`).
 
-## E6 — Compound rule subclass dispatch
+## E6 — Compound rule + ad-hoc-prohibition subclass dispatch
 
-| ClassName | Factory | Subclass-specific refs |
+**Corrected per T008/T009 MCP probes — see [probe-results.md](probe-results.md).**
+
+### Compound rules
+
+Base `IMoCompoundRule` (5 inherited properties): `Name` (IMultiUnicode), `Description` (IMultiString — Carrier B residue), `Disabled` (bool), `StratumRA` (→ `IMoStratum`, Phase 3a dependency per FR-336), `ToProdRestrictRC` (→ `ICmPossibility` ref collection).
+
+| ClassName | Factory / wrapper | Subclass-specific OWNED MSAs (write in `execute_action`) |
 |---|---|---|
-| `MoEndoCompound` | `IMoEndoCompoundFactory.Create(Guid)` | `LeftMsaOA`, `RightMsaOA`, `HeadLast` bool |
-| `MoExoCompound` | `IMoExoCompoundFactory.Create(Guid)` | `LeftMsaOA`, `RightMsaOA`, `ToMsaOA` (exo-specific derived MSA) |
-| Unknown | (no factory) | `Skip(NEEDS_MANUAL)` per FR-341 |
+| `MoEndoCompound` | `MorphRuleOperations.CreateCompoundRule(name, endocentric=True, description=None)` (preferred); ServiceLocator fallback if needed | `HeadLast` (bool) + `OverridingMsaOA` (owned `IMoStemMsa`, optional — walk recursively if non-null and clone via identity_remap) |
+| `MoExoCompound` | `MorphRuleOperations.CreateCompoundRule(name, endocentric=False, description=None)` | `ToMsaOA` (owned `IMoStemMsa`, mandatory — walk recursively and clone via identity_remap) |
+| Unknown | (no factory dispatch path) | `Skip(NEEDS_MANUAL)` per FR-341 |
 
-**Ad-hoc prohibition subclasses** (under same `ADHOC_COMPOUND_RULES` category):
+**No `LeftMsaOA`/`RightMsaOA`**: the LCM model does NOT carry left/right operand MSAs on the rule. The morphological parser derives the operands at parse time from the morpheme-template chain; the rule stores only the result MSA (Endo: `OverridingMsaOA` when overriding; Exo: mandatory `ToMsaOA`) plus head selection (`HeadLast` for Endo) plus stratum scope (`StratumRA`).
 
-| ClassName | Factory | Refs |
-|---|---|---|
-| `MoAdhocProhibAtom` | `IMoAdhocProhibAtomFactory.Create(Guid)` | (probe-pending) |
-| `MoAdhocProhibitionGr` | `IMoAdhocProhibitionGrFactory.Create(Guid)` | `MembersRS` (sequence of `IMoAdhocProhibition`) |
-| Unknown | — | `Skip(NEEDS_MANUAL)` |
+### Ad-hoc prohibitions
 
-All compound + ad-hoc rules' references to affix LexEntries resolve via `identity_remap` (FR-337) where source-GUID differs from target-GUID.
+Base `IMoAdhocProhib` (2 inherited properties): `Adjacency` (int), `Disabled` (bool). No residue carrier on the base.
+
+| ClassName | Factory | Subclass-specific fields | Residue |
+|---|---|---|---|
+| `MoAdhocProhibGr` (GROUP) | `IMoAdhocProhibGrFactory.Create(Guid)` (ServiceLocator fallback) | `Name`, `Description` (IMultiString — Carrier B), **`MembersOC` (owned collection)** of nested `IMoAdhocProhib` atoms — group OWNS its members, recursive walk + create | Carrier B on `Description` |
+| `MoAlloAdhocProhib` (ATOMIC, allomorph-based) | `IMoAlloAdhocProhibFactory.Create(Guid)` (ServiceLocator fallback) | `AllomorphsRS` (ordered ref seq of `IMoForm`) + `FirstAllomorphRA` (single `IMoForm` ref) + `RestOfAllosRS` (ordered ref seq of `IMoForm`) — wire via `identity_remap` to US1 allomorphs | **NONE** — skip residue (atomic prohibitions carry no Description/LiftResidue accessor) |
+| `MoMorphAdhocProhib` (ATOMIC, morpheme-based) | `IMoMorphAdhocProhibFactory.Create(Guid)` (ServiceLocator fallback) | `MorphemesRS` (ordered ref seq of `IMoMorphSynAnalysis`) + `FirstMorphemeRA` (single `IMoMorphSynAnalysis` ref) + `RestOfMorphsRS` (ordered ref seq of `IMoMorphSynAnalysis`) — wire via `identity_remap` to US1 MSAs | **NONE** — skip residue |
+| Unknown | — | — | `Skip(NEEDS_MANUAL)` |
+
+**`MembersOC` vs `MembersRS`**: critical model correction — the LCM model stores prohibition group members as **owned** children (`MembersOC`), not as references (`MembersRS`). Each atom belongs to exactly one parent group. US4 `execute_action` recursively creates atomic prohibitions as owned children of the new group rather than wiring references.
+
+**Residue posture for atomic ad-hoc prohibitions**: atomic prohibitions carry no `Description` accessor. Group-owned atomics inherit their parent group's `GT|<run_id>|...` residue trail by ownership. Top-level atomic prohibitions (rare in practice — Ejagham Mini has 0) emit a run-report info-level line citing the source GUID and the run_id, no residue on the LCM object itself.
+
+All compound + ad-hoc rules' references to affix LexEntries / MSAs resolve via `identity_remap` (FR-337) where source-GUID differs from target-GUID.
 
 ## E7 — LexEntryRef post-pass A
 
@@ -124,8 +139,9 @@ All compound + ad-hoc rules' references to affix LexEntries resolve via `identit
 | `IMoForm` (all allomorph subclasses) | A | `LiftResidue` |
 | `IMoInflAffixSlot` | B | `Description` (multistring) |
 | `IMoInflAffixTemplate` | B | `Description` (multistring) |
-| `IMoEndoCompound` / `IMoExoCompound` | B (probe-pending) | `Description` (probe-pending) |
-| `IMoAdhocProhibition` subclasses | B (probe-pending) | (probe-pending) |
+| `IMoEndoCompound` / `IMoExoCompound` | B | `Description` (inherited from `IMoCompoundRule`) — confirmed T008 |
+| `IMoAdhocProhibGr` (group) | B | `Description` (multistring) — confirmed T009 |
+| `IMoAlloAdhocProhib` / `IMoMorphAdhocProhib` (atomic) | **none** | no carrier accessor; skip residue, emit run-report line only — confirmed T009 |
 
 ## E10 — Skip reason matrix (Phase 3c-specific)
 

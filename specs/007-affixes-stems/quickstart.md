@@ -31,11 +31,11 @@ report = api.execute_move(plan)
 - Phase 3a categories: ~30-50 actions (phonemes + NCs + envs + phon rules + strata) per [005 quickstart](../005-phonology-block/quickstart.md).
 - Phase 3b categories: ~10-30 actions (POS + inflection features + custom-field detect-only + variant types + complex form types + ~5 custom semantic domains).
 - Phase 3c categories:
-  - `AFFIXES`: ~13 affix LexEntries (Ejagham Mini verb-affix subset) with full owned-child closure (senses + MSAs + allomorphs + examples + pronunciations + etymologies + entry-refs).
-  - `SLOTS`: ~25 slots across all POSes that have them.
-  - `AFFIX_TEMPLATES`: ~5 templates with `PrefixSlotsRS`/`SuffixSlotsRS` wired.
-  - 17.1 sub-pass: ~12 MSAs wired to slots (mirrors Phase 0 Layer 3's 12/13 case; 1 unbound for `ro~-`).
-  - `STEMS`: ~239 stem LexEntries with full owned-child closure + sense-to-semantic-domain wiring + MSA-to-stratum wiring.
+  - `AFFIXES`: ~88 affix LexEntries (T012 inventory; was ~13 in Verb-only subset (Ejagham Mini full affix surface) with full owned-child closure (senses + MSAs + allomorphs + examples + pronunciations + etymologies + entry-refs).
+  - `SLOTS`: 9 slots across 6 POSes (T012 inventory) that have them.
+  - `AFFIX_TEMPLATES`: 7 templates with `PrefixSlotsRS`/`SuffixSlotsRS` wired.
+  - 17.1 sub-pass: up to 83 MoInflAffMsas wired to slots (T012 inventory) (Phase 0 verb-vertical's 12/13 case is a Verb-only subset).
+  - `STEMS`: 164 stem LexEntries (T012 inventory) with full owned-child closure + sense-to-semantic-domain wiring + MSA-to-stratum wiring.
   - `ADHOC_COMPOUND_RULES`: per probe-derived count (deferred to Phase 0 implementation).
   - Post-pass A: per source EntryRef inventory.
 - Total wall-clock < 30 s (SC-301 bounds Phase 3c slice alone at < 10s; full chain estimated < 30s).
@@ -133,13 +133,17 @@ From [STATUS.md](../../STATUS.md) Layer 3 inventory:
 | Inventory | Count |
 |---|---|
 | Total LexEntries | 252 |
-| Affix entries (`IsAffixType == True`) | 13 |
-| Stem entries (`IsAffixType == False`) | 239 |
-| Allomorphs across affix entries | 20 |
+| Affix entries (`IsAffixType == True`) | **88** |
+| Stem entries (`IsAffixType == False`) | **164** |
+| Allomorphs (all entries; lexeme form + alternates) | **293** |
 | Distinct PhEnvironments referenced (Phase 3a already-transferred) | 2 |
-| MSAs (verb-affix subset, Phase 0 confirmed) | 13 |
-| Slots (Verb POS) | 4 |
-| Templates (Verb POS) | 1 |
+| MSAs (full project, T012) | **247** (83 MoInflAffMsa + 164 MoStemMsa; no Deriv/Unclassified) |
+| Slots (across 6 POSes that carry them) | **9** |
+| Templates (across 6 POSes that carry them) | **7** |
+| Compound rules | **0** (US4 live-verification gap; synthetic fixtures only) |
+| Ad-hoc prohibitions | **0** (US4 live-verification gap) |
+| EntryRefs with ComponentLexemesRS | **6** (post-pass A surface) |
+| EntryRefs with PrimaryLexemesRS | **0** |
 
 **Deferred to Phase 0 implementation probe** (T004-T010 of future tasks.md):
 

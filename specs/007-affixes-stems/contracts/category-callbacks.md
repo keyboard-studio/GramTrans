@@ -32,21 +32,32 @@ def apply_residue(target_obj: ICmObject, *, run_ctx: RunContext) -> None: ...
 
 ## Category: `ADHOC_COMPOUND_RULES`
 
-**`enumerate_source`**: Concatenate `source.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC` and `source.LangProject.MorphologicalDataOA.CompoundRulesOS`.
+**Corrected per T008/T009/T011 MCP probes — see [../probe-results.md](../probe-results.md).**
 
-**`dependencies`**: Compound rules yield `(AFFIXES, msa.Guid)` for each referenced MSA (resolved through the rule's owning entry where applicable) and `(POS, pos.Guid)` for the head POS. Ad-hoc prohibitions yield `(AFFIXES, member.Guid)` for each `MembersRS` entry (in the group case).
+**`enumerate_source`**: Use the flexlibs2 wrappers — `project.MorphRules.GetAllCompoundRules()` ∪ `project.MorphRules.GetAllAdhocCoProhibitions()`. The wrappers internally enumerate `MorphologicalDataOA.{CompoundRulesOS, AdhocCoProhibitionsOC}`.
+
+**`dependencies`**: Per-subclass:
+- Compound rules: `(STRATA, rule.StratumRA.Guid)` for the rule's stratum scope per FR-336; `(AFFIXES, msa.Guid)` for any owned `OverridingMsaOA`/`ToMsaOA`'s parent entry; `(POS, pos.Guid)` for the MSA's owning POS.
+- Ad-hoc `MoAdhocProhibGr`: no top-level dependencies (members are owned children, walked recursively in `plan_action`/`execute_action`).
+- Ad-hoc `MoAlloAdhocProhib`: `(AFFIXES, allo.Owner.Guid)` for each allomorph in `AllomorphsRS` (allomorphs belong to entries created in US1).
+- Ad-hoc `MoMorphAdhocProhib`: `(AFFIXES, msa.Owner.Guid)` for each MSA in `MorphemesRS`.
 
 **`plan_action`**: Subclass dispatch on `ICmObject(src_obj).ClassName`. Returns one `PlannedAction` per rule. Unknown subclass → `Skip(NEEDS_MANUAL)`.
 
-**`execute_action`**: Per-subclass factory call:
-- `MoEndoCompound`: `IMoEndoCompoundFactory.Create(Guid)`, then write `LeftMsaOA`, `RightMsaOA`, `HeadLast`.
-- `MoExoCompound`: `IMoExoCompoundFactory.Create(Guid)`, then write `LeftMsaOA`, `RightMsaOA`, `ToMsaOA`.
-- `MoAdhocProhibAtom`: `IMoAdhocProhibAtomFactory.Create(Guid)`, write subclass-specific fields.
-- `MoAdhocProhibitionGr`: `IMoAdhocProhibitionGrFactory.Create(Guid)`, write `MembersRS` via identity_remap.
+**`execute_action`**: Per-subclass:
+- `MoEndoCompound`: prefer `project.MorphRules.CreateCompoundRule(name, endocentric=True, description=...)` (flexlibs2 wrapper); ServiceLocator fallback if unsuitable. Then write `HeadLast` and (if source has one) clone the owned `OverridingMsaOA` (recursive walk + identity_remap). Write inherited `StratumRA` + `ToProdRestrictRC`.
+- `MoExoCompound`: `project.MorphRules.CreateCompoundRule(name, endocentric=False, description=...)`. Then clone the mandatory `ToMsaOA` (recursive walk + identity_remap). Write inherited `StratumRA` + `ToProdRestrictRC`.
+- `MoAdhocProhibGr`: `IMoAdhocProhibGrFactory.Create(Guid)` via ServiceLocator; write `Name`, recursively create `MembersOC` (owned atoms — re-enter the dispatcher for each child atom).
+- `MoAlloAdhocProhib`: `IMoAlloAdhocProhibFactory.Create(Guid)` via ServiceLocator; wire `AllomorphsRS`, `FirstAllomorphRA`, `RestOfAllosRS` via identity_remap against US1-created `IMoForm` allomorphs. Wire inherited `Adjacency`, `Disabled`.
+- `MoMorphAdhocProhib`: `IMoMorphAdhocProhibFactory.Create(Guid)` via ServiceLocator; wire `MorphemesRS`, `FirstMorphemeRA`, `RestOfMorphsRS` via identity_remap against US1-created `IMoMorphSynAnalysis` instances. Wire inherited `Adjacency`, `Disabled`.
 
-Owner attach: rules append to `target.LangProject.MorphologicalDataOA.CompoundRulesOS` or `AdhocCoProhibitionsOC`.
+Owner attach: top-level rules go to `target.LangProject.MorphologicalDataOA.CompoundRulesOS` (`.Append`) or `AdhocCoProhibitionsOC` (`.Add`); nested atomic prohibitions become owned children of their parent `MoAdhocProhibGr.MembersOC`.
 
-**`apply_residue`**: Carrier B — `Description` multistring append.
+**`apply_residue`**:
+- `MoEndoCompound`/`MoExoCompound`/`MoAdhocProhibGr`: Carrier B — `Description` multistring append.
+- `MoAlloAdhocProhib`/`MoMorphAdhocProhib`: **no residue** — emit `report.Info(f"[adhoc-atomic] {src_guid} -> {target_guid} (run_id={tag.run_id})")` instead; no LCM mutation.
+
+**Live-verification gap**: Ejagham Mini has 0 compound rules + 0 ad-hoc prohibitions (T012 inventory). US4 ships with unit + synthetic-fixture integration coverage only.
 
 ## Category: `SLOTS`
 
@@ -68,7 +79,7 @@ Owner attach: rules append to `target.LangProject.MorphologicalDataOA.CompoundRu
 
 **`plan_action`**: One `PlannedAction` per template. Collision guard as above.
 
-**`execute_action`**: `IMoInflAffixTemplateFactory.Create(Guid)`, then `pos.AffixTemplatesOS.Add(template)`. Wire `PrefixSlotsRS`/`SuffixSlotsRS` in source order via target-slot GUID lookup. **Tail block (17.1 sub-pass)**: after all template writes complete, iterate `plan.msa_slot_bindings`; for each `(msa_guid, slot_guids)` pair, write `msa.SlotsRC.Add(slot)` per resolved slot. Unresolved → `Skip(DEPENDENCY_UNRESOLVED)` emitted into the run report (NOT a PlannedAction failure — the template write already succeeded).
+**`execute_action`**: Prefer `project.MorphRules.CreateAffixTemplate(pos_or_hvo, name, description=None)` (flexlibs2 wrapper); ServiceLocator fallback to `IMoInflAffixTemplateFactory.Create(Guid)` only if Guid preservation requires it. Then wire **5 slot reference sequences** in source order via target-slot GUID lookup: `PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`, `ProcliticSlotsRS`, `SlotsRS` (per T010 probe — spec previously assumed only 2). Write `Final` (bool), `Disabled` (bool); wire `StratumRA` to Phase 3a-transferred Stratum by GUID (per FR-336). Clone owned `RegionOA` if non-null. **Tail block (17.1 sub-pass)**: after all template writes complete, iterate `plan.msa_slot_bindings`; for each `(msa_guid, slot_guids)` pair, write `msa.SlotsRC.Add(slot)` per resolved slot. Unresolved → `Skip(DEPENDENCY_UNRESOLVED)` emitted into the run report (NOT a PlannedAction failure — the template write already succeeded).
 
 **`apply_residue`**: Carrier B — `Description` multistring append.
 

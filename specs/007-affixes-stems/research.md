@@ -51,7 +51,7 @@ This document records the research decisions for the five new Phase 3c categorie
 
 **Rationale**: Phase 0 Layer 3 used `CreateInflAff` exclusively (verb-vertical only encounters inflectional affix MSAs). Phase 3c generalises to derivational + unclassified — both surfaced by MCP probe at Phase 0 implementation time.
 
-**Deferred to Phase 0 implementation MCP probes**: confirm `MSAOperations` has `CreateDerivAff` + `CreateUnclassified` wrappers, or fall back to `IMoDerivAffMsaFactory` / `IMoUnclassifiedAffixMsaFactory` via `Cache.ServiceLocator.GetInstance[T]()`.
+**Deferred to Phase 0 implementation MCP probes**: confirm `MSAOperations` has `CreateDerivAff` + `CreateUnclassifiedAffix` wrappers, or fall back to `IMoDerivAffMsaFactory` / `IMoUnclassifiedAffixMsaFactory` via `Cache.ServiceLocator.GetInstance[T]()`.
 
 **Edge case**: An MSA whose subclass is not surfaced by probe emits `Skip(NEEDS_MANUAL)` — same fail-loud posture as FR-341 compound rules.
 
@@ -159,7 +159,7 @@ Subclass-specific reference fields (`IMoExoCompound.ToMsaRA`, etc.) MUST be wire
 These are deferred to T004-T010 of the future tasks.md per the Phase 3a/3b precedent:
 
 1. `ILexExampleSentenceFactory`, `ILexPronunciationFactory`, `ILexEtymologyFactory`, `ILexEntryRefFactory` — confirm `Create(Guid, owner)` or fall back to ServiceLocator.
-2. `MSAOperations.CreateDerivAff`, `CreateUnclassified`, `CreateStem` — confirm wrapper signatures.
+2. `MSAOperations.CreateDerivAff`, `CreateUnclassifiedAffix`, `CreateStem` — confirm wrapper signatures.
 3. `IMoEndoCompoundFactory`, `IMoExoCompoundFactory` — surface confirmation + subclass enumeration.
 4. `IMoAdhocProhibAtomFactory`, `IMoAdhocProhibitionGrFactory` — surface confirmation.
 5. `IMoInflAffixTemplate.PrefixSlotsRS` / `SuffixSlotsRS` accessor names + collection types (RS sequence vs OS owning).
