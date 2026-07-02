@@ -17,6 +17,7 @@ from typing import Iterable
 if __package__:
     from .models import (
         CategoryReport,
+        ExcludedLossy,
         GrammarCategory,
         PlannedAction,
         RunMode,
@@ -28,6 +29,7 @@ if __package__:
 else:
     from models import (
         CategoryReport,
+        ExcludedLossy,
         GrammarCategory,
         PlannedAction,
         RunMode,
@@ -46,7 +48,8 @@ else:
 
 def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      wall_clock_seconds: float = 0.0,
-                     extra_skips=()) -> RunReport:
+                     extra_skips=(),
+                     extra_excluded_lossy=()) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
     Iterates plan.actions to accumulate per-category added/closure_pulled_in
@@ -63,6 +66,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                 "added": 0, "skipped": 0, "closure_pulled_in": 0, "overwritten": 0,
                 "interactive_resolved": 0, "interactive_skipped": 0,
                 "ws_mapped": 0, "ws_created": 0, "ws_skipped": 0,
+                "excluded_lossy": 0,
             }
         return per_category[cat]
 
@@ -98,6 +102,14 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         if skip.reason == SkipReason.INTERACTIVE_SKIP:
             b["interactive_skipped"] += 1
 
+    # Phase 3c Selection UI: tally EXCLUDED-LOSSY warnings from the plan
+    # and any extras passed in by the executor.
+    excluded_lossy_all: list = list(getattr(plan, "excluded_lossy", ()))
+    excluded_lossy_all.extend(extra_excluded_lossy)
+    for el in excluded_lossy_all:
+        b = _bucket(el.category)
+        b["excluded_lossy"] += 1
+
     per_category_final = {
         cat: CategoryReport(
             added=counts["added"],
@@ -109,6 +121,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             ws_mapped=counts["ws_mapped"],
             ws_created=counts["ws_created"],
             ws_skipped=counts["ws_skipped"],
+            excluded_lossy=counts["excluded_lossy"],
         )
         for cat, counts in per_category.items()
     }
@@ -132,6 +145,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         identity_remap=dict(plan.identity_remap),
         wall_clock_seconds=wall_clock_seconds,
         empty_categories=empty_cats,
+        excluded_lossy=tuple(excluded_lossy_all),
     )
 
 
@@ -236,6 +250,10 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield "  Skips:"
         for s in report.skips:
             yield f"    - [{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}"
+    if getattr(report, "excluded_lossy", ()):
+        yield f"  Warnings (entries with missing references) -- {len(report.excluded_lossy)} total:"
+        for el in report.excluded_lossy:
+            yield f"    - [WARN] {el.message}"
     if report.identity_remap:
         yield "  Identity remap (LCM denied GUID-on-create):"
         for src, dst in sorted(report.identity_remap.items()):

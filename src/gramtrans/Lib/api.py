@@ -209,27 +209,24 @@ def compute_preview(context: RunContext,
                     selection: Selection,
                     ws_mapping: Optional[WSMapping],
                     ) -> Tuple[PreviewState, object]:
-    """Two-stage call per contracts/module-ui.md.
+    """Compute a preview plan.
+
+    Phase 3c wizard change: WS is now a project-level page-1 decision made
+    once up-front.  The two-stage NEEDS_WS_MAPPING handshake is RETIRED.
+    When `ws_mapping` is None, an empty identity mapping is substituted
+    (the wizard has already collected WS choices on page 1).
 
     Returns:
-        (NEEDS_WS_MAPPING, RequiredWSMapping(...)) — when `ws_mapping` is
-            None OR is incomplete vs the Selection's required WSs.
-        (PREVIEW_READY, RunPlan) — when the mapping is complete; the plan
-            consumes the Selection + WSMapping directly.
+        (PREVIEW_READY, RunPlan) — always; the plan consumes the Selection
+            + WSMapping directly.
 
     Never mutates target (Principle III).
     """
-    # MVP scope: the WS-requirement walk per category isn't implemented yet
-    # (T039+). For now, treat any selection as requiring an empty WS set —
-    # the UI can supply WSMapping(entries=()) and proceed. Once category-side
-    # required_writing_systems() hooks land, this function computes the
-    # union here.
-    required = required_ws_set([])
-
+    # WS handshake retired (Phase 3c wizard): treat None as empty identity mapping.
+    # The wizard collects WS choices on page 1; by the time compute_preview is
+    # called the mapping is already resolved (or empty for projects with matching WSes).
     if ws_mapping is None:
-        return (PreviewState.NEEDS_WS_MAPPING, RequiredWSMapping(pairs=required))
-    if not is_complete(ws_mapping, required):
-        return (PreviewState.NEEDS_WS_MAPPING, RequiredWSMapping(pairs=required))
+        ws_mapping = WSMapping(entries=())
 
     plan = build_run_plan(context, selection, ws_mapping,
                           context.source_handle, context.target_handle)
@@ -239,7 +236,14 @@ def compute_preview(context: RunContext,
 def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     """Execute the plan against the target. PRECONDITION: caller has verified
     the plan was produced from the current Selection/WSMapping (UI
-    state-machine gate, contracts/module-ui.md)."""
+    state-machine gate, contracts/module-ui.md).
+
+    WS mapping is NOT a parameter here by design: the WSMapping is a
+    preview-time concern that `compute_preview` has already baked into `plan`
+    (how source WS-tagged strings resolve into target objects). `execute_move`
+    is a faithful executor of an already-decided plan. Do NOT add a WSMapping
+    argument and re-map at execute time — that would let the committed result
+    diverge from the previewed one. The plan is the single source of truth."""
     if plan.context is not context and plan.context != context:
         raise PreviewStale(
             "Plan's context does not match the call context; the UI must "

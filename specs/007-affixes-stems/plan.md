@@ -128,6 +128,132 @@ tests/
 
 **Structure Decision**: Single project, FLExTrans-style flat entry + `Lib/` siblings. Phase 3c is the deepest extension to date — two of the five categories own non-trivial child trees, and two tail-pass mechanisms (17.1 sub-pass on `AFFIX_TEMPLATES`, post-pass A on `STEMS`) introduce a new in-plan binding mapping. Still, the leaf-dispatch shape from Phase 3a/3b absorbs the work without modifying the dispatch loop itself — only the executor's per-category tail blocks change.
 
+## Selection UI Extension (revised 2026-07-01)
+
+Two user design refinements landed after the cycle-1 "item-anchor" GO and before
+build. The full UI narrative lives in `../../Transfer FLEx Grammar Module.md`
+section "Selection UI Design"; this subsection records the formal deltas.
+
+**Refinement 1 -- second mental model + per-category three-scope selector.**
+Each schema category becomes a three-scope selector NONE / AS-NEEDED / ALL
+(default AS-NEEDED), plus per-item dependency deselection inside AS-NEEDED. This
+introduces a FOURTH plan disposition, `EXCLUDED-LOSSY` (deliberate, warn+allow),
+distinct from the accidental hard-failing `DEPENDENCY_UNRESOLVED`.
+
+Model deltas (`src/gramtrans/Lib/models.py`, Selection ~L140):
+- Add `CategoryScope` enum {NONE, AS_NEEDED, ALL}.
+- Replace/augment global `include_closure: bool` with
+  `category_scopes: dict[GrammarCategory, CategoryScope]`. `include_closure=True`
+  maps to uniform AS_NEEDED; an explicit whole-category toggle maps to ALL. The
+  two were conflated under one bool and are now separated.
+- Add per-item exclusion set `excluded_deps: frozenset[str]` (source GUIDs).
+- Add `SkipReason.EXCLUDED_LOSSY` (or a dedicated warning channel) so the
+  disposition is representable end-to-end.
+- Keep backward-compat construction (bool -> uniform scope) so the existing 324
+  tests pass until migrated.
+
+`preview.py` closure branches (~L322 POS, ~L394 templates, ~L470/480 Layer-3
+gate) currently read one `closure_on = selection.include_closure`. Each becomes
+per-category-scope-aware: NONE (no pull; referencing entry -> EXCLUDED-LOSSY if
+target lacks the dep), AS_NEEDED (current behaviour minus `excluded_deps`), ALL
+(enumerate whole source category).
+
+**Refinement 2 -- target-aware warning gate for deliberate omissions.**
+Soft gate, never hard-blocks. Per dropped dep, three outcomes; only the third
+warns: (1) dep exists in target -> LINK, silent; (2) dep absent + unreferenced ->
+silent; (3) dep absent + a copied entry references it -> WARN+ALLOW =
+EXCLUDED-LOSSY. Warning is ENTRY-CENTRIC ("Entry '-PL' will have no Part of
+Speech"). Because target is bound+probed early (locked constraint), the
+"exists in target?" check has live data at Preview time.
+
+Gate surfaces in `stats_panel.py` as a distinct WARNING severity (not error, not
+skip). Move is the confirmation gate: outstanding warnings -> summary dialog
+("N entries will transfer with missing references. Proceed?") before writing.
+Preserves "only write is at Move/Finish."
+
+**Refinement 3 -- 5-page wizard replaces single-window (BUILD DECISION 2026-07-01).**
+The single-window base (commit 88f2925) is verified GREEN (422 passed / 22 skipped
+/ 0 failed, all constitution gates PASS). The delivery vehicle becomes a 5-page
+QWizard that re-hosts the existing widgets verbatim and REPLACES `main_window`. The
+full narrative is in `../../Transfer FLEx Grammar Module.md` section (0); formal
+deltas:
+
+- Pages: (1) Project + Writing Systems, (2) item picker [Stems tab stubbed/disabled],
+  (3) schema scope + conflict mode, (4) Preview, (5) Finish/Move.
+- WS becomes a PROJECT-LEVEL page-1 decision over ACTIVE writing systems only. The
+  two-stage `NEEDS_WS_MAPPING` handshake is RETIRED. Low blast radius: only
+  `tests/unit/test_api_surface.py` asserts the handshake shape (2 assertions to
+  rewrite); the other five `compute_preview` callers ride through unchanged.
+- EMPTY-WS PRUNE AT MOVE: prune multistring/multiunicode alternatives with no
+  content for a chosen WS, using the strings `GetSyncableProperties` already
+  extracted (no ITsMultiString cast, no extra LCM call).
+- WIRE THE P1 CONFIRM-ON-MOVE GATE at Finish: the verified base has the gate as a
+  validated data-model predicate (`plan.excluded_lossy_count()`) but it is NOT
+  Qt-wired -- a headless Move would silently proceed. Finish MUST query the
+  predicate and block/confirm when `excluded_lossy_count() > 0`.
+
+**P0 defect fixes (2026-07-01, commit on feature/007-selection-ui).**
+
+- Defect 1 [P0] -- Write-layer idempotency guard (`transfer.py`).
+  LCM `factory.Create(existingGuid, owner)` does NOT throw on a duplicate GUID;
+  it silently writes a second object to `.fwdata` on CloseProject. Fix: at every
+  Guid-preserving Create site, call `target.Object(src_guid)` inside try/except
+  BEFORE `factory.Create`. If the object exists and its ClassName matches, return
+  the typed cast (skip Create). If the ClassName mismatches, log WARNING and return
+  None (skip Create, do not reuse wrong-class object).
+  Seven guarded sites: _create_pos_with_guid (PartOfSpeech),
+  _create_template_with_guid (MoInflAffixTemplate), _create_slot_with_guid
+  (MoInflAffixSlot), _create_environment_with_guid (PhEnvironment),
+  _create_lexentry_with_guid (LexEntry), _create_lexsense_with_guid (LexSense).
+  MSA and allomorph are EXCLUDED because their factories have no Guid overload
+  (they remap via identity_remap).
+  Move non-repeatability: after a successful execute_move, `_PagePreview._cached_plan`
+  is set to None so a double-click or re-entry cannot re-execute the plan.
+
+- Defect 2 [P0-ish] -- WS page rebuild (`selection_wizard.py`).
+  The bare QListWidget on page 1 is replaced by a three-way MAP / CREATE / SKIP
+  control split into Vernacular WS and Analysis WS groups (by WSKind). Dual-role
+  WS appears in both groups; vernacular is lead (analysis defaults to vernacular
+  choice, linked-until-touched). Dual-role CREATE -> both roles point at the SAME
+  target WS (no double-create, WSMapping 1:1 invariant satisfied). The resulting
+  WSMapping is threaded into both `gt_api.compute_preview` and `gt_api.execute_move`
+  (via the plan, which carries ws_mapping from compute_preview).
+
+**Refinement 4 -- conflict-mode model (category-kind default + per-item IsProtected).**
+Add `ConflictMode` enum {ADD_NEW, MERGE, OVERWRITE} and
+`category_conflict_modes: dict[GrammarCategory, ConflictMode]` on Selection. Gating
+is two-layer (full table + rationale in the design doc section (h)):
+- Layer 1 category-kind default (from lex-domain classification):
+  MULTI_INSTANCE offers all three; SINGLETON_NONDELETABLE hides ADD_NEW;
+  GOLD_RESERVED hides ADD_NEW + forbids OVERWRITE (Merge/link only).
+- Layer 2 per-item `IsProtected` refinement (cast-safe read on ILexEntryType /
+  IPartOfSpeech / ICmSemanticDomain / IMoMorphType / ILexEntryInflType /
+  ILexRefType): a protected item downgrades to Merge/link-only regardless of
+  category default; a non-protected item offers the full set (capped by Layer 1).
+  Failed cast / absent attr -> treat as IsProtected=False (permissive) only when
+  protection cannot be proven.
+- Reclassifications from the probe session: STRATA -> MULTI_INSTANCE-capable
+  (StrataOS is an Owning SEQUENCE, multi is model-legal). CUSTOM_FIELDS keeps the
+  conservative default (ADD hidden, OVERWRITE forbidden, MERGE no-op-if-identical)
+  pending probe 4 (custom-field-definition mutability), which is UNRESOLVED but
+  safely defaulted.
+- Interim MERGE is Option b: link-if-present-by-GUID else ADD, NO field-level
+  update, explicitly labeled in the page-3 control.
+
+**Constitution alignment (re-checked):**
+- III Preview-Before-Mutate: PASS. Scope resolution + warning computation happen
+  at Preview; confirm-on-Move keeps the single write point at Move/Finish. Wizard
+  page 5 = Finish = the single write point; the newly-wired confirm gate preserves
+  the invariant.
+- V Referential Completeness: PASS (strengthened). Lines 248-251 require the
+  closure be per-item deselectable AND require unsatisfiable deps be REPORTED, not
+  silently transferred broken. Per-item exclusion satisfies the deselect mandate;
+  the entry-centric warning + EXCLUDED-LOSSY disposition IS the required report.
+- I FLEx Domain Fidelity: PASS. LINK-not-copy for already-present/GOLD deps
+  preserves target identity; EXCLUDED-LOSSY writes a null reference only on
+  explicit informed waiver. Per-item IsProtected gating prevents overwriting
+  factory-seeded reference data while still permitting user-added peers.
+
 ## Complexity Tracking
 
 > Constitution Check passed with no violations.

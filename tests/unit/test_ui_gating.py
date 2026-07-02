@@ -2,7 +2,7 @@
 
 Tests the pure-Python state-machine helpers inside the Qt dialog classes
 without rendering any widgets.  Strategy: install MagicMock stubs for
-PyQt5 in sys.modules *before* importing the UI modules, then bypass
+PyQt6 in sys.modules *before* importing the UI modules, then bypass
 __init__ via __new__() and wire internal state manually.
 
 Four tests land:
@@ -39,8 +39,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 # Concrete sentinel values that picker_state() compares against.
-_QT_CHECKED = 2          # Qt::Checked == 2 in Qt5
-_QT_USER_ROLE = 0x0100   # Qt::UserRole == 256 in Qt5
+# PyQt6 fully scopes its enums (Qt.CheckState.Checked, Qt.ItemDataRole.UserRole,
+# Qt.ItemFlag.*), so the stub mirrors that nesting. The values must be real
+# ints because module-level code evaluates `Qt.ItemDataRole.UserRole + 1`.
+_QT_CHECKED = 2          # Qt.CheckState.Checked == 2
+_QT_USER_ROLE = 0x0100   # Qt.ItemDataRole.UserRole == 256
 
 
 class _QDialog:
@@ -52,33 +55,23 @@ class _QWidget:
 
 
 _qtcore_stub = MagicMock()
-_qtcore_stub.Qt.Checked = _QT_CHECKED
-_qtcore_stub.Qt.UserRole = _QT_USER_ROLE
-# Make Qt.Horizontal, Qt.ItemIsUserCheckable, etc. return harmless ints.
-_qtcore_stub.Qt.Horizontal = 1
-_qtcore_stub.Qt.ItemIsUserCheckable = 16
-_qtcore_stub.Qt.ItemIsAutoTristate = 64
-_qtcore_stub.Qt.ItemIsEditable = 2
+# Scoped-enum shape (PyQt6). Concrete ints so arithmetic/comparison resolve.
+_qtcore_stub.Qt.CheckState.Checked = _QT_CHECKED
+_qtcore_stub.Qt.CheckState.Unchecked = 0
+_qtcore_stub.Qt.ItemDataRole.UserRole = _QT_USER_ROLE
+_qtcore_stub.Qt.Orientation.Horizontal = 1
+_qtcore_stub.Qt.ItemFlag.ItemIsUserCheckable = 16
+_qtcore_stub.Qt.ItemFlag.ItemIsAutoTristate = 64
+_qtcore_stub.Qt.ItemFlag.ItemIsEditable = 2
 
 _qtwidgets_stub = MagicMock()
 # Attach real classes so subclasses defined in the UI modules are also real.
 _qtwidgets_stub.QDialog = _QDialog
 _qtwidgets_stub.QWidget = _QWidget
 
-sys.modules.setdefault("PyQt5", MagicMock(QtCore=_qtcore_stub, QtWidgets=_qtwidgets_stub))
-sys.modules.setdefault("PyQt5.QtCore", _qtcore_stub)
-sys.modules.setdefault("PyQt5.QtWidgets", _qtwidgets_stub)
-
-# Also stub PySide2 so the fallback import path doesn't blow up.
-_pyside2_qtcore = MagicMock()
-_pyside2_qtcore.Qt.Checked = _QT_CHECKED
-_pyside2_qtcore.Qt.UserRole = _QT_USER_ROLE
-_pyside2_qtwidgets = MagicMock()
-_pyside2_qtwidgets.QDialog = _QDialog
-_pyside2_qtwidgets.QWidget = _QWidget
-sys.modules.setdefault("PySide2", MagicMock())
-sys.modules.setdefault("PySide2.QtCore", _pyside2_qtcore)
-sys.modules.setdefault("PySide2.QtWidgets", _pyside2_qtwidgets)
+sys.modules.setdefault("PyQt6", MagicMock(QtCore=_qtcore_stub, QtWidgets=_qtwidgets_stub))
+sys.modules.setdefault("PyQt6.QtCore", _qtcore_stub)
+sys.modules.setdefault("PyQt6.QtWidgets", _qtwidgets_stub)
 
 # ---------------------------------------------------------------------------
 # Now safe to import the UI modules and the model types they depend on.

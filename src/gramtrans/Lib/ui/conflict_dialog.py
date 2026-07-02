@@ -1,4 +1,4 @@
-"""ConflictDialog (T026) -- PyQt5 implementation of the ConflictResolver
+"""ConflictDialog (T026) -- PyQt6 implementation of the ConflictResolver
 protocol from `Lib/conflict.py`.
 
 Per [contracts/conflict-prompt.md], the dialog:
@@ -24,10 +24,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover -- PySide2 fallback
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from ..conflict import UserCancelled
@@ -77,7 +74,7 @@ class ConflictDialog(QtWidgets.QDialog):
         outer.addWidget(header)
 
         # Split: list on left, detail on right
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self._list = QtWidgets.QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
         split.addWidget(self._list)
@@ -134,9 +131,12 @@ class ConflictDialog(QtWidgets.QDialog):
 
         # Bottom button bar
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QtWidgets.QDialogButtonBox.Apply).clicked.connect(self._on_apply)
+        buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+        ).clicked.connect(self._on_apply)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
 
@@ -261,7 +261,7 @@ class ConflictDialog(QtWidgets.QDialog):
         if tuple(prompts) != self._prompts:
             # Re-init if caller passes a different prompt list.
             return ConflictDialog(prompts, parent=self.parent()).resolve(prompts)
-        result = self.exec_()
-        if result != QtWidgets.QDialog.Accepted:
+        result = self.exec()
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
             raise UserCancelled("conflict dialog dismissed")
         return tuple(d for d in self._decisions if d is not None)

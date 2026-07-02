@@ -14,10 +14,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover — PySide2 fallback
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from ..api import TargetCandidate
@@ -30,7 +27,7 @@ class TargetPickerDialog(QtWidgets.QDialog):
 
     Usage:
         dlg = TargetPickerDialog(candidates, parent=main_window)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             choice = dlg.selected_candidate()
             # → caller passes `choice` into api.bind_target(stub, choice)
     """
@@ -61,18 +58,19 @@ class TargetPickerDialog(QtWidgets.QDialog):
                 f"{cand.project_name}\n    {cand.project_path}",
                 self._list,
             )
-            item.setData(QtCore.Qt.UserRole, cand)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, cand)
         layout.addWidget(self._list, 1)
 
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
         self._list.itemDoubleClicked.connect(lambda _: self.accept())
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            QtCore.Qt.Horizontal,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            QtCore.Qt.Orientation.Horizontal,
             self,
         )
-        self._ok_button = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        self._ok_button = buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         self._ok_button.setEnabled(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

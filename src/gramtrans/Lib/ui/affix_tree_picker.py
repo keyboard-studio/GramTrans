@@ -13,15 +13,23 @@ Convenience-toggle semantics (verified by T072 unit tests in
 Returns the picker's checked state as a `PickerState` from `Lib/selection.py`;
 the caller passes it through `selection.build_selection(picker, inventory)`
 to produce the canonical `Selection`.
+
+[LEGACY / UNUSED in wizard path - T022, specs/008-affix-pos-picker R6]
+The standalone `AffixTreePicker` dialog below is a pre-wizard entry point
+and is NOT on the active wizard path.  The live item-picker surface on
+wizard page 2 is `_PageItemPicker` in `Lib/ui/selection_wizard.py`, which
+uses the new POS-grouped inventory (`build_pos_grouped_inventory` /
+`PosGroupedAffixInventory`) from `Lib/selection.py`.  This dialog is
+retained for the deferred template-grouping phase and its existing unit
+tests (`test_affix_tree_selection.py`) remain green (they exercise the
+`SourceAffixInventory` shape, which is unchanged).  Do not port the new
+POS-grouping logic here until a non-wizard entry point is needed.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from ..selection import PickerState, SourceAffixInventory
@@ -30,8 +38,8 @@ else:
 
 
 # Roles used on QTreeWidgetItem so we can recover GUIDs at confirm time.
-_GUID_ROLE = QtCore.Qt.UserRole + 1
-_KIND_ROLE = QtCore.Qt.UserRole + 2  # "template" | "slot" | "affix"
+_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2  # "template" | "slot" | "affix"
 
 
 class AffixTreePicker(QtWidgets.QDialog):
@@ -73,8 +81,9 @@ class AffixTreePicker(QtWidgets.QDialog):
         self._tree.itemChanged.connect(self._on_item_changed)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            QtCore.Qt.Horizontal,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            QtCore.Qt.Orientation.Horizontal,
             self,
         )
         buttons.accepted.connect(self.accept)
@@ -89,35 +98,35 @@ class AffixTreePicker(QtWidgets.QDialog):
             tpl_item = QtWidgets.QTreeWidgetItem(self._tree, [f"Template: {tpl_label}"])
             tpl_item.setData(0, _GUID_ROLE, tpl_guid)
             tpl_item.setData(0, _KIND_ROLE, "template")
-            tpl_item.setFlags(tpl_item.flags() | QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsAutoTristate)
-            tpl_item.setCheckState(0, QtCore.Qt.Unchecked)
+            tpl_item.setFlags(tpl_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+            tpl_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
             for slot_guid in slot_guids:
                 slot_label = self._slot_label_for.get(slot_guid, slot_guid)
                 slot_item = QtWidgets.QTreeWidgetItem(tpl_item, [f"Slot: {slot_label}"])
                 slot_item.setData(0, _GUID_ROLE, slot_guid)
                 slot_item.setData(0, _KIND_ROLE, "slot")
-                slot_item.setFlags(slot_item.flags() | QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsAutoTristate)
-                slot_item.setCheckState(0, QtCore.Qt.Unchecked)
+                slot_item.setFlags(slot_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+                slot_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
                 for affix_guid in self._inventory.slot_to_affixes.get(slot_guid, ()):
                     affix_label = self._affix_label_for.get(affix_guid, affix_guid)
                     affix_item = QtWidgets.QTreeWidgetItem(slot_item, [affix_label])
                     affix_item.setData(0, _GUID_ROLE, affix_guid)
                     affix_item.setData(0, _KIND_ROLE, "affix")
-                    affix_item.setFlags(affix_item.flags() | QtCore.Qt.ItemIsUserCheckable)
-                    affix_item.setCheckState(0, QtCore.Qt.Unchecked)
+                    affix_item.setFlags(affix_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    affix_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
 
         # Unbound bucket
         if self._inventory.unbound_affixes:
             unbound = QtWidgets.QTreeWidgetItem(self._tree, ["Unbound (not attached to any template)"])
-            unbound.setFlags(unbound.flags() | QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsAutoTristate)
-            unbound.setCheckState(0, QtCore.Qt.Unchecked)
+            unbound.setFlags(unbound.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+            unbound.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
             for affix_guid in sorted(self._inventory.unbound_affixes):
                 affix_label = self._affix_label_for.get(affix_guid, affix_guid)
                 ai = QtWidgets.QTreeWidgetItem(unbound, [affix_label])
                 ai.setData(0, _GUID_ROLE, affix_guid)
                 ai.setData(0, _KIND_ROLE, "affix")
-                ai.setFlags(ai.flags() | QtCore.Qt.ItemIsUserCheckable)
-                ai.setCheckState(0, QtCore.Qt.Unchecked)
+                ai.setFlags(ai.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                ai.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
 
         self._tree.expandAll()
 
@@ -147,22 +156,22 @@ class AffixTreePicker(QtWidgets.QDialog):
             top = root.child(i)
             kind = top.data(0, _KIND_ROLE)
             if kind == "template":
-                if top.checkState(0) == QtCore.Qt.Checked:
+                if top.checkState(0) == QtCore.Qt.CheckState.Checked:
                     checked_templates.add(top.data(0, _GUID_ROLE))
                 # Descend regardless — partial-check slots / affixes still count.
                 for j in range(top.childCount()):
                     slot_item = top.child(j)
-                    if slot_item.checkState(0) == QtCore.Qt.Checked:
+                    if slot_item.checkState(0) == QtCore.Qt.CheckState.Checked:
                         checked_slots.add(slot_item.data(0, _GUID_ROLE))
                     for k in range(slot_item.childCount()):
                         a = slot_item.child(k)
-                        if a.checkState(0) == QtCore.Qt.Checked:
+                        if a.checkState(0) == QtCore.Qt.CheckState.Checked:
                             checked_affixes.add(a.data(0, _GUID_ROLE))
             else:
                 # Unbound bucket — iterate affixes directly.
                 for j in range(top.childCount()):
                     a = top.child(j)
-                    if a.checkState(0) == QtCore.Qt.Checked:
+                    if a.checkState(0) == QtCore.Qt.CheckState.Checked:
                         checked_affixes.add(a.data(0, _GUID_ROLE))
 
         return PickerState(

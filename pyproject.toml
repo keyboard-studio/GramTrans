@@ -17,7 +17,7 @@ dependencies = [
     # this package. The LibLCM-direct implementation lives in a separate
     # post-Phase-2 sibling repository (constitution Principle IV) — not here.
     "flexlibs2>=2.0",
-    "PyQt5>=5.15",
+    "PyQt6>=6.4",
 ]
 
 [project.optional-dependencies]
