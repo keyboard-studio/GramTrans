@@ -1828,17 +1828,26 @@ class PhonologyInventory:
         return None
 
 
-def _phon_target_guids(target, accessor: str) -> Set[str]:
-    """Lower-cased GUID set for one category in the target, or empty."""
-    out: Set[str] = set()
+def _phon_target_sets(target, accessor: str) -> Tuple[Set[str], Set[str]]:
+    """Return (guids, labels) for one category in the target, or empties.
+
+    Mirrors 008/009 `_build_target_sets`: GUID identity drives IN TARGET,
+    casefolded label match drives SIMILAR (a same-name item with a different
+    GUID). Labels use the same `_phon_label` the source rows display.
+    """
+    guids: Set[str] = set()
+    labels: Set[str] = set()
     if target is None or not hasattr(target, accessor):
-        return out
+        return guids, labels
     try:
         for obj in getattr(target, accessor).GetAll():
-            out.add(_phon_guid(obj))
+            guids.add(_phon_guid(obj))
+            lbl = _phon_label(obj)
+            if lbl and lbl != "?":
+                labels.add(lbl.strip().casefold())
     except (AttributeError, TypeError):
         pass
-    return out
+    return guids, labels
 
 
 def _rule_context_refs(rule) -> List[object]:
@@ -1884,7 +1893,7 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
     guid_sets: Dict[object, Set[str]] = {}
     objs_by_cat: Dict[object, List[object]] = {}
     for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
-        tgt_guids = _phon_target_guids(target, accessor)
+        tgt_guids, tgt_labels = _phon_target_sets(target, accessor)
         rows: List[PhonologyRow] = []
         cat_guids: Set[str] = set()
         objs: List[object] = []
@@ -1897,11 +1906,17 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
                 g = _phon_guid(obj)
                 cat_guids.add(g)
                 objs.append(obj)
+                lbl = _phon_label(obj)
                 status = None
                 if target is not None:
-                    status = "in_target" if g in tgt_guids else "new"
+                    if g in tgt_guids:
+                        status = "in_target"
+                    elif lbl.strip().casefold() in tgt_labels:
+                        status = "similar"
+                    else:
+                        status = "new"
                 rows.append(PhonologyRow(
-                    guid=g, label=_phon_label(obj),
+                    guid=g, label=lbl,
                     category=category, preselected=True, status=status,
                 ))
         guid_sets[category] = cat_guids

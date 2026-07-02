@@ -145,10 +145,10 @@ but those 3 planned.
 **Independent Test**: keep ≥1 rule ⇒ plan includes strata; deselect all rules ⇒ no strata; no
 strata row ever shown.
 
-- [ ] T020 [US3] Confirm/finish strata gating in `collapse_phonology`
+- [X] T020 [US3] Confirm/finish strata gating in `collapse_phonology`
   (`src/gramtrans/Lib/selection.py`): `{STRATA: True}` iff `PHONOLOGICAL_RULES` on with ≥1
   checked rule; ensure no strata group is ever added to `_PagePhonology`.
-- [ ] T021 [P] [US3] Unit tests in `tests/unit/test_strata_gating.py`: rules kept ⇒ strata on;
+- [X] T021 [P] [US3] Unit tests in `tests/unit/test_strata_gating.py`: rules kept ⇒ strata on;
   rules off but phonemes/NCs on ⇒ no strata; whole-block off ⇒ no strata; no strata row in the
   page tree (SC-003/SC-004, FR-009).
 
@@ -163,9 +163,9 @@ strata row ever shown.
 **Independent Test**: source=target ⇒ every row IN TARGET; fresh target ⇒ NEW; no target ⇒
 blank, no crash.
 
-- [ ] T022 [US4] Render the target-status column on `_PagePhonology` rows using the row
+- [X] T022 [US4] Render the target-status column on `_PagePhonology` rows using the row
   `.status` from `build_phonology_inventory` (reuse `_STATUS_LABELS`), blank when `None`.
-- [ ] T023 [P] [US4] Unit test in `tests/unit/test_phonology_inventory.py`: status computed by
+- [X] T023 [P] [US4] Unit test in `tests/unit/test_phonology_inventory.py`: status computed by
   GUID (in_target) / fingerprint (similar) / else new; `target=None` ⇒ blank (SC-005, FR-007).
 
 **Checkpoint**: collision status visible on every phonology row.

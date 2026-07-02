@@ -79,6 +79,22 @@ def test_target_none_status_blank():
     assert all(r.status is None for g in inv.groups for r in g.rows)
 
 
+def test_target_status_by_guid_similar_and_new():
+    """T023 (US4/SC-005): in_target by GUID, similar by label, else new."""
+    src = FakePhonSource(phonemes=[
+        FakePhoneme("ph1", "p"),   # same GUID in target -> in_target
+        FakePhoneme("ph2", "t"),   # same label 't' but different GUID -> similar
+        FakePhoneme("ph3", "k"),   # absent -> new
+    ])
+    tgt = FakePhonSource(phonemes=[
+        FakePhoneme("ph1", "p"),
+        FakePhoneme("ph9", "t"),   # different GUID, same label as source ph2
+    ])
+    inv = build_phonology_inventory(src, target=tgt)
+    status = {r.guid: r.status for r in inv.group_for(GC.PHONEMES).rows}
+    assert status == {"ph1": "in_target", "ph2": "similar", "ph3": "new"}
+
+
 # ---- collapse_phonology --------------------------------------------------
 
 def _all_checked(inv):
