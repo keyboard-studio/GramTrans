@@ -126,12 +126,12 @@ correct counts; advancing unchanged plans every phonology item.
 **Independent Test**: toggle off ⇒ zero phonology items planned; deselect 3 phonemes ⇒ all
 but those 3 planned.
 
-- [ ] T017 [US2] Add the whole-block toggle + per-category tristate group toggles to
+- [X] T017 [US2] Add the whole-block toggle + per-category tristate group toggles to
   `_PagePhonology` in `src/gramtrans/Lib/ui/selection_wizard.py` (whole-block reflects the
   aggregate; empty-block ⇒ toggle unchecked/disabled, not vacuously checked).
-- [ ] T018 [US2] Wire per-item deselect → `collect_phonology_picks()` so trimmed categories
+- [X] T018 [US2] Wire per-item deselect → `collect_phonology_picks()` so trimmed categories
   produce `leaf_item_picks[cat]` subsets and fully-checked categories omit the key.
-- [ ] T019 [P] [US2] Unit tests in `tests/unit/test_leaf_item_picks.py`: whole-block off ⇒
+- [X] T019 [P] [US2] Unit tests in `tests/unit/test_leaf_item_picks.py`: whole-block off ⇒
   empty collapse; trim 3-of-N ⇒ subset pick; category all-checked ⇒ key omitted (SC-003).
 
 **Checkpoint**: US1 + US2 both work; NONE and bare-bones trims are expressible.

@@ -73,3 +73,48 @@ def test_pick_for_off_category_is_inert_at_dispatch():
     )
     assert sel.is_on(GrammarCategory.PHONEMES) is False
     assert sel.leaf_picks_for(GrammarCategory.PHONEMES) == frozenset({"p1"})
+
+
+# ---- T019 (US2): collapse trims to leaf_item_picks; all-checked omits key ---
+
+def _phon_inv():
+    from _fakes_phonology import FakeNC, FakeRule, make_rhs
+    from gramtrans.Lib.selection import build_phonology_inventory
+    p1 = FakePhoneme("p1", "p")
+    p2 = FakePhoneme("p2", "t")
+    p3 = FakePhoneme("p3", "k")
+    nc1 = FakeNC("nc1", "C", segments=[p1, p2, p3])
+    rule1 = FakeRule("r1", "rule", struc_refs=[nc1], rhs=[make_rhs(left=p1)])
+    return build_phonology_inventory(
+        FakePhonSource(phonemes=[p1, p2, p3], ncs=[nc1], rules=[rule1])
+    )
+
+
+def test_whole_block_off_yields_empty_collapse():
+    """SC-003: toggling the whole block off => nothing planned."""
+    from gramtrans.Lib.selection import collapse_phonology
+    inv = _phon_inv()
+    out = collapse_phonology(inv, {})  # nothing checked
+    assert out["categories"] == {}
+    assert out["leaf_item_picks"] == {}
+
+
+def test_trim_3_of_n_records_subset_pick():
+    """Deselecting some (not all) phonemes => leaf_item_picks subset."""
+    from gramtrans.Lib.selection import collapse_phonology
+    inv = _phon_inv()
+    checked = {g.category: {r.guid for r in g.rows} for g in inv.groups}
+    checked[GrammarCategory.PHONEMES] = {"p1", "p2"}  # drop p3 (2 of 3)
+    out = collapse_phonology(inv, checked)
+    assert out["categories"][GrammarCategory.PHONEMES] is True
+    assert out["leaf_item_picks"][GrammarCategory.PHONEMES] == frozenset({"p1", "p2"})
+
+
+def test_category_all_checked_omits_key():
+    """SC-003: a fully-checked category omits its leaf_item_picks key (transfer-all)."""
+    from gramtrans.Lib.selection import collapse_phonology
+    inv = _phon_inv()
+    checked = {g.category: {r.guid for r in g.rows} for g in inv.groups}
+    out = collapse_phonology(inv, checked)
+    assert GrammarCategory.PHONEMES not in out["leaf_item_picks"]
+    assert GrammarCategory.NATURAL_CLASSES not in out["leaf_item_picks"]
