@@ -359,7 +359,7 @@ def _build_skeleton_target_sets(target) -> Tuple[Set[str], Set[str], Set[str]]:
     except (AttributeError, TypeError):
         return target_pos_guids, target_slot_guids, target_template_guids
 
-    def _walk_pos(pos_list):
+    def _walk_pos_skeleton(pos_list):
         for pos in pos_list:
             pg = _pos_guid(pos)
             if pg:
@@ -396,11 +396,11 @@ def _build_skeleton_target_sets(target) -> Tuple[Set[str], Set[str], Set[str]]:
             # Recurse into sub-POS
             try:
                 children = list(pos.SubPossibilitiesOS)
-                _walk_pos(children)
+                _walk_pos_skeleton(children)
             except (AttributeError, TypeError):
                 pass
 
-    _walk_pos(pos_possibilities)
+    _walk_pos_skeleton(pos_possibilities)
     return target_pos_guids, target_slot_guids, target_template_guids
 
 
@@ -433,7 +433,7 @@ def _build_deps_target_sets(
     except (AttributeError, TypeError):
         return (target_feat_guids, target_class_guids, target_stem_guids)
 
-    def _walk_pos(pos_list):
+    def _walk_pos_deps(pos_list):
         for pos in pos_list:
             pos_c = _cast(pos, "IPartOfSpeech")
             # InflectableFeatsRC
@@ -480,11 +480,11 @@ def _build_deps_target_sets(
                 pass
             # Recurse
             try:
-                _walk_pos(list(pos.SubPossibilitiesOS))
+                _walk_pos_deps(list(pos.SubPossibilitiesOS))
             except (AttributeError, TypeError):
                 pass
 
-    _walk_pos(pos_possibilities)
+    _walk_pos_deps(pos_possibilities)
     return (target_feat_guids, target_class_guids, target_stem_guids)
 
 
