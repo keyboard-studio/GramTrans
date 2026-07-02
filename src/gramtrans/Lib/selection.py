@@ -19,8 +19,9 @@ POS-Grouped Affix Inventory (specs/008-affix-pos-picker):
 """
 from __future__ import annotations
 
+import logging as _logging
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 if __package__:
     from .models import CategoryScope, GrammarCategory, Selection
@@ -333,6 +334,160 @@ def _entry_status(entry_guid: str, form: str,
     return "new"
 
 
+def _build_skeleton_target_sets(target) -> Tuple[Set[str], Set[str], Set[str]]:
+    """Build (target_pos_guids, target_slot_guids, target_template_guids) for FR-009.
+
+    Enumerates the TARGET project's POS hierarchy to collect per-kind GUID sets
+    for POS, IMoInflAffixSlot, and IMoInflAffixTemplate objects.  Used by
+    build_skeleton_inventory to classify skeleton rows by GUID membership in the
+    matching per-kind set rather than against the affix-entry set.
+
+    Returns
+    -------
+    target_pos_guids : set of lower-cased POS GUID strings
+    target_slot_guids : set of lower-cased slot GUID strings
+    target_template_guids : set of lower-cased template GUID strings
+    """
+    target_pos_guids: Set[str] = set()
+    target_slot_guids: Set[str] = set()
+    target_template_guids: Set[str] = set()
+
+    try:
+        pos_possibilities = list(
+            target.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS
+        )
+    except (AttributeError, TypeError):
+        return target_pos_guids, target_slot_guids, target_template_guids
+
+    def _walk_pos(pos_list):
+        for pos in pos_list:
+            pg = _pos_guid(pos)
+            if pg:
+                target_pos_guids.add(pg)
+            pos_c = _cast(pos, "IPartOfSpeech")
+            # Slots
+            try:
+                for sl in pos_c.AffixSlotsOC:
+                    sl_c = _cast(sl, "IMoInflAffixSlot")
+                    try:
+                        sg = str(sl_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        try:
+                            sg = str(sl.Guid).lower()
+                        except (AttributeError, TypeError):
+                            continue
+                    target_slot_guids.add(sg)
+            except (AttributeError, TypeError):
+                pass
+            # Templates
+            try:
+                for tpl in pos_c.AffixTemplatesOS:
+                    tpl_c = _cast(tpl, "IMoInflAffixTemplate")
+                    try:
+                        tg = str(tpl_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        try:
+                            tg = str(tpl.Guid).lower()
+                        except (AttributeError, TypeError):
+                            continue
+                    target_template_guids.add(tg)
+            except (AttributeError, TypeError):
+                pass
+            # Recurse into sub-POS
+            try:
+                children = list(pos.SubPossibilitiesOS)
+                _walk_pos(children)
+            except (AttributeError, TypeError):
+                pass
+
+    _walk_pos(pos_possibilities)
+    return target_pos_guids, target_slot_guids, target_template_guids
+
+
+def _build_deps_target_sets(
+    target,
+) -> Tuple[Set[str], Set[str], Set[str]]:
+    """Build per-kind target GUID sets for deps rows (FR-009).
+
+    Enumerates the TARGET project's POS hierarchy to collect:
+      - target_feat_guids   : IFsFeatStruc from InflectableFeatsRC
+      - target_class_guids  : IMoInflClass from InflectionClassesOC
+      - target_stem_guids   : IMoStemName from StemNamesOC
+
+    Note: ExceptionFeaturesOC (IPartOfSpeech) does not exist on the live LCM
+    runtime (hasattr False). Exception-features are a per-entry concern
+    (IMoStemMsa.MsFeaturesOA) and are out of scope for this POS-level inventory.
+
+    Returns
+    -------
+    (target_feat_guids, target_class_guids, target_stem_guids)
+    """
+    target_feat_guids: Set[str] = set()
+    target_class_guids: Set[str] = set()
+    target_stem_guids: Set[str] = set()
+
+    try:
+        pos_possibilities = list(
+            target.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS
+        )
+    except (AttributeError, TypeError):
+        return (target_feat_guids, target_class_guids, target_stem_guids)
+
+    def _walk_pos(pos_list):
+        for pos in pos_list:
+            pos_c = _cast(pos, "IPartOfSpeech")
+            # InflectableFeatsRC
+            try:
+                for feat in pos_c.InflectableFeatsRC:
+                    feat_c = _cast(feat, "IFsFeatStruc")
+                    try:
+                        fg = str(feat_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        try:
+                            fg = str(feat.Guid).lower()
+                        except (AttributeError, TypeError):
+                            continue
+                    target_feat_guids.add(fg)
+            except (AttributeError, TypeError):
+                pass
+            # InflectionClassesOC
+            try:
+                for cls in pos_c.InflectionClassesOC:
+                    cls_c = _cast(cls, "IMoInflClass")
+                    try:
+                        cg = str(cls_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        try:
+                            cg = str(cls.Guid).lower()
+                        except (AttributeError, TypeError):
+                            continue
+                    target_class_guids.add(cg)
+            except (AttributeError, TypeError):
+                pass
+            # StemNamesOC
+            try:
+                for sn in pos_c.StemNamesOC:
+                    sn_c = _cast(sn, "IMoStemName")
+                    try:
+                        sg = str(sn_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        try:
+                            sg = str(sn.Guid).lower()
+                        except (AttributeError, TypeError):
+                            continue
+                    target_stem_guids.add(sg)
+            except (AttributeError, TypeError):
+                pass
+            # Recurse
+            try:
+                _walk_pos(list(pos.SubPossibilitiesOS))
+            except (AttributeError, TypeError):
+                pass
+
+    _walk_pos(pos_possibilities)
+    return (target_feat_guids, target_class_guids, target_stem_guids)
+
+
 def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory:
     """Build a PosGroupedAffixInventory from the source project.
 
@@ -568,7 +723,6 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
     # Guard: if every affix landed in the junk drawer (placed==0) warn rather
     # than silently returning an empty grouping -- this surfaces cast failures
     # that would otherwise produce false confidence.
-    import logging as _logging
     placed_total = sum(
         len(nd.inflectional) + len(nd.deriv_attaches) + len(nd.deriv_produces)
         for nd in frozen_roots
@@ -776,6 +930,769 @@ def compute_required_templates(picker: PickerState,
     in — templates are only transferred when explicitly selected at that level.
     """
     return frozenset(picker.checked_templates & inventory.all_template_guids())
+
+
+# ============================================================================
+# Skeleton + Deps Inventory (specs/009-skeleton-deps-selectors, T006-T008)
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Skeleton dataclasses (pure frozen; no LCM handles retained)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SlotNode:
+    """One affix slot in the skeleton inventory."""
+    slot_guid: str
+    label: str
+    preselected: bool          # True iff a picked affix fills this slot
+    affix_count: int           # count of picked affixes that fill this slot
+    status: Optional[str] = None  # "new" | "in_target" | "similar" | None
+
+
+@dataclass(frozen=True)
+class TemplateNode:
+    """One affix template in the skeleton inventory."""
+    template_guid: str
+    label: str
+    preselected: bool          # True iff any referenced slot is filled by a pick
+    referenced_slot_guids: Tuple[str, ...]  # read-only list (FR-006)
+    status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SkeletonPosNode:
+    """One POS node in the skeleton inventory (POS-rooted per FR-006)."""
+    pos_guid: str
+    label: str
+    preselected: bool          # True iff a picked affix attaches to this POS
+    slots: Tuple[SlotNode, ...]
+    templates: Tuple[TemplateNode, ...]
+    status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SkeletonInventory:
+    """Top-level result of build_skeleton_inventory.
+
+    `affix_fills` maps slot_guid -> frozenset[entry_guid] of picked affixes
+    that fill it. Used for EXCLUDED-LOSSY checks.
+    `affix_picks` is the frozenset passed in (preserved for T003 affix-unchanged
+    test; callers must not expand it).
+    """
+    pos_nodes: Tuple[SkeletonPosNode, ...]
+    affix_fills: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+    affix_picks: FrozenSet[str] = field(default_factory=frozenset)
+
+    def affix_filled_slot_guids(self) -> FrozenSet[str]:
+        """Return the set of slot GUIDs that at least one picked affix fills."""
+        return frozenset(sg for sg, affixes in self.affix_fills.items() if affixes)
+
+
+# ---------------------------------------------------------------------------
+# Deps dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DepRow:
+    """One grammatical-dependency item (feature / class / stem-name / exception-feat)."""
+    guid: str
+    label: str
+    preselected: bool = True   # all deps preselected by default (AS-NEEDED)
+    status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DepsInventory:
+    """Result of build_deps_inventory.
+
+    Three dep-kinds: inflectable features, inflection classes, stem names.
+    ExceptionFeaturesOC does not exist on the live LCM runtime; that dep-kind
+    is tracked under a separate shared-bug ticket.
+    """
+    infl_features: List[DepRow] = field(default_factory=list)
+    infl_classes: List[DepRow] = field(default_factory=list)
+    stem_names: List[DepRow] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# build_skeleton_inventory
+# ---------------------------------------------------------------------------
+
+def build_skeleton_inventory(
+    source,
+    affix_picks: FrozenSet[str],
+    target=None,
+) -> SkeletonInventory:
+    """Derive the morphology skeleton from the source and the affix picks.
+
+    Walks source.Cache.LangProject.PartsOfSpeechOA (same POS enumeration as
+    build_pos_grouped_inventory).  For each POS:
+      - Reads AffixSlotsOC (cast to IPartOfSpeech) for the POS's slots.
+      - Reads each entry's MSA.SlotsRC (cast to IMoInflAffMsa) to map
+        slot_guid -> {picking entry_guids}.
+      - Reads AffixTemplatesOS (cast to IPartOfSpeech) for templates; each
+        template's PrefixSlotsRS + SuffixSlotsRS (cast to IMoInflAffixTemplate)
+        yield the referenced slots.
+
+    CAST DISCIPLINE: every LCM collection is accessed via _cast against its
+    declared base interface even when fakes pass through unchanged (the cast is
+    a no-op on fakes but REQUIRED for live LCM objects per the spec).
+
+    Parameters
+    ----------
+    source:
+        Duck-typed source handle.
+    affix_picks:
+        frozenset of entry_guid strings the user has selected.
+    target:
+        Optional target handle for target-status computation.
+
+    Returns
+    -------
+    SkeletonInventory
+    """
+    if target is not None:
+        _tgt_pos_guids, _tgt_slot_guids, _tgt_tpl_guids = \
+            _build_skeleton_target_sets(target)
+    else:
+        _tgt_pos_guids = set()
+        _tgt_slot_guids = set()
+        _tgt_tpl_guids = set()
+
+    # Build a map: slot_guid -> set[entry_guid] of picked affixes filling it.
+    # Walk all affix entries, filter to affix_picks, read MSA.SlotsRC.
+    slot_affix_map: Dict[str, Set[str]] = {}
+
+    try:
+        entries = list(source.Cache.LangProject.LexDbOA.Entries)
+    except (AttributeError, TypeError):
+        entries = []
+
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        # Filter to affix entries
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            if not morph_type.IsAffixType:
+                continue
+        except (AttributeError, TypeError):
+            continue
+        try:
+            guid = str(entry.Guid).lower()
+        except (AttributeError, TypeError):
+            continue
+        if guid not in affix_picks:
+            continue
+
+        try:
+            msas = list(entry.MorphoSyntaxAnalysesOC)
+        except (AttributeError, TypeError):
+            msas = []
+
+        for msa in msas:
+            try:
+                class_name = msa.ClassName
+            except (AttributeError, TypeError):
+                continue
+            if class_name != "MoInflAffMsa":
+                continue
+            msa_c = _cast(msa, "IMoInflAffMsa")
+            # CAST DISCIPLINE: read SlotsRC from the cast MSA, then cast
+            # each slot in the collection to IMoInflAffixSlot individually.
+            try:
+                slots_iter = list(msa_c.SlotsRC)
+            except (AttributeError, TypeError):
+                slots_iter = []
+            for sl in slots_iter:
+                sl_c = _cast(sl, "IMoInflAffixSlot")
+                try:
+                    sl_guid = str(sl_c.Guid).lower()
+                except (AttributeError, TypeError):
+                    try:
+                        sl_guid = str(sl.Guid).lower()
+                    except (AttributeError, TypeError):
+                        continue
+                if sl_guid not in slot_affix_map:
+                    slot_affix_map[sl_guid] = set()
+                slot_affix_map[sl_guid].add(guid)
+
+    # Enumerate POS hierarchy; build SkeletonPosNode for each POS that has
+    # at least one affix (from the full source, not just affix_picks).
+    try:
+        pos_possibilities = list(
+            source.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS
+        )
+    except (AttributeError, TypeError):
+        pos_possibilities = []
+
+    # We need the full set of (pos_guid -> set[entry_guid]) for determining
+    # which POSes have picked affixes. Walk entries again.
+    pos_affix_map: Dict[str, Set[str]] = {}
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            if not morph_type.IsAffixType:
+                continue
+        except (AttributeError, TypeError):
+            continue
+        try:
+            guid = str(entry.Guid).lower()
+        except (AttributeError, TypeError):
+            continue
+        if guid not in affix_picks:
+            continue
+        try:
+            msas = list(entry.MorphoSyntaxAnalysesOC)
+        except (AttributeError, TypeError):
+            msas = []
+        for msa in msas:
+            try:
+                class_name = msa.ClassName
+            except (AttributeError, TypeError):
+                continue
+            if class_name not in ("MoInflAffMsa", "MoUnclassifiedAffixMsa"):
+                continue
+            msa_c = _cast(msa, "IMoInflAffMsa") if class_name == "MoInflAffMsa" \
+                    else _cast(msa, "IMoUnclassifiedAffixMsa")
+            try:
+                pos = msa_c.PartOfSpeechRA
+                if pos is None:
+                    continue
+                pg = _pos_guid(pos)
+                if pg is None:
+                    continue
+                if pg not in pos_affix_map:
+                    pos_affix_map[pg] = set()
+                pos_affix_map[pg].add(guid)
+            except (AttributeError, TypeError):
+                pass
+
+    # Also track which POS has ANY affix entries (for pruning: POS with no
+    # entries at all is excluded entirely).
+    pos_any_affixes: Set[str] = set()
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            if not morph_type.IsAffixType:
+                continue
+        except (AttributeError, TypeError):
+            continue
+        try:
+            msas = list(entry.MorphoSyntaxAnalysesOC)
+        except (AttributeError, TypeError):
+            msas = []
+        for msa in msas:
+            try:
+                cn = msa.ClassName
+            except (AttributeError, TypeError):
+                continue
+            if cn not in ("MoInflAffMsa", "MoUnclassifiedAffixMsa"):
+                continue
+            mc = _cast(msa, "IMoInflAffMsa") if cn == "MoInflAffMsa" \
+                 else _cast(msa, "IMoUnclassifiedAffixMsa")
+            try:
+                pos = mc.PartOfSpeechRA
+                if pos is None:
+                    continue
+                pg = _pos_guid(pos)
+                if pg:
+                    pos_any_affixes.add(pg)
+            except (AttributeError, TypeError):
+                pass
+
+    def _build_skeleton_pos_node(pos) -> Optional[SkeletonPosNode]:
+        """Build a SkeletonPosNode for one POS object."""
+        pg = _pos_guid(pos)
+        if pg is None:
+            return None
+        pl = _pos_label(pos)
+
+        # Prune: POS with no affix entries is excluded
+        if pg not in pos_any_affixes:
+            return None
+
+        # CAST DISCIPLINE: read AffixSlotsOC via IPartOfSpeech cast
+        pos_c = _cast(pos, "IPartOfSpeech")
+        try:
+            slots_oc = pos_c.AffixSlotsOC
+            slot_objs = list(slots_oc)
+        except (AttributeError, TypeError):
+            slot_objs = []
+
+        slot_nodes: List[SlotNode] = []
+        for sl in slot_objs:
+            sl_c = _cast(sl, "IMoInflAffixSlot")
+            try:
+                sl_guid = str(sl_c.Guid).lower()
+            except (AttributeError, TypeError):
+                try:
+                    sl_guid = str(sl.Guid).lower()
+                except (AttributeError, TypeError):
+                    continue
+            try:
+                sl_label = sl_c.Name.BestAnalysisAlternative.Text
+            except (AttributeError, TypeError):
+                sl_label = sl_guid
+            fills = slot_affix_map.get(sl_guid, set())
+            slot_presel = len(fills) > 0
+            sl_status: Optional[str] = None
+            if target is not None:
+                # FR-009: classify by GUID membership in target's slot set
+                sl_status = "in_target" if sl_guid in _tgt_slot_guids else "new"
+            slot_nodes.append(SlotNode(
+                slot_guid=sl_guid,
+                label=sl_label,
+                preselected=slot_presel,
+                affix_count=len(fills),
+                status=sl_status,
+            ))
+
+        # CAST DISCIPLINE: read AffixTemplatesOS via IPartOfSpeech cast
+        try:
+            templates_os = pos_c.AffixTemplatesOS
+            template_objs = list(templates_os)
+        except (AttributeError, TypeError):
+            template_objs = []
+
+        template_nodes: List[TemplateNode] = []
+        for tpl in template_objs:
+            tpl_c = _cast(tpl, "IMoInflAffixTemplate")
+            try:
+                tpl_guid = str(tpl_c.Guid).lower()
+            except (AttributeError, TypeError):
+                try:
+                    tpl_guid = str(tpl.Guid).lower()
+                except (AttributeError, TypeError):
+                    continue
+            try:
+                tpl_label = tpl_c.Name.BestAnalysisAlternative.Text
+                if not tpl_label or tpl_label.strip() in ("***", ""):
+                    tpl_label = "(unnamed template)"
+            except (AttributeError, TypeError):
+                tpl_label = "(unnamed template)"
+
+            # Collect referenced slot GUIDs from PrefixSlotsRS + SuffixSlotsRS
+            # CAST DISCIPLINE: cast tpl to IMoInflAffixTemplate before reading slots
+            ref_slot_guids: List[str] = []
+            for slot_seq_attr in ("PrefixSlotsRS", "SuffixSlotsRS"):
+                try:
+                    slot_seq = getattr(tpl_c, slot_seq_attr)
+                    for tsl in slot_seq:
+                        tsl_c = _cast(tsl, "IMoInflAffixSlot")
+                        try:
+                            tsl_guid = str(tsl_c.Guid).lower()
+                        except (AttributeError, TypeError):
+                            try:
+                                tsl_guid = str(tsl.Guid).lower()
+                            except (AttributeError, TypeError):
+                                continue
+                        if tsl_guid not in ref_slot_guids:
+                            ref_slot_guids.append(tsl_guid)
+                except (AttributeError, TypeError):
+                    pass
+
+            # Template is preselected if any of its referenced slots is filled
+            tpl_presel = any(
+                len(slot_affix_map.get(sg, set())) > 0 for sg in ref_slot_guids
+            )
+            tpl_status: Optional[str] = None
+            if target is not None:
+                # FR-009: classify by GUID membership in target's template set
+                tpl_status = "in_target" if tpl_guid in _tgt_tpl_guids else "new"
+            template_nodes.append(TemplateNode(
+                template_guid=tpl_guid,
+                label=tpl_label,
+                preselected=tpl_presel,
+                referenced_slot_guids=tuple(ref_slot_guids),
+                status=tpl_status,
+            ))
+
+        # POS is preselected if any picked affix attaches to it
+        pos_presel = pg in pos_affix_map and bool(pos_affix_map[pg])
+        pos_status: Optional[str] = None
+        if target is not None:
+            # FR-009: classify by GUID membership in target's POS set
+            pos_status = "in_target" if pg in _tgt_pos_guids else "new"
+
+        return SkeletonPosNode(
+            pos_guid=pg,
+            label=pl,
+            preselected=pos_presel,
+            slots=tuple(slot_nodes),
+            templates=tuple(template_nodes),
+            status=pos_status,
+        )
+
+    def _collect_skeleton_nodes(pos_list) -> List[SkeletonPosNode]:
+        """Recursively collect SkeletonPosNodes from a POS list + sub-POS."""
+        nodes: List[SkeletonPosNode] = []
+        for pos in pos_list:
+            node = _build_skeleton_pos_node(pos)
+            if node is not None:
+                nodes.append(node)
+            # Always recurse into sub-POS regardless of pruning outcome
+            try:
+                children = list(pos.SubPossibilitiesOS)
+                nodes.extend(_collect_skeleton_nodes(children))
+            except (AttributeError, TypeError):
+                pass
+        return nodes
+
+    pos_nodes: List[SkeletonPosNode] = _collect_skeleton_nodes(pos_possibilities)
+
+    # Build affix_fills map: slot_guid -> frozenset[entry_guid]
+    affix_fills_frozen: Dict[str, FrozenSet[str]] = {
+        sg: frozenset(guids) for sg, guids in slot_affix_map.items()
+    }
+
+    return SkeletonInventory(
+        pos_nodes=tuple(pos_nodes),
+        affix_fills=affix_fills_frozen,
+        affix_picks=affix_picks,
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_deps_inventory
+# ---------------------------------------------------------------------------
+
+def build_deps_inventory(
+    source,
+    affix_picks: FrozenSet[str],
+    target=None,
+) -> DepsInventory:
+    """Derive grammatical dependencies from the source and the affix picks.
+
+    For each POS a picked affix attaches to, reads:
+      - InflectableFeatsRC  (cast to IPartOfSpeech)
+      - InflectionClassesOC (cast to IPartOfSpeech)
+      - StemNamesOC         (cast to IPartOfSpeech)
+
+    ExceptionFeaturesOC is NOT read: that property does not exist on the live
+    LCM runtime (hasattr False). Exception-features are per-entry (IMoStemMsa)
+    and are tracked under a separate shared-bug ticket.
+
+    CAST DISCIPLINE: every LCM collection access goes through _cast against the
+    declared base interface.  Fakes pass through unchanged; live LCM objects
+    get properly dispatched.
+
+    Parameters
+    ----------
+    source:
+        Duck-typed source handle.
+    affix_picks:
+        frozenset of entry_guid strings.
+    target:
+        Optional target handle for target-status computation.
+
+    Returns
+    -------
+    DepsInventory
+    """
+    if target is not None:
+        _tgt_feat_guids, _tgt_class_guids, _tgt_stem_guids = \
+            _build_deps_target_sets(target)
+    else:
+        _tgt_feat_guids = set()
+        _tgt_class_guids = set()
+        _tgt_stem_guids = set()
+
+    # Find which POSes the picked affixes attach to.
+    picked_pos_guids: Set[str] = set()
+    picked_pos_objects: Dict[str, object] = {}  # guid -> pos obj
+
+    try:
+        entries = list(source.Cache.LangProject.LexDbOA.Entries)
+    except (AttributeError, TypeError):
+        entries = []
+
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            if not morph_type.IsAffixType:
+                continue
+        except (AttributeError, TypeError):
+            continue
+        try:
+            guid = str(entry.Guid).lower()
+        except (AttributeError, TypeError):
+            continue
+        if guid not in affix_picks:
+            continue
+        try:
+            msas = list(entry.MorphoSyntaxAnalysesOC)
+        except (AttributeError, TypeError):
+            msas = []
+        for msa in msas:
+            try:
+                class_name = msa.ClassName
+            except (AttributeError, TypeError):
+                continue
+            if class_name not in ("MoInflAffMsa", "MoUnclassifiedAffixMsa"):
+                continue
+            msa_c = _cast(msa, "IMoInflAffMsa") if class_name == "MoInflAffMsa" \
+                    else _cast(msa, "IMoUnclassifiedAffixMsa")
+            try:
+                pos = msa_c.PartOfSpeechRA
+                if pos is None:
+                    continue
+                pg = _pos_guid(pos)
+                if pg and pg not in picked_pos_guids:
+                    picked_pos_guids.add(pg)
+                    picked_pos_objects[pg] = pos
+            except (AttributeError, TypeError):
+                pass
+
+    # Collect dep items, deduplicating by GUID.
+    seen_feats: Set[str] = set()
+    seen_classes: Set[str] = set()
+    seen_stems: Set[str] = set()
+
+    infl_features: List[DepRow] = []
+    infl_classes: List[DepRow] = []
+    stem_names: List[DepRow] = []
+
+    def _dep_status_feat(guid: str) -> Optional[str]:
+        """FR-009: classify an infl feature by GUID membership in target's feat set."""
+        if target is None:
+            return None
+        return "in_target" if guid in _tgt_feat_guids else "new"
+
+    def _dep_status_class(guid: str) -> Optional[str]:
+        """FR-009: classify an infl class by GUID membership in target's class set."""
+        if target is None:
+            return None
+        return "in_target" if guid in _tgt_class_guids else "new"
+
+    def _dep_status_stem(guid: str) -> Optional[str]:
+        """FR-009: classify a stem name by GUID membership in target's stem set."""
+        if target is None:
+            return None
+        return "in_target" if guid in _tgt_stem_guids else "new"
+
+    for pg, pos in picked_pos_objects.items():
+        # CAST DISCIPLINE: cast to IPartOfSpeech before reading dep collections
+        pos_c = _cast(pos, "IPartOfSpeech")
+
+        # InflectableFeatsRC
+        try:
+            feats_rc = pos_c.InflectableFeatsRC
+            for feat in feats_rc:
+                feat_c = _cast(feat, "IFsFeatStruc")
+                try:
+                    fg = str(feat_c.Guid).lower()
+                except (AttributeError, TypeError):
+                    try:
+                        fg = str(feat.Guid).lower()
+                    except (AttributeError, TypeError):
+                        continue
+                if fg in seen_feats:
+                    continue
+                seen_feats.add(fg)
+                try:
+                    fl = feat_c.Name.BestAnalysisAlternative.Text
+                except (AttributeError, TypeError):
+                    fl = fg
+                infl_features.append(DepRow(guid=fg, label=fl,
+                                            status=_dep_status_feat(fg)))
+        except (AttributeError, TypeError):
+            pass
+
+        # InflectionClassesOC
+        try:
+            classes_oc = pos_c.InflectionClassesOC
+            for cls in classes_oc:
+                cls_c = _cast(cls, "IMoInflClass")
+                try:
+                    cg = str(cls_c.Guid).lower()
+                except (AttributeError, TypeError):
+                    try:
+                        cg = str(cls.Guid).lower()
+                    except (AttributeError, TypeError):
+                        continue
+                if cg in seen_classes:
+                    continue
+                seen_classes.add(cg)
+                try:
+                    cl = cls_c.Name.BestAnalysisAlternative.Text
+                except (AttributeError, TypeError):
+                    cl = cg
+                infl_classes.append(DepRow(guid=cg, label=cl,
+                                           status=_dep_status_class(cg)))
+        except (AttributeError, TypeError):
+            pass
+
+        # StemNamesOC
+        try:
+            stems_oc = pos_c.StemNamesOC
+            for sn in stems_oc:
+                sn_c = _cast(sn, "IMoStemName")
+                try:
+                    sg = str(sn_c.Guid).lower()
+                except (AttributeError, TypeError):
+                    try:
+                        sg = str(sn.Guid).lower()
+                    except (AttributeError, TypeError):
+                        continue
+                if sg in seen_stems:
+                    continue
+                seen_stems.add(sg)
+                try:
+                    sl = sn_c.Name.BestAnalysisAlternative.Text
+                except (AttributeError, TypeError):
+                    sl = sg
+                stem_names.append(DepRow(guid=sg, label=sl,
+                                         status=_dep_status_stem(sg)))
+        except (AttributeError, TypeError):
+            pass
+
+    return DepsInventory(
+        infl_features=infl_features,
+        infl_classes=infl_classes,
+        stem_names=stem_names,
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_excluded_lossy_warnings (T008)
+# ---------------------------------------------------------------------------
+
+def build_excluded_lossy_warnings(
+    affix_slot_map: Dict[str, List[str]],
+    deselected_slot_guids: Set[str],
+    target_slot_guids: Set[str],
+    *,
+    deselected_pos_guids: Optional[Set[str]] = None,
+    target_pos_guids: Optional[Set[str]] = None,
+    affix_pos_map: Optional[Dict[str, str]] = None,
+    deps_by_affix: Optional[Dict[str, Dict[str, List[str]]]] = None,
+    deselected_dep_guids: Optional[Set[str]] = None,
+    target_dep_guids: Optional[Set[str]] = None,
+    dep_labels: Optional[Dict[str, str]] = None,
+    dep_category: Optional["GrammarCategory"] = None,
+) -> List:
+    """Build EXCLUDED-LOSSY warning list for deselected slots, POS, and deps.
+
+    All warnings are aggregated into a SINGLE returned list; the Move dialog
+    shows the total count as ONE consolidated confirmation, never per-item.
+
+    Parameters (required)
+    ---------------------
+    affix_slot_map:
+        Dict mapping affix_guid -> [slot_guid, ...] (slots the affix fills).
+    deselected_slot_guids:
+        Set of slot GUIDs the user has deselected.
+    target_slot_guids:
+        Set of slot GUIDs already in the target (LINK; no warning needed).
+
+    Parameters (optional -- POS omissions)
+    ----------------------------------------
+    deselected_pos_guids:
+        Set of POS GUIDs the user has deselected.
+    target_pos_guids:
+        Set of POS GUIDs already in the target (LINK; no warning needed).
+    affix_pos_map:
+        Dict mapping affix_guid -> pos_guid (the POS the affix attaches to).
+
+    Parameters (optional -- deps omissions, per-dep-kind)
+    -------------------------------------------------------
+    deps_by_affix:
+        Dict mapping affix_guid -> {dep_guid: [dep_guid, ...]} listing the dep
+        GUIDs (features / classes / stem-names / exception-features) that each
+        affix's POS carries and that the affix therefore needs.
+        Simpler caller shape: ``{affix_guid: {"dep_guid1": [], ...}}``.
+    deselected_dep_guids:
+        Set of dep GUIDs the user has deselected (across all dep kinds).
+    target_dep_guids:
+        Set of dep GUIDs already in the target (LINK; no warning needed).
+    dep_labels:
+        Dict mapping dep_guid -> human-readable label.
+    dep_category:
+        GrammarCategory constant for the dep kind (e.g. INFLECTION_FEATURES).
+
+    Returns
+    -------
+    List of ExcludedLossy objects.
+    """
+    if __package__:
+        from .models import ExcludedLossy, GrammarCategory
+    else:
+        from models import ExcludedLossy, GrammarCategory  # type: ignore
+
+    warnings: List = []
+
+    # --- Slot omissions (original behaviour) ---
+    absent_deselected_slots = deselected_slot_guids - target_slot_guids
+    for affix_guid, slots in affix_slot_map.items():
+        for slot_guid in slots:
+            if slot_guid in absent_deselected_slots:
+                warnings.append(ExcludedLossy(
+                    category=GrammarCategory.AFFIXES,
+                    entry_guid=affix_guid,
+                    entry_label=affix_guid,
+                    dep_category=GrammarCategory.SLOTS,
+                    dep_guid=slot_guid,
+                    dep_label=f"slot {slot_guid[:8]}",
+                    message=(
+                        f"Affix '{affix_guid}' will have no slot "
+                        f"(slot '{slot_guid[:8]}' deselected and absent from target)."
+                    ),
+                ))
+
+    # --- POS omissions ---
+    if (deselected_pos_guids is not None and
+            target_pos_guids is not None and
+            affix_pos_map is not None):
+        absent_deselected_pos = deselected_pos_guids - target_pos_guids
+        for affix_guid, pos_guid in affix_pos_map.items():
+            if pos_guid in absent_deselected_pos:
+                pos_short = pos_guid[:8]
+                warnings.append(ExcludedLossy(
+                    category=GrammarCategory.AFFIXES,
+                    entry_guid=affix_guid,
+                    entry_label=affix_guid,
+                    dep_category=GrammarCategory.POS,
+                    dep_guid=pos_guid,
+                    dep_label=f"POS {pos_short}",
+                    message=(
+                        f"Affix '{affix_guid}' will have no Part of Speech "
+                        f"(POS '{pos_short}' deselected and absent from target)."
+                    ),
+                ))
+
+    # --- Deps omissions (features / classes / stem-names / exception-feats) ---
+    if (deps_by_affix is not None and
+            deselected_dep_guids is not None and
+            target_dep_guids is not None and
+            dep_category is not None):
+        absent_deselected_deps = deselected_dep_guids - target_dep_guids
+        _labels = dep_labels or {}
+        for affix_guid, dep_guid_map in deps_by_affix.items():
+            for dep_guid in dep_guid_map:
+                if dep_guid in absent_deselected_deps:
+                    lbl = _labels.get(dep_guid, dep_guid[:8])
+                    warnings.append(ExcludedLossy(
+                        category=GrammarCategory.AFFIXES,
+                        entry_guid=affix_guid,
+                        entry_label=affix_guid,
+                        dep_category=dep_category,
+                        dep_guid=dep_guid,
+                        dep_label=lbl,
+                        message=(
+                            f"Affix '{affix_guid}' needs dep '{lbl}' "
+                            f"(deselected and absent from target)."
+                        ),
+                    ))
+
+    return warnings
 
 
 def build_selection(picker: PickerState,

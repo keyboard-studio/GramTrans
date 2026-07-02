@@ -46,8 +46,11 @@ if __package__:
         PickerState,
         PosGroupedAffixInventory,
         SourceAffixInventory,
+        build_deps_inventory,
+        build_excluded_lossy_warnings,
         build_pos_grouped_inventory,
         build_selection,
+        build_skeleton_inventory,
         collapse_pos_grouped,
         mirror_check_state,
     )
@@ -71,8 +74,11 @@ else:
         PickerState,
         PosGroupedAffixInventory,
         SourceAffixInventory,
+        build_deps_inventory,
+        build_excluded_lossy_warnings,
         build_pos_grouped_inventory,
         build_selection,
+        build_skeleton_inventory,
         collapse_pos_grouped,
         mirror_check_state,
     )
@@ -195,7 +201,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
 
-        self.setTitle("Step 1 of 5: Project + Writing Systems")
+        self.setTitle("Step 1 of 6: Project + Writing Systems")
         self.setSubTitle(
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
@@ -581,7 +587,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 5: Item Picker")
+        self.setTitle("Step 2 of 6: Item Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
@@ -852,7 +858,9 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         item.setData(0, _ROLE_ROLE, row.role)
         item.setData(0, _IS_PRODUCES, row.role == "produces")
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+        # FR-001 (T009): affixes open fully preselected; deselection is the
+        # primary user action (opens checked, not unchecked).
+        item.setCheckState(0, QtCore.Qt.CheckState.Checked)
 
         # Register for GUID mirroring
         guid = row.entry_guid
@@ -1031,6 +1039,608 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
 
 
 # ---------------------------------------------------------------------------
+# Data roles for _PageSkeleton and _PageGramDeps trees
+# ---------------------------------------------------------------------------
+
+_SKEL_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 10   # slot/tpl/pos guid
+_SKEL_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 11   # "pos"|"slot"|"template"|"dep"
+_SKEL_READ_ONLY = QtCore.Qt.ItemDataRole.UserRole + 12   # bool: template slot entry
+
+# Target-status label map (shared with affix picker).
+_STATUS_LABELS = {
+    "new": "NEW",
+    "in_target": "IN TARGET",
+    "similar": "SIMILAR",
+}
+
+
+# ---------------------------------------------------------------------------
+# Page 3b -- Morphology Skeleton  (T011-T012)
+# ---------------------------------------------------------------------------
+
+class _PageSkeleton(QtWidgets.QWizardPage):
+    """Page 3b: Morphology skeleton derived from the affix picks.
+
+    POS-rooted tree:
+        [POS node — preselected if any picked affix attaches]
+          [Slots subgroup]
+            [slot row — preselected if any picked affix fills it]
+            ...
+          [Templates subgroup]
+            [template row — preselected if any referenced slot is filled]
+              (slot read-only child items listing referenced slots)
+            ...
+
+    Target-status column: "NEW" / "IN TARGET" / "SIMILAR" / ""
+
+    Template semantics (T012):
+      - Checking a template selects its full referenced slot set (extra
+        slots may transfer empty; FR-007).
+      - Deselecting a template leaves only the affix-filled slots selected.
+      - Template check/deselect NEVER re-expands affix_picks.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Step 3a of 5: Morphology Skeleton")
+        self.setSubTitle(
+            "Review the parts of speech, slots, and templates the picked affixes require. "
+            "Pre-checked items are derived from your affix selection. "
+            "Deselect to trim to a bare-bones transfer; check extras to add more."
+        )
+        self._skeleton: Optional[object] = None  # SkeletonInventory
+        self._mirroring: bool = False
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel(
+            "Slots/templates needed by the selected affixes are pre-checked. "
+            "Checking a template includes all slots it arranges (even unfilled ones). "
+            "Deselecting a template retains only slots filled by picked affixes.",
+            self,
+        ))
+        self._tree = QtWidgets.QTreeWidget(self)
+        self._tree.setColumnCount(3)
+        self._tree.setHeaderLabels(["Slot / Template", "Affixes", "Target"])
+        self._tree.header().setStretchLastSection(False)
+        self._tree.setAlternatingRowColors(True)
+        layout.addWidget(self._tree, 1)
+
+    def initializePage(self) -> None:
+        """Build skeleton from affix picks + bound target when the page is entered."""
+        self._tree.itemChanged.disconnect() if self._tree.receivers(
+            self._tree.itemChanged
+        ) > 0 else None
+        self._tree.clear()
+        self._skeleton = None
+
+        affix_picks = self._get_affix_picks()
+        source = self._get_source()
+        if source is None or not affix_picks:
+            empty = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No affixes selected or no source bound)"]
+            )
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            return
+
+        target = self._get_target()
+        try:
+            skeleton = build_skeleton_inventory(source, affix_picks, target=target)
+        except Exception:  # noqa: BLE001
+            skeleton = None
+
+        if skeleton is None or not skeleton.pos_nodes:
+            empty = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No skeleton derived from current affix picks)"]
+            )
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            return
+
+        self._skeleton = skeleton
+        self._populate_skeleton_tree(skeleton)
+        self._tree.expandAll()
+        for col in range(3):
+            self._tree.resizeColumnToContents(col)
+        self._tree.itemChanged.connect(self._on_item_changed)
+
+    def _populate_skeleton_tree(self, skeleton) -> None:
+        """Build the POS-rooted skeleton tree from a SkeletonInventory."""
+        for pos_node in skeleton.pos_nodes:
+            pos_item = QtWidgets.QTreeWidgetItem(
+                self._tree,
+                [pos_node.label, "", _STATUS_LABELS.get(pos_node.status or "", "")]
+            )
+            pos_item.setData(0, _SKEL_GUID_ROLE, pos_node.pos_guid)
+            pos_item.setData(0, _SKEL_KIND_ROLE, "pos")
+            pos_item.setFlags(
+                pos_item.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            check_state = (QtCore.Qt.CheckState.Checked if pos_node.preselected
+                           else QtCore.Qt.CheckState.Unchecked)
+            pos_item.setCheckState(0, check_state)
+            from PyQt6 import QtGui
+            bold_font = pos_item.font(0)
+            bold_font.setBold(True)
+            pos_item.setFont(0, bold_font)
+
+            # Slots subgroup
+            if pos_node.slots:
+                slots_group = QtWidgets.QTreeWidgetItem(pos_item, ["Slots", "", ""])
+                slots_group.setData(0, _SKEL_KIND_ROLE, "slots_group")
+                slots_group.setFlags(
+                    slots_group.flags()
+                    | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+                )
+                slots_group.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+                bold_f = slots_group.font(0)
+                bold_f.setBold(True)
+                slots_group.setFont(0, bold_f)
+                for slot_node in pos_node.slots:
+                    count_label = (
+                        f"{slot_node.affix_count} affix"
+                        + ("es" if slot_node.affix_count != 1 else "")
+                        if slot_node.affix_count > 0 else ""
+                    )
+                    slot_item = QtWidgets.QTreeWidgetItem(
+                        slots_group,
+                        [slot_node.label, count_label,
+                         _STATUS_LABELS.get(slot_node.status or "", "")]
+                    )
+                    slot_item.setData(0, _SKEL_GUID_ROLE, slot_node.slot_guid)
+                    slot_item.setData(0, _SKEL_KIND_ROLE, "slot")
+                    slot_item.setFlags(
+                        slot_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    slot_cs = (QtCore.Qt.CheckState.Checked if slot_node.preselected
+                               else QtCore.Qt.CheckState.Unchecked)
+                    slot_item.setCheckState(0, slot_cs)
+
+            # Templates subgroup
+            if pos_node.templates:
+                tpl_group = QtWidgets.QTreeWidgetItem(pos_item, ["Templates", "", ""])
+                tpl_group.setData(0, _SKEL_KIND_ROLE, "templates_group")
+                tpl_group.setFlags(
+                    tpl_group.flags()
+                    | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+                )
+                tpl_group.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+                bold_tf = tpl_group.font(0)
+                bold_tf.setBold(True)
+                tpl_group.setFont(0, bold_tf)
+                for tpl_node in pos_node.templates:
+                    tpl_item = QtWidgets.QTreeWidgetItem(
+                        tpl_group,
+                        [tpl_node.label, "",
+                         _STATUS_LABELS.get(tpl_node.status or "", "")]
+                    )
+                    tpl_item.setData(0, _SKEL_GUID_ROLE, tpl_node.template_guid)
+                    tpl_item.setData(0, _SKEL_KIND_ROLE, "template")
+                    tpl_item.setFlags(
+                        tpl_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    tpl_cs = (QtCore.Qt.CheckState.Checked if tpl_node.preselected
+                              else QtCore.Qt.CheckState.Unchecked)
+                    tpl_item.setCheckState(0, tpl_cs)
+                    # Read-only slot list under the template (FR-006)
+                    for ref_sg in tpl_node.referenced_slot_guids:
+                        # Find the slot label from the POS node
+                        slot_label = next(
+                            (s.label for s in pos_node.slots if s.slot_guid == ref_sg),
+                            ref_sg[:8],
+                        )
+                        ro_item = QtWidgets.QTreeWidgetItem(
+                            tpl_item, [f"  {slot_label}", "", ""]
+                        )
+                        ro_item.setData(0, _SKEL_GUID_ROLE, ref_sg)
+                        ro_item.setData(0, _SKEL_KIND_ROLE, "template_slot_ro")
+                        ro_item.setData(0, _SKEL_READ_ONLY, True)
+                        # Read-only: no checkable flag
+                        ro_item.setFlags(
+                            ro_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                        )
+
+    def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
+        """Handle template check/deselect semantics (T012)."""
+        if self._mirroring or column != 0:
+            return
+        kind = item.data(0, _SKEL_KIND_ROLE)
+        if kind != "template" or self._skeleton is None:
+            return
+        # Template check/deselect: update slot check states accordingly.
+        tpl_guid = item.data(0, _SKEL_GUID_ROLE)
+        new_state = item.checkState(0)
+        self._mirroring = True
+        try:
+            self._apply_template_slot_semantics(tpl_guid, new_state)
+        finally:
+            self._mirroring = False
+
+    def _apply_template_slot_semantics(self, tpl_guid: str,
+                                        tpl_state) -> None:
+        """Apply template check/deselect semantics to the slot checkboxes.
+
+        Checked: force all referenced slots checked.
+        Unchecked: revert slots to affix-filled state only (bare-bones).
+        Never modifies affix_picks (FR-007).
+        """
+        if self._skeleton is None:
+            return
+        # Find the template node
+        tpl_node = None
+        pos_node_found = None
+        for pos_node in self._skeleton.pos_nodes:
+            for tn in pos_node.templates:
+                if tn.template_guid == tpl_guid:
+                    tpl_node = tn
+                    pos_node_found = pos_node
+                    break
+            if tpl_node is not None:
+                break
+        if tpl_node is None or pos_node_found is None:
+            return
+
+        if tpl_state == QtCore.Qt.CheckState.Checked:
+            # Force all referenced slots checked
+            slots_to_check = set(tpl_node.referenced_slot_guids)
+        else:
+            # Deselect: only affix-filled slots remain
+            slots_to_check = self._skeleton.affix_filled_slot_guids()
+
+        # Walk the tree and update slot items under this POS
+        self._update_slot_checks_in_tree(pos_node_found.pos_guid, slots_to_check,
+                                          tpl_state == QtCore.Qt.CheckState.Checked)
+
+    def _update_slot_checks_in_tree(self, pos_guid: str, slot_guids: set,
+                                     force_checked: bool) -> None:
+        """Walk the tree and set slot check states under the given POS."""
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            pos_item = root.child(i)
+            if pos_item.data(0, _SKEL_GUID_ROLE) != pos_guid:
+                continue
+            for j in range(pos_item.childCount()):
+                group = pos_item.child(j)
+                if group.data(0, _SKEL_KIND_ROLE) != "slots_group":
+                    continue
+                for k in range(group.childCount()):
+                    slot_item = group.child(k)
+                    if slot_item.data(0, _SKEL_KIND_ROLE) != "slot":
+                        continue
+                    sg = slot_item.data(0, _SKEL_GUID_ROLE)
+                    if force_checked and sg in slot_guids:
+                        slot_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+                    elif not force_checked:
+                        # Deselect: only keep affix-filled
+                        cs = (QtCore.Qt.CheckState.Checked
+                              if sg in slot_guids
+                              else QtCore.Qt.CheckState.Unchecked)
+                        slot_item.setCheckState(0, cs)
+
+    # ------------------------------------------------------------------
+    def _get_source(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page(0)
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(p0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page(0)
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_affix_picks(self) -> frozenset:
+        """Retrieve affix_picks from the item-picker page (index 1)."""
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_items = w.page(1)
+            if page_items is None:
+                return frozenset()
+            sel = page_items.collect_selection()
+            return sel.affix_picks
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+    def collect_skeleton_picks(self) -> dict:
+        """Return the current skeleton selections as:
+        {
+          "pos_guids": set[str],
+          "slot_guids": set[str],
+          "template_guids": set[str],
+        }
+        """
+        pos_guids: Set[str] = set()
+        slot_guids: Set[str] = set()
+        template_guids: Set[str] = set()
+        root = self._tree.invisibleRootItem()
+
+        def _walk(node: QtWidgets.QTreeWidgetItem) -> None:
+            kind = node.data(0, _SKEL_KIND_ROLE)
+            state = node.checkState(0)
+            if kind == "pos" and state == QtCore.Qt.CheckState.Checked:
+                g = node.data(0, _SKEL_GUID_ROLE)
+                if g:
+                    pos_guids.add(g)
+            elif kind == "slot" and state == QtCore.Qt.CheckState.Checked:
+                g = node.data(0, _SKEL_GUID_ROLE)
+                if g:
+                    slot_guids.add(g)
+            elif kind == "template" and state == QtCore.Qt.CheckState.Checked:
+                g = node.data(0, _SKEL_GUID_ROLE)
+                if g:
+                    template_guids.add(g)
+            for i in range(node.childCount()):
+                _walk(node.child(i))
+
+        for i in range(root.childCount()):
+            _walk(root.child(i))
+
+        return {
+            "pos_guids": pos_guids,
+            "slot_guids": slot_guids,
+            "template_guids": template_guids,
+        }
+
+    def deselected_filled_slot_guids(self) -> frozenset:
+        """Return slot GUIDs that a picked affix fills but the user unchecked.
+
+        Used by the EXCLUDED-LOSSY gate at Move (T017).
+        """
+        if self._skeleton is None:
+            return frozenset()
+        picks = self.collect_skeleton_picks()
+        checked_slots = picks["slot_guids"]
+        affix_filled = self._skeleton.affix_filled_slot_guids()
+        return frozenset(affix_filled - checked_slots)
+
+
+# ---------------------------------------------------------------------------
+# Page 3c -- Grammatical Dependencies  (T014)
+# ---------------------------------------------------------------------------
+
+class _PageGramDeps(QtWidgets.QWizardPage):
+    """Page 3c: Grammatical dependencies derived from the affix picks' POSes.
+
+    Sections:
+      - Inflection Features
+      - Inflection Classes
+      - Stem Names
+
+    ExceptionFeaturesOC does not exist on the live LCM runtime; that dep-kind
+    is tracked under a separate shared-bug ticket and is NOT shown here.
+
+    All items are preselected (AS-NEEDED); per-item deselect is the user action.
+    Empty sections render cleanly (no error, section header visible but empty).
+    Target-status column (NEW / IN TARGET / SIMILAR).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Step 3b of 5: Grammatical Dependencies")
+        self.setSubTitle(
+            "Review the inflection features, classes, and stem names "
+            "that the picked affixes' parts of speech require. All are preselected. "
+            "Deselect items you do not want to transfer."
+        )
+        self._deps: Optional[object] = None  # DepsInventory
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        self._tree = QtWidgets.QTreeWidget(self)
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Item", "Target"])
+        self._tree.header().setStretchLastSection(True)
+        self._tree.setAlternatingRowColors(True)
+        layout.addWidget(self._tree, 1)
+
+    def initializePage(self) -> None:
+        """Build deps from affix picks + bound target when the page is entered."""
+        self._tree.clear()
+        self._deps = None
+
+        affix_picks = self._get_affix_picks()
+        source = self._get_source()
+        if source is None or not affix_picks:
+            empty = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No affixes selected or no source bound)"]
+            )
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            return
+
+        target = self._get_target()
+        try:
+            deps = build_deps_inventory(source, affix_picks, target=target)
+        except Exception:  # noqa: BLE001
+            deps = None
+
+        if deps is None:
+            return
+
+        self._deps = deps
+        self._populate_deps_tree(deps)
+        self._tree.expandAll()
+        for col in range(2):
+            self._tree.resizeColumnToContents(col)
+
+    def _populate_deps_tree(self, deps) -> None:
+        """Populate the sections tree from a DepsInventory."""
+        sections = [
+            ("Inflection Features", deps.infl_features),
+            ("Inflection Classes", deps.infl_classes),
+            ("Stem Names", deps.stem_names),
+        ]
+        for section_label, rows in sections:
+            section_item = QtWidgets.QTreeWidgetItem(
+                self._tree, [section_label, ""]
+            )
+            section_item.setData(0, _SKEL_KIND_ROLE, "section")
+            section_item.setFlags(
+                section_item.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            section_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            from PyQt6 import QtGui
+            bold_f = section_item.font(0)
+            bold_f.setBold(True)
+            section_item.setFont(0, bold_f)
+            if not rows:
+                empty_child = QtWidgets.QTreeWidgetItem(
+                    section_item, ["(none)", ""]
+                )
+                empty_child.setFlags(
+                    empty_child.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled
+                )
+            else:
+                for row in rows:
+                    row_item = QtWidgets.QTreeWidgetItem(
+                        section_item,
+                        [row.label, _STATUS_LABELS.get(row.status or "", "")]
+                    )
+                    row_item.setData(0, _SKEL_GUID_ROLE, row.guid)
+                    row_item.setData(0, _SKEL_KIND_ROLE, "dep")
+                    row_item.setFlags(
+                        row_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    cs = (QtCore.Qt.CheckState.Checked if row.preselected
+                          else QtCore.Qt.CheckState.Unchecked)
+                    row_item.setCheckState(0, cs)
+
+    # ------------------------------------------------------------------
+    def _get_source(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page(0)
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(p0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page(0)
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_affix_picks(self) -> frozenset:
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_items = w.page(1)
+            if page_items is None:
+                return frozenset()
+            sel = page_items.collect_selection()
+            return sel.affix_picks
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+    def collect_dep_picks(self) -> dict:
+        """Return currently-checked dep GUIDs by section.
+
+        Returns
+        -------
+        dict with keys:
+          "infl_features", "infl_classes", "stem_names", "exception_features"
+          each a set[str] of GUIDs.
+        """
+        result = {
+            "infl_features": set(),
+            "infl_classes": set(),
+            "stem_names": set(),
+        }
+        section_map = {
+            "Inflection Features": "infl_features",
+            "Inflection Classes": "infl_classes",
+            "Stem Names": "stem_names",
+        }
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            section_item = root.child(i)
+            section_label = section_item.text(0)
+            key = section_map.get(section_label)
+            if key is None:
+                continue
+            for j in range(section_item.childCount()):
+                row_item = section_item.child(j)
+                if row_item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                    g = row_item.data(0, _SKEL_GUID_ROLE)
+                    if g:
+                        result[key].add(g)
+        return result
+
+    def deselected_dep_guids(self) -> frozenset:
+        """Return all GUIDs that were preselected but the user unchecked.
+
+        Used for EXCLUDED-LOSSY warnings.
+        """
+        if self._deps is None:
+            return frozenset()
+        all_preselected = frozenset(
+            row.guid
+            for collection in (
+                self._deps.infl_features,
+                self._deps.infl_classes,
+                self._deps.stem_names,
+            )
+            for row in collection
+            if row.preselected
+        )
+        picks = self.collect_dep_picks()
+        checked = frozenset(
+            g
+            for guids in picks.values()
+            for g in guids
+        )
+        return all_preselected - checked
+
+
+# ---------------------------------------------------------------------------
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
@@ -1043,7 +1653,7 @@ class _PagePreview(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 5: Preview")
+        self.setTitle("Step 5 of 6: Preview")
         self.setSubTitle(
             "Review the planned transfer before committing. "
             "Warnings (entries with missing references) are highlighted."
@@ -1069,15 +1679,23 @@ class _PagePreview(QtWidgets.QWizardPage):
                 self, "GramTrans", "No target project bound. Go back to page 1."
             )
             return
-        # Page 1 (index 1) is _PageItemPicker -- it now owns collect_selection()
-        # and reads its own inventory. Page 2 (index 2) is _PageScopeConflict.
+        # T019 page indices:
+        #   1 = _PageItemPicker (affixes)
+        #   2 = _PageSkeleton
+        #   3 = _PageGramDeps
+        #   4 = _PagePreview (this page)
+        # _PageScopeConflict is no longer in the flow (FR-012/FR-013);
+        # Layer-1 defaults are applied automatically (T020).
         page_items = wizard.page(1)
         affix_selection = page_items.collect_selection()
-        # Merge scope/conflict settings from page 2 (_PageScopeConflict).
-        # Preserve template_picks from the item-picker selection so they are
-        # not discarded when re-wrapping into PickerState/SourceAffixInventory.
-        page_scope = wizard.page(2)
-        selection = page_scope.collect_selection(
+
+        # Apply Layer-1 conflict-mode defaults automatically (T020, FR-012).
+        # Build a selection using affix picks only; no scope/conflict UI on these pages.
+        if __package__:
+            from ..models import _DEFAULT_CONFLICT_MODES
+        else:
+            from models import _DEFAULT_CONFLICT_MODES  # type: ignore
+        selection = build_selection(
             PickerState(
                 checked_affixes=affix_selection.affix_picks,
                 checked_templates=affix_selection.template_picks,
@@ -1086,11 +1704,12 @@ class _PagePreview(QtWidgets.QWizardPage):
                 unbound_affixes=affix_selection.affix_picks,
                 template_to_slots={t: () for t in affix_selection.template_picks},
             ),
-        )
-        # WS mapping from page 1 (three-way MAP/CREATE/SKIP control).
-        # Falls back to an empty mapping if page 1 has not yet built the table.
-        page1 = wizard.page(0)
-        ws_mapping = page1.ws_mapping() if hasattr(page1, "ws_mapping") else None
+            category_scopes={},
+        )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
+
+        # WS mapping from page 0 (three-way MAP/CREATE/SKIP control).
+        page0 = wizard.page(0)
+        ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
         state, payload = gt_api.compute_preview(context, selection, ws_mapping)
         # Phase 3c: compute_preview always returns PREVIEW_READY
         self._cached_plan = payload
@@ -1129,7 +1748,7 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._report_sink = report_sink
         self._modify_allowed = modify_allowed
         self._move_done = False
-        self.setTitle("Step 5 of 5: Finish / Move")
+        self.setTitle("Step 6 of 6: Finish / Move")
         self.setSubTitle(
             "Click 'Execute Move' to write all planned actions to the target project. "
             "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
@@ -1157,18 +1776,49 @@ class _PageFinish(QtWidgets.QWizardPage):
         wizard = self.wizard()
         if wizard is None:
             return
-        plan = wizard.page(3).cached_plan()
+        # T019: Preview is now at index 4 (Skeleton=2, GramDeps=3, Preview=4, Finish=5).
+        preview_page = wizard.page(4)
+        plan = preview_page.cached_plan() if preview_page is not None else None
         if plan is None:
             QtWidgets.QMessageBox.warning(
-                self, "GramTrans", "No preview plan available. Go back to page 4."
+                self, "GramTrans", "No preview plan available. Go back to page 5."
             )
             return
         context = wizard.page(0).context()
         if context is None:
             return
 
-        # Confirm-on-Move gate (spec section e, Refinement 3 P1).
+        # T017: Aggregate EXCLUDED-LOSSY from the plan + skeleton/deps deselections.
+        # plan.excluded_lossy_count() covers warnings emitted during preview planning.
+        # Additionally, check skeleton page (index 2) and deps page (index 3) for
+        # slots/deps the user deselected that a picked affix needs.
         el_count = plan.excluded_lossy_count()
+
+        # Extra skeleton EXCLUDED-LOSSY (T017)
+        skel_page = wizard.page(2)
+        if skel_page is not None and hasattr(skel_page, "deselected_filled_slot_guids"):
+            deselected_slots = skel_page.deselected_filled_slot_guids()
+            if deselected_slots and skel_page._skeleton is not None:
+                # Build affix_slot_map from skeleton
+                affix_slot_map = {
+                    affix_guid: list(slot_guids)
+                    for affix_guid, slot_guids in (
+                        (ag, frozenset(
+                            sg for sg, fills in skel_page._skeleton.affix_fills.items()
+                            if ag in fills
+                        ))
+                        for ag in skel_page._skeleton.affix_picks
+                    )
+                }
+                # target slot guids (blank; skeleton doesn't have live target here)
+                extra_warnings = build_excluded_lossy_warnings(
+                    affix_slot_map=affix_slot_map,
+                    deselected_slot_guids=set(deselected_slots),
+                    target_slot_guids=set(),
+                )
+                el_count += len(extra_warnings)
+
+        # Consolidated single confirmation dialog (FR-011 / T017).
         if el_count > 0:
             answer = QtWidgets.QMessageBox.question(
                 self,
@@ -1197,7 +1847,6 @@ class _PageFinish(QtWidgets.QWizardPage):
         # Move non-repeatability (P0): invalidate the preview page's cached plan
         # so a double-click or re-entry cannot re-execute the same plan and
         # create duplicate LCM objects.
-        preview_page = wizard.page(3)
         if hasattr(preview_page, "_cached_plan"):
             preview_page._cached_plan = None
         self.completeChanged.emit()
@@ -1250,18 +1899,30 @@ class SelectionWizard(QtWidgets.QWizard):
             source_project_path=_safe_path(host_project),
         )
 
-        # Create pages (indices 0-4 match spec pages 1-5).
+        # Create pages.
+        # T019 page order (FR-013):
+        #   0 = Project + WS
+        #   1 = Affixes (item picker)
+        #   2 = Skeleton
+        #   3 = Grammatical deps
+        #   4 = Preview
+        #   5 = Finish / Move
+        # _PageScopeConflict is retained for back-compat but removed from the flow.
         self._page_project_ws = _PageProjectWS(stub, host_project)
         self._page_items = _PageItemPicker()
+        self._page_skeleton = _PageSkeleton()
+        self._page_gram_deps = _PageGramDeps()
+        # _PageScopeConflict kept but NOT added to the wizard (conflict UI deferred FR-012).
         self._page_scope = _PageScopeConflict()
         self._page_preview = _PagePreview()
         self._page_finish = _PageFinish(report_sink, modify_allowed)
 
-        self.addPage(self._page_project_ws)
-        self.addPage(self._page_items)
-        self.addPage(self._page_scope)
-        self.addPage(self._page_preview)
-        self.addPage(self._page_finish)
+        self.addPage(self._page_project_ws)   # index 0
+        self.addPage(self._page_items)         # index 1
+        self.addPage(self._page_skeleton)      # index 2
+        self.addPage(self._page_gram_deps)     # index 3
+        self.addPage(self._page_preview)       # index 4
+        self.addPage(self._page_finish)        # index 5
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
