@@ -19,23 +19,42 @@ from __future__ import annotations
 
 from typing import Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from .. import api as gt_api
-    from ..models import GrammarCategory, RunMode, Selection, WSMapping
+    from ..models import CategoryScope, GrammarCategory, RunMode, Selection, WSMapping
     from .stats_panel import StatsPanel
     from .target_picker import TargetPickerDialog
     from .ws_mapping_dialog import WSMappingDialog
 else:
     import api as gt_api  # type: ignore
-    from models import GrammarCategory, RunMode, Selection, WSMapping  # type: ignore
+    from models import CategoryScope, GrammarCategory, RunMode, Selection, WSMapping  # type: ignore
     from stats_panel import StatsPanel  # type: ignore
     from target_picker import TargetPickerDialog  # type: ignore
     from ws_mapping_dialog import WSMappingDialog  # type: ignore
+
+
+# Schema categories that participate in per-category three-scope selection.
+# These are the dependency categories the item-picker (affixes/stems/templates)
+# can reference; the main window exposes a three-scope selector for each.
+_SCHEMA_CATEGORIES = [
+    GrammarCategory.POS,
+    GrammarCategory.GRAM_CATEGORIES,
+    GrammarCategory.INFLECTION_FEATURES,
+    GrammarCategory.INFLECTION_CLASSES,
+    GrammarCategory.STEM_NAMES,
+    GrammarCategory.EXCEPTION_FEATURES,
+    GrammarCategory.VARIANT_TYPES,
+    GrammarCategory.COMPLEX_FORM_TYPES,
+]
+
+# Scope labels for the three-way combobox.
+_SCOPE_LABELS = {
+    CategoryScope.NONE: "NONE",
+    CategoryScope.AS_NEEDED: "AS-NEEDED (default)",
+    CategoryScope.ALL: "ALL",
+}
 
 
 # All FR-004 categories the main window exposes as toggles.
@@ -48,12 +67,11 @@ _CATEGORY_TOGGLES = [
     GrammarCategory.EXCEPTION_FEATURES,
     GrammarCategory.VARIANT_TYPES,
     GrammarCategory.COMPLEX_FORM_TYPES,
-    GrammarCategory.ADHOC_RULES,
-    GrammarCategory.COMPOUND_RULES,
+    GrammarCategory.ADHOC_COMPOUND_RULES,
     GrammarCategory.CUSTOM_FIELDS,
     GrammarCategory.AFFIXES,
     GrammarCategory.SLOTS,
-    GrammarCategory.TEMPLATES,
+    GrammarCategory.AFFIX_TEMPLATES,
 ]
 
 
@@ -113,7 +131,7 @@ class MainWindow(QtWidgets.QDialog):
         target_row.addWidget(pick_btn)
         layout.addLayout(target_row)
 
-        # Category toggles
+        # Item category toggles (affixes, stems, templates, etc.)
         toggles_group = QtWidgets.QGroupBox("Grammar piece categories to transfer", self)
         toggles_layout = QtWidgets.QGridLayout(toggles_group)
         self._toggles: dict = {}
@@ -124,9 +142,31 @@ class MainWindow(QtWidgets.QDialog):
             self._toggles[cat] = cb
         layout.addWidget(toggles_group)
 
-        # Closure toggle
+        # Schema-section three-scope selectors (one per schema category).
+        # Each category gets a label + combobox: NONE / AS-NEEDED / ALL.
+        schema_group = QtWidgets.QGroupBox(
+            "Schema dependency scope (per-category: NONE / AS-NEEDED / ALL)", self
+        )
+        schema_layout = QtWidgets.QGridLayout(schema_group)
+        self._scope_combos: dict = {}  # GrammarCategory -> QComboBox
+        for i, cat in enumerate(_SCHEMA_CATEGORIES):
+            lbl = QtWidgets.QLabel(cat.value.replace("_", " ") + ":", schema_group)
+            combo = QtWidgets.QComboBox(schema_group)
+            for scope in (CategoryScope.NONE, CategoryScope.AS_NEEDED, CategoryScope.ALL):
+                combo.addItem(_SCOPE_LABELS[scope], scope)
+            # Default: AS_NEEDED (index 1).
+            combo.setCurrentIndex(1)
+            combo.currentIndexChanged.connect(self._on_selection_changed)
+            schema_layout.addWidget(lbl, i // 2, (i % 2) * 2)
+            schema_layout.addWidget(combo, i // 2, (i % 2) * 2 + 1)
+            self._scope_combos[cat] = combo
+        layout.addWidget(schema_group)
+
+        # Legacy closure toggle (kept for back-compat with existing tests and
+        # callers that don't use the per-category scopes; still drives the
+        # fallback path in Selection.scope_for when category_scopes is empty).
         self._closure_cb = QtWidgets.QCheckBox(
-            "Include dependency closure (recommended; per Principle V)", self
+            "Include dependency closure (legacy fallback; per-category scopes above take precedence)", self
         )
         self._closure_cb.setChecked(True)
         self._closure_cb.toggled.connect(self._on_selection_changed)
@@ -161,7 +201,7 @@ class MainWindow(QtWidgets.QDialog):
             )
             return
         dlg = TargetPickerDialog(candidates, parent=self)
-        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         choice = dlg.selected_candidate()
         if choice is None:
@@ -219,7 +259,11 @@ class MainWindow(QtWidgets.QDialog):
         if self._modify_allowed:
             self._move_btn.setEnabled(True)
         # Render the preview's "would add" view via the same stats panel.
-        from ..report import RunReport
+        # Dual-mode import: package (tests) vs flat/site.addsitedir (runtime).
+        if __package__:
+            from ..report import RunReport
+        else:
+            from report import RunReport  # type: ignore
         report = RunReport.build_from_plan(plan, RunMode.PREVIEW)
         self._stats.set_report(report)
 
@@ -235,6 +279,30 @@ class MainWindow(QtWidgets.QDialog):
             )
             self._move_btn.setEnabled(False)
             return
+
+        # Confirm-on-Move gate (plan.md section (e), Task 7):
+        # If the cached plan has EXCLUDED-LOSSY warnings, require explicit
+        # confirmation before writing.  This preserves "the only write is at
+        # Move/Finish" (Principle III) while satisfying Principle V's
+        # requirement that deliberate omissions be reported.
+        el_count = len(getattr(self._cached_plan, "excluded_lossy", ()))
+        if el_count:
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "GramTrans — Missing references",
+                (
+                    f"{el_count} entr{'y' if el_count == 1 else 'ies'} will transfer "
+                    f"with missing references (deliberately excluded dependencies).\n\n"
+                    "These entries will have null fields in the target project.\n\n"
+                    "Proceed with Move?"
+                ),
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No,
+            )
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return  # User cancelled — no write occurs.
+
         try:
             report = gt_api.execute_move(self._context, self._cached_plan)
         except gt_api.PreviewStale as e:
@@ -248,9 +316,19 @@ class MainWindow(QtWidgets.QDialog):
 
     def _collect_selection(self) -> Selection:
         cats = {cat: True for cat, cb in self._toggles.items() if cb.isChecked()}
+        # Collect per-category scopes from the three-scope comboboxes.
+        # Only include categories whose scope differs from the default (AS_NEEDED)
+        # to keep the Selection compact; scope_for() falls back for missing entries.
+        scope_combos = getattr(self, "_scope_combos", {})
+        category_scopes = {}
+        for cat, combo in scope_combos.items():
+            scope = combo.currentData()
+            if scope is not None:
+                category_scopes[cat] = scope
         return Selection(
             categories=cats,
             include_closure=self._closure_cb.isChecked(),
+            category_scopes=category_scopes,
         )
 
     def _collect_ws_mapping(self, required_payload) -> Optional[WSMapping]:
@@ -259,7 +337,7 @@ class MainWindow(QtWidgets.QDialog):
             return WSMapping(entries=())
         existing = _enumerate_target_ws_ids(self._context.target_handle)
         dlg = WSMappingDialog(pairs, existing, parent=self)
-        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return None
         return dlg.selected_mapping()
 

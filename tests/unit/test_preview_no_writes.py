@@ -172,7 +172,7 @@ def _selection() -> Selection:
     return Selection(
         categories={
             GrammarCategory.POS: True,
-            GrammarCategory.TEMPLATES: True,
+            GrammarCategory.AFFIX_TEMPLATES: True,
             GrammarCategory.SLOTS: True,
         },
         include_closure=True,
@@ -209,7 +209,7 @@ def test_populated_source_empty_target_produces_actions_but_no_writes(_patch_pre
     assert plan.skips == ()
     cats = [a.category for a in plan.actions]
     assert cats.count(GrammarCategory.POS) == 1
-    assert cats.count(GrammarCategory.TEMPLATES) == 1
+    assert cats.count(GrammarCategory.AFFIX_TEMPLATES) == 1
     assert cats.count(GrammarCategory.SLOTS) == 2
 
     # The crown jewel: no writes against the target during planning.

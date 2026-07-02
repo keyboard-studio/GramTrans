@@ -28,8 +28,7 @@ LEAF_CATEGORIES = {
     GrammarCategory.EXCEPTION_FEATURES,
     GrammarCategory.VARIANT_TYPES,
     GrammarCategory.COMPLEX_FORM_TYPES,
-    GrammarCategory.ADHOC_RULES,
-    GrammarCategory.COMPOUND_RULES,
+    GrammarCategory.ADHOC_COMPOUND_RULES,  # Phase 3c: unified per FR-341 (was ADHOC_RULES + COMPOUND_RULES)
     # Phase 3a (memo steps 2-5 + 4b + 5b) -- phonology block + strata.
     GrammarCategory.PHONOLOGICAL_FEATURES,
     GrammarCategory.PHONEMES,
@@ -40,14 +39,22 @@ LEAF_CATEGORIES = {
     # Phase 3b (memo step 13b) -- semantic domains; other 8 Phase 3b
     # categories already listed above.
     GrammarCategory.SEMANTIC_DOMAINS,
+    # Phase 3c (memo steps 14-18) — registered as stubs; real callbacks
+    # land in Phase 3c US1-US4. AFFIXES / AFFIX_TEMPLATES / SLOTS moved
+    # from HEAVY to LEAF as part of the Phase 3c migration plan. STEMS is
+    # new in Phase 3c.
+    GrammarCategory.AFFIXES,
+    GrammarCategory.SLOTS,
+    GrammarCategory.AFFIX_TEMPLATES,
+    GrammarCategory.STEMS,
 }
 
-# Heavy categories (AFFIXES, TEMPLATES, MSAs) live in their own files and
-# are explicitly absent from the leaf registry.
+# Heavy categories (MSAs, ALLOMORPH, ENTRY, SENSE, POS, WRITING_SYSTEMS_CHECK)
+# live in inline verb-vertical / Layer-3 paths and are absent from the leaf
+# registry. AFFIXES / AFFIX_TEMPLATES / SLOTS migrated to LEAF in Phase 3c
+# (still served by inline paths during the migration window; leaf stubs
+# raise NotImplementedError so duplicate planning does not occur).
 HEAVY_CATEGORIES = {
-    GrammarCategory.AFFIXES,
-    GrammarCategory.TEMPLATES,
-    GrammarCategory.SLOTS,
     GrammarCategory.MSA,
     GrammarCategory.ALLOMORPH,
     # PH_ENVIRONMENT moved to LEAF_CATEGORIES in Phase 3a (memo step 4b).
@@ -103,9 +110,9 @@ def test_unimplemented_body_raises_not_implemented_with_task_pointer() -> None:
 
     Phase 3b shipped detect-and-skip for custom_fields (US2) and full
     implementations for variant_types / complex_form_types /
-    semantic_domains (US3). The remaining stub categories are
-    adhoc_rules and compound_rules (Phase 3c+).
+    semantic_domains (US3). The remaining stub category is
+    adhoc_compound_rules (Phase 3c US4 — implementation lands at T056-T060).
     """
-    bundle = categories.for_category(GrammarCategory.ADHOC_RULES)
-    with pytest.raises(NotImplementedError, match="T039"):
+    bundle = categories.for_category(GrammarCategory.ADHOC_COMPOUND_RULES)
+    with pytest.raises(NotImplementedError, match="Phase 3c T056"):
         bundle["enumerate_source"](context=object(), selection=object())

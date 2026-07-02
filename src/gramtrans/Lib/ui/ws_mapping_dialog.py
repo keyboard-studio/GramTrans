@@ -12,10 +12,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Tuple
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from ..models import WSKind, WSMapping, WSMappingEntry
@@ -55,7 +52,7 @@ class WSMappingDialog(QtWidgets.QDialog):
         for row, (src_id, kind) in enumerate(self._required):
             self._table.setItem(row, 0, QtWidgets.QTableWidgetItem(src_id))
             kind_item = QtWidgets.QTableWidgetItem(kind.value)
-            kind_item.setFlags(kind_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            kind_item.setFlags(kind_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, 1, kind_item)
 
             combo = QtWidgets.QComboBox(self._table)
@@ -75,11 +72,12 @@ class WSMappingDialog(QtWidgets.QDialog):
         layout.addWidget(self._table, 1)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            QtCore.Qt.Horizontal,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            QtCore.Qt.Orientation.Horizontal,
             self,
         )
-        self._ok_button = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        self._ok_button = buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         self._ok_button.setEnabled(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

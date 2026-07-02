@@ -179,7 +179,7 @@ def fingerprint_for_allomorph(allo, ws_handle=None) -> Tuple:
 FINGERPRINT_FNS: Dict[GrammarCategory, Callable] = {
     GrammarCategory.MSA: fingerprint_for_msa,
     GrammarCategory.ALLOMORPH: fingerprint_for_allomorph,
-    # POS, SLOTS, TEMPLATES, INFLECTION_FEATURES fingerprints (FR-104 table)
+    # POS, SLOTS, AFFIX_TEMPLATES, INFLECTION_FEATURES fingerprints (FR-104 table)
     # will be added here as Phase 1 category planners are implemented.
     # Each entry is (obj, ws_handle=None) -> hashable tuple.
 }

@@ -1455,48 +1455,130 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     return new_sd
 
 
-# ----- adhoc_rules ---------------------------------------------------------
+# ----- adhoc_compound_rules ------------------------------------------------
+# Phase 3c FR-341: per-subclass dispatch on IMoCompoundRule + IMoAdhocProhibition
+# subclasses. Implementation lands in Phase 3c US4 (T056-T060).
 
-def adhoc_rules_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T056")
 
 
-def adhoc_rules_dependencies(piece):
+def adhoc_compound_rules_dependencies(piece):
     return ()
 
 
-def adhoc_rules_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T056")
 
 
-def adhoc_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T058")
 
 
-def adhoc_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T059")
 
 
-# ----- compound_rules ------------------------------------------------------
+# ----- affixes (Phase 3c US1, memo step 14) --------------------------------
+# Affix LexEntries partitioned by entry.LexemeFormOA.MorphTypeRA.IsAffixType.
+# Owned-child closure: senses, MSAs, allomorphs, examples, pronunciations,
+# etymologies, entry-refs. MSA.SlotsRC deferred to 17.1 sub-pass;
+# LexEntryRef component lexemes deferred to post-pass A.
 
-def compound_rules_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+def affixes_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T013")
 
 
-def compound_rules_dependencies(piece):
+def affixes_dependencies(piece):
     return ()
 
 
-def compound_rules_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+def affixes_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T013")
 
 
-def compound_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+def affixes_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T015")
 
 
-def compound_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+def affixes_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T019")
+
+
+# ----- slots (Phase 3c US2, memo step 16) ----------------------------------
+# IMoInflAffixSlot under IPartOfSpeech.AffixSlotsOC. Implementation T029.
+
+def slots_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T029")
+
+
+def slots_dependencies(piece):
+    return ()
+
+
+def slots_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T029")
+
+
+def slots_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T029")
+
+
+def slots_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T029")
+
+
+# ----- affix_templates (Phase 3c US2, memo step 17 + 17.1) -----------------
+# IMoInflAffixTemplate under IPartOfSpeech.AffixTemplatesOS. The 17.1
+# MSA-slot wiring sub-pass lives as a post-execute tail block on
+# affix_templates_execute_action consuming plan.msa_slot_bindings.
+# Implementation T030 (base) + T031 (17.1 tail).
+
+def affix_templates_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T030")
+
+
+def affix_templates_dependencies(piece):
+    return ()
+
+
+def affix_templates_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T030")
+
+
+def affix_templates_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T030")
+
+
+def affix_templates_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T030")
+
+
+# ----- stems (Phase 3c US3, memo step 18) ----------------------------------
+# Stem LexEntries (not IsAffixType). Same owned-child closure as affixes.
+# MoStemMsa.StratumRA resolves to Phase 3a Strata; sense.SemanticDomainsRC
+# resolves to Phase 3b semantic domains. Post-pass A tail block on
+# stems_execute_action consumes plan.lexentry_ref_bindings.
+# Implementation T042-T045.
+
+def stems_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T042")
+
+
+def stems_dependencies(piece):
+    return ()
+
+
+def stems_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T042")
+
+
+def stems_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T042")
+
+
+def stems_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T042")
 
 
 # ============================================================================
@@ -2136,19 +2218,12 @@ LEAF_CATEGORIES = {
         "plan_action": complex_form_types_plan_action,
         "execute_action": complex_form_types_execute_action,
     },
-    GrammarCategory.ADHOC_RULES: {
-        "enumerate_source": adhoc_rules_enumerate_source,
-        "dependencies": adhoc_rules_dependencies,
-        "required_writing_systems": adhoc_rules_required_writing_systems,
-        "plan_action": adhoc_rules_plan_action,
-        "execute_action": adhoc_rules_execute_action,
-    },
-    GrammarCategory.COMPOUND_RULES: {
-        "enumerate_source": compound_rules_enumerate_source,
-        "dependencies": compound_rules_dependencies,
-        "required_writing_systems": compound_rules_required_writing_systems,
-        "plan_action": compound_rules_plan_action,
-        "execute_action": compound_rules_execute_action,
+    GrammarCategory.ADHOC_COMPOUND_RULES: {
+        "enumerate_source": adhoc_compound_rules_enumerate_source,
+        "dependencies": adhoc_compound_rules_dependencies,
+        "required_writing_systems": adhoc_compound_rules_required_writing_systems,
+        "plan_action": adhoc_compound_rules_plan_action,
+        "execute_action": adhoc_compound_rules_execute_action,
     },
     # Phase 3a — phonology block + strata (steps 2-5 + 4b + 5b)
     GrammarCategory.PHONOLOGICAL_FEATURES: {
@@ -2203,6 +2278,37 @@ LEAF_CATEGORIES = {
         "required_writing_systems": semantic_domains_required_writing_systems,
         "plan_action": semantic_domains_plan_action,
         "execute_action": semantic_domains_execute_action,
+    },
+    # Phase 3c (memo steps 14-18) — stubs registered for leaf-dispatch
+    # discovery; real implementations land in Phase 3c US1-US4.
+    # Migration from inline verb-vertical paths is gated on per-US ship.
+    GrammarCategory.AFFIXES: {
+        "enumerate_source": affixes_enumerate_source,
+        "dependencies": affixes_dependencies,
+        "required_writing_systems": affixes_required_writing_systems,
+        "plan_action": affixes_plan_action,
+        "execute_action": affixes_execute_action,
+    },
+    GrammarCategory.SLOTS: {
+        "enumerate_source": slots_enumerate_source,
+        "dependencies": slots_dependencies,
+        "required_writing_systems": slots_required_writing_systems,
+        "plan_action": slots_plan_action,
+        "execute_action": slots_execute_action,
+    },
+    GrammarCategory.AFFIX_TEMPLATES: {
+        "enumerate_source": affix_templates_enumerate_source,
+        "dependencies": affix_templates_dependencies,
+        "required_writing_systems": affix_templates_required_writing_systems,
+        "plan_action": affix_templates_plan_action,
+        "execute_action": affix_templates_execute_action,
+    },
+    GrammarCategory.STEMS: {
+        "enumerate_source": stems_enumerate_source,
+        "dependencies": stems_dependencies,
+        "required_writing_systems": stems_required_writing_systems,
+        "plan_action": stems_plan_action,
+        "execute_action": stems_execute_action,
     },
 }
 

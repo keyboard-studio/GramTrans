@@ -1,4 +1,4 @@
-"""WSWizard (T034) -- PyQt5 implementation of the WSResolver protocol
+"""WSWizard (T034) -- PyQt6 implementation of the WSResolver protocol
 from `Lib/ws_mapping.py`.
 
 Per [contracts/ws-wizard.md], the wizard:
@@ -22,10 +22,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover -- PySide2 fallback
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets  # noqa: F401 — QtCore kept for parity
 
 if __package__:
     from ..conflict import UserCancelled
@@ -80,9 +77,12 @@ class WSWizard(QtWidgets.QDialog):
         outer.addWidget(self._tree)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QtWidgets.QDialogButtonBox.Apply).clicked.connect(self._on_apply)
+        buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+        ).clicked.connect(self._on_apply)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
 
@@ -172,7 +172,7 @@ class WSWizard(QtWidgets.QDialog):
             return WSWizard(
                 mismatches, target_project=self._target, parent=self.parent()
             ).resolve(mismatches)
-        result = self.exec_()
-        if result != QtWidgets.QDialog.Accepted:
+        result = self.exec()
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
             raise UserCancelled("WS wizard dismissed")
         return tuple(c for c in self._choices if c is not None)

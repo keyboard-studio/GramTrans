@@ -17,6 +17,8 @@ from typing import Iterable, List, Optional, Tuple
 
 if __package__:
     from .models import (
+        CategoryScope,
+        ExcludedLossy,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
@@ -29,6 +31,8 @@ if __package__:
     )
 else:
     from models import (
+        CategoryScope,
+        ExcludedLossy,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
@@ -67,6 +71,7 @@ def build_run_plan(
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []
+    excluded_lossy: List[ExcludedLossy] = []
     identity_remap: dict = {}
 
     # Walk every selected POS (or all top-level POSes when categories[POS]
@@ -75,7 +80,24 @@ def build_run_plan(
     # → Allomorphs → PhEnvironments.
     for src_pos in _select_source_poses(source, selection):
         _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites)
+        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy)
+
+    # Phase 3c binding accumulators — written by AFFIXES/STEMS plan_action;
+    # consumed by AFFIX_TEMPLATES (17.1 sub-pass, US2) and STEMS (post-pass A, US3).
+    # Thread via context so plan_action callbacks can access without signature change.
+    # RunContext is frozen=True; use object.__setattr__ to attach dynamic attrs.
+    _msa_slot_bindings: dict = {}
+    _lexentry_ref_bindings: dict = {}
+    object.__setattr__(context, '_msa_slot_bindings', _msa_slot_bindings)
+    object.__setattr__(context, '_lexentry_ref_bindings', _lexentry_ref_bindings)
+    # Phase 3c FR-338: thread the live Selection so entry-shaped leaf
+    # plan_actions (AFFIXES/STEMS) can honor enable_overwrite by emitting a
+    # PlannedOverwrite instead of a Skip when the target already has the GUID.
+    object.__setattr__(context, '_selection', selection)
+
+    # Phase 3c Selection UI: thread excluded_lossy collector so leaf-dispatch
+    # plan_action callbacks can add EXCLUDED-LOSSY warnings.
+    object.__setattr__(context, '_excluded_lossy', excluded_lossy)
 
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
@@ -100,6 +122,15 @@ def build_run_plan(
         GrammarCategory.VARIANT_TYPES,
         GrammarCategory.COMPLEX_FORM_TYPES,
         GrammarCategory.SEMANTIC_DOMAINS,
+        # Phase 3c (memo steps 14-18) — order matters: 17.1 sub-pass on
+        # AFFIX_TEMPLATES executor tail requires AFFIXES and SLOTS to have
+        # planned first; post-pass A on STEMS executor tail requires
+        # AFFIXES + STEMS planning to be complete.
+        GrammarCategory.AFFIXES,
+        GrammarCategory.ADHOC_COMPOUND_RULES,
+        GrammarCategory.SLOTS,
+        GrammarCategory.AFFIX_TEMPLATES,
+        GrammarCategory.STEMS,
     )
     if __package__:
         from .categories import for_category
@@ -143,6 +174,9 @@ def build_run_plan(
         skips=tuple(skips),
         identity_remap=identity_remap,
         overwrites=tuple(overwrites),
+        msa_slot_bindings=_msa_slot_bindings,
+        lexentry_ref_bindings=_lexentry_ref_bindings,
+        excluded_lossy=tuple(excluded_lossy),
     )
 
 
@@ -207,7 +241,7 @@ def _select_source_poses(source, selection: Selection) -> List:
     """
     pos_closure_cats = (
         GrammarCategory.POS,
-        GrammarCategory.TEMPLATES,
+        GrammarCategory.AFFIX_TEMPLATES,
         GrammarCategory.SLOTS,
         GrammarCategory.ENTRY,
         GrammarCategory.SENSE,
@@ -257,11 +291,13 @@ def _plan_layer3_for_pos(
     actions: List[PlannedAction],
     skips: List[Skip],
     overwrites: List[PlannedOverwrite],
+    excluded_lossy: Optional[List[ExcludedLossy]] = None,
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
     _plan_layer3_verb_affixes_inner(
         source, target, src_pos, selection, actions, skips, overwrites,
+        excluded_lossy=excluded_lossy,
     )
 
 
@@ -295,9 +331,19 @@ def _plan_verb_vertical_inner(
     if src_pos is None:
         return
 
-    closure_on = selection.include_closure
+    # Per-scope closure for POS / AFFIX_TEMPLATES / SLOTS.
+    # Scope AS_NEEDED or ALL -> closure on for that category; NONE -> off.
+    pos_scope = selection.scope_for(GrammarCategory.POS)
+    tpl_scope = selection.scope_for(GrammarCategory.AFFIX_TEMPLATES)
+    slots_scope = selection.scope_for(GrammarCategory.SLOTS)
+    # Legacy closure_on: True when ANY of the three is AS_NEEDED or ALL.
+    # Used as a fallback for the inter-layer "pull in" logic below.
+    closure_on = any(
+        s in (CategoryScope.AS_NEEDED, CategoryScope.ALL)
+        for s in (pos_scope, tpl_scope, slots_scope)
+    )
     pos_on = selection.is_on(GrammarCategory.POS)
-    tpl_on = selection.is_on(GrammarCategory.TEMPLATES)
+    tpl_on = selection.is_on(GrammarCategory.AFFIX_TEMPLATES)
     slots_on = selection.is_on(GrammarCategory.SLOTS)
 
     src_verb = src_pos  # historical local name preserved; "verb" → "POS" here
@@ -355,7 +401,7 @@ def _plan_verb_vertical_inner(
                     missing_deps.append("slots")
                 if missing_deps:
                     skips.append(Skip(
-                        category=GrammarCategory.TEMPLATES,
+                        category=GrammarCategory.AFFIX_TEMPLATES,
                         source_guid=tpl_guid,
                         reason=SkipReason.BARE_BONES_MISSING_CLOSURE,
                         detail=(
@@ -425,6 +471,7 @@ def _plan_layer3_verb_affixes_inner(
     actions: List[PlannedAction],
     skips: List[Skip],
     overwrites: Optional[List[PlannedOverwrite]] = None,
+    excluded_lossy: Optional[List[ExcludedLossy]] = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -443,7 +490,20 @@ def _plan_layer3_verb_affixes_inner(
     if src_verb is None:
         return
 
-    closure_on = selection.include_closure
+    # Per-scope closure for Layer 3 categories.
+    # NONE -> closure off for that category; AS_NEEDED or ALL -> closure on.
+    def _scope_on(cat: GrammarCategory) -> bool:
+        return selection.scope_for(cat) in (CategoryScope.AS_NEEDED, CategoryScope.ALL)
+
+    closure_on = any(
+        _scope_on(c) for c in (
+            GrammarCategory.ENTRY,
+            GrammarCategory.SENSE,
+            GrammarCategory.MSA,
+            GrammarCategory.ALLOMORPH,
+            GrammarCategory.PH_ENVIRONMENT,
+        )
+    )
     any_l3_user = any(
         selection.is_on(c) for c in (
             GrammarCategory.ENTRY,
@@ -667,6 +727,15 @@ def _plan_layer3_verb_affixes_inner(
                 pulled_in_by=(sense_guid,),
             ))
 
+        # Phase 3c Selection UI: EXCLUDED-LOSSY check for MSA.PartOfSpeechRA.
+        # If the user scoped POS to NONE or per-item excluded the POS GUID, and
+        # the target does not already have it, emit an entry-centric warning.
+        if excluded_lossy is not None:
+            for _msa, msa_guid, _sense_guid in msa_actions:
+                _check_msa_pos_excluded_lossy(
+                    _msa, entry_guid, entry_hw, target, selection, excluded_lossy
+                )
+
         # Allomorphs + environments. Allomorphs.GetAll may return wrapped
         # objects (similar to MorphRules templates); _unwrap handles both.
         for allo in source.Allomorphs.GetAll(entry):
@@ -720,6 +789,56 @@ def _plan_layer3_verb_affixes_inner(
                         summary=f"PhEnvironment referenced by allomorph(s)",
                         pulled_in_by=(allo_guid,),
                     ))
+
+
+def _check_msa_pos_excluded_lossy(
+    msa,
+    entry_guid: str,
+    entry_label: str,
+    target,
+    selection: Selection,
+    excluded_lossy: List[ExcludedLossy],
+) -> None:
+    """Emit an EXCLUDED-LOSSY warning if the entry's MSA references a POS that
+    the user deliberately dropped (via NONE scope or per-item exclusion) and
+    the target does not already have it.
+
+    Outcome table (plan.md section (e)):
+    1. dep exists in target by GUID -> silent (LINK).
+    2. dep absent + entry doesn't reference it -> not reached here.
+    3. dep absent + entry references it + user dropped it -> EXCLUDED-LOSSY.
+    """
+    try:
+        from SIL.LCModel import IMoInflAffMsa, ICmObject
+        ia = IMoInflAffMsa(_unwrap(msa))
+        if ia.PartOfSpeechRA is None:
+            return
+        pos_guid = str(ICmObject(ia.PartOfSpeechRA).Guid).lower()
+    except Exception:
+        return
+
+    pos_scope = selection.scope_for(GrammarCategory.POS)
+    dep_excluded = (
+        pos_scope == CategoryScope.NONE
+        or selection.is_dep_excluded(pos_guid)
+    )
+    if not dep_excluded:
+        return
+
+    # Outcome 1: target already has it (LINK) — silent.
+    if _target_has_pos_guid(target, pos_guid):
+        return
+
+    # Outcome 3: target lacks it and entry references it — EXCLUDED-LOSSY.
+    excluded_lossy.append(ExcludedLossy(
+        category=GrammarCategory.ENTRY,
+        entry_guid=entry_guid,
+        entry_label=entry_label,
+        dep_category=GrammarCategory.POS,
+        dep_guid=pos_guid,
+        dep_label=f"POS ({pos_guid[:8]}...)",
+        message=f"Entry {entry_label!r} will have no Part of Speech.",
+    ))
 
 
 def _target_has_environment_guid(target, env_guid: str) -> bool:
@@ -880,7 +999,7 @@ def _emit_template(target,
     """Emit Add or Skip-by-GUID (Phase 0) / Overwrite (Phase 1) for a template."""
     if _target_has_template_guid(target, owner_pos_guid, tpl_guid):
         _emit_present_outcome(
-            GrammarCategory.TEMPLATES,
+            GrammarCategory.AFFIX_TEMPLATES,
             src_guid=tpl_guid,
             target_guid=tpl_guid,
             summary=f"Affix template already present (guid {tpl_guid[:8]}…)",
@@ -893,7 +1012,7 @@ def _emit_template(target,
         )
     else:
         actions.append(PlannedAction(
-            category=GrammarCategory.TEMPLATES,
+            category=GrammarCategory.AFFIX_TEMPLATES,
             source_guid=tpl_guid,
             intended_target_guid=tpl_guid,
             summary=f"Affix template under Verb (guid {tpl_guid[:8]}…)",

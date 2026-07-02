@@ -72,7 +72,7 @@ def test_every_action_lands_in_added_count() -> None:
         actions=[
             _action(GrammarCategory.AFFIXES, "a1"),
             _action(GrammarCategory.AFFIXES, "a2"),
-            _action(GrammarCategory.TEMPLATES, "t1"),
+            _action(GrammarCategory.AFFIX_TEMPLATES, "t1"),
             _action(GrammarCategory.SLOTS, "s1", pulled_in=True),
             _action(GrammarCategory.SLOTS, "s2", pulled_in=True),
         ],
@@ -82,7 +82,7 @@ def test_every_action_lands_in_added_count() -> None:
     total_added = sum(r.added for r in report.per_category.values())
     assert total_added == 5
     assert report.per_category[GrammarCategory.AFFIXES].added == 2
-    assert report.per_category[GrammarCategory.TEMPLATES].added == 1
+    assert report.per_category[GrammarCategory.AFFIX_TEMPLATES].added == 1
     assert report.per_category[GrammarCategory.SLOTS].added == 2
 
 
@@ -92,7 +92,7 @@ def test_every_skip_lands_in_skipped_count_and_skips_list() -> None:
         actions=[],
         skips=[
             _skip(GrammarCategory.AFFIXES, "a3", SkipReason.UNMAPPED_WS),
-            _skip(GrammarCategory.TEMPLATES, "t9", SkipReason.GOLD_INVIOLABLE),
+            _skip(GrammarCategory.AFFIX_TEMPLATES, "t9", SkipReason.GOLD_INVIOLABLE),
             _skip(GrammarCategory.SLOTS, "s9", SkipReason.DEPENDENCY_UNRESOLVED),
         ],
     )
@@ -111,7 +111,7 @@ def test_mixed_actions_and_skips_account_for_n_plus_m() -> None:
     skips = [
         _skip(GrammarCategory.AFFIXES, f"sa{i}") for i in range(3)
     ] + [
-        _skip(GrammarCategory.TEMPLATES, "st1", SkipReason.GOLD_INVIOLABLE),
+        _skip(GrammarCategory.AFFIX_TEMPLATES, "st1", SkipReason.GOLD_INVIOLABLE),
     ]
     plan = _plan(actions=actions, skips=skips)
     report = RunReport.build_from_plan(plan, RunMode.MOVE)

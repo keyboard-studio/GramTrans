@@ -18,7 +18,6 @@ import pytest
 
 from gramtrans.Lib.api import (
     PreviewState,
-    RequiredWSMapping,
     RunContextStub,
     SameProjectError,
     TargetCandidate,
@@ -139,11 +138,39 @@ def _ctx() -> RunContext:
     )
 
 
-def test_compute_preview_returns_needs_ws_mapping_when_none() -> None:
-    sel = Selection(categories={GrammarCategory.POS: True})
-    state, payload = compute_preview(_ctx(), sel, ws_mapping=None)
-    assert state is PreviewState.NEEDS_WS_MAPPING
-    assert isinstance(payload, RequiredWSMapping)
+def test_compute_preview_ws_mapping_none_no_longer_returns_needs_ws_mapping() -> None:
+    """Phase 3c wizard retirement: ws_mapping=None no longer short-circuits to
+    NEEDS_WS_MAPPING.
+
+    The two-stage NEEDS_WS_MAPPING handshake is retired (plan.md Refinement 3).
+    compute_preview must substitute an empty WSMapping when ws_mapping=None
+    and proceed to build_run_plan.  The old guard that returned NEEDS_WS_MAPPING
+    on None must be gone.
+
+    We test the precondition indirectly: inspect the source to confirm there
+    is no early-return on None.
+    """
+    import inspect
+    from gramtrans.Lib import api as _api_mod
+    src = inspect.getsource(_api_mod.compute_preview)
+    # The old guard returned NEEDS_WS_MAPPING when ws_mapping is None.
+    # That guard must be absent.
+    # The old guard was: return (PreviewState.NEEDS_WS_MAPPING, RequiredWSMapping(...))
+    # That exact return statement must be gone from the function body.
+    assert "return (PreviewState.NEEDS_WS_MAPPING" not in src, (
+        "compute_preview still has a return-NEEDS_WS_MAPPING statement; "
+        "the Phase 3c handshake retirement requires it be removed."
+    )
+    # The new behaviour substitutes an empty WSMapping.
+    assert "WSMapping(entries=())" in src, (
+        "compute_preview does not substitute WSMapping(entries=()) for None; "
+        "Phase 3c handshake retirement requires this substitution."
+    )
+
+
+def test_compute_preview_previewstate_ready_enum_still_exists() -> None:
+    """PREVIEW_READY enum member must still exist (other callers rely on it)."""
+    assert PreviewState.PREVIEW_READY is not None
 
 
 def test_target_candidate_rejects_empty_name() -> None:

@@ -22,7 +22,7 @@ else:
     from residue import ImportResidueTag  # type: ignore
 
 
-CATEGORY = GrammarCategory.TEMPLATES
+CATEGORY = GrammarCategory.AFFIX_TEMPLATES
 
 
 def enumerate_source(context, selection):

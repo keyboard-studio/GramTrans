@@ -13,10 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-try:
-    from PyQt5 import QtCore, QtWidgets
-except ImportError:  # pragma: no cover
-    from PySide2 import QtCore, QtWidgets  # type: ignore
+from PyQt6 import QtCore, QtWidgets
 
 if __package__:
     from ..models import GrammarCategory, RunMode, RunReport
@@ -24,6 +21,10 @@ if __package__:
 else:
     from models import GrammarCategory, RunMode, RunReport  # type: ignore
     from report import render_text_summary  # type: ignore
+
+# Stylesheet constants for EXCLUDED-LOSSY warning rows.
+_WARNING_BG = "#fff3cd"   # amber tint
+_WARNING_FG = "#856404"   # dark amber text
 
 
 class StatsPanel(QtWidgets.QWidget):
@@ -37,16 +38,29 @@ class StatsPanel(QtWidgets.QWidget):
         self._header.setStyleSheet("font-weight: bold;")
         layout.addWidget(self._header)
 
-        # Per-category table
-        self._table = QtWidgets.QTableWidget(0, 4, self)
+        # Per-category table — 5 columns: Category, Added, Skipped,
+        # Pulled in by closure, Excluded-lossy (warn+allow).
+        self._table = QtWidgets.QTableWidget(0, 5, self)
         self._table.setHorizontalHeaderLabels(
-            ["Category", "Added", "Skipped", "Pulled in by closure"]
+            ["Category", "Added", "Skipped", "Pulled in by closure", "Excl-lossy"]
         )
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self._table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self._table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
         layout.addWidget(self._table, 2)
+
+        # EXCLUDED-LOSSY warning list (distinct severity — not error, not skip).
+        warn_label = QtWidgets.QLabel(
+            "Warnings (entries with missing references -- deliberate, warn+allow):", self
+        )
+        warn_label.setStyleSheet(f"color: {_WARNING_FG}; font-weight: bold;")
+        layout.addWidget(warn_label)
+        self._warn_view = QtWidgets.QPlainTextEdit(self)
+        self._warn_view.setReadOnly(True)
+        self._warn_view.setMaximumBlockCount(500)
+        self._warn_view.setStyleSheet(f"background: {_WARNING_BG};")
+        layout.addWidget(self._warn_view, 1)
 
         # Skip list
         skip_label = QtWidgets.QLabel("Skips (FR-018: every selected item appears here or in counts above):", self)
@@ -84,6 +98,21 @@ class StatsPanel(QtWidgets.QWidget):
             self._table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(r.added)))
             self._table.setItem(row, 2, QtWidgets.QTableWidgetItem(str(r.skipped)))
             self._table.setItem(row, 3, QtWidgets.QTableWidgetItem(str(r.closure_pulled_in)))
+            el_count = getattr(r, "excluded_lossy", 0)
+            el_item = QtWidgets.QTableWidgetItem(str(el_count) if el_count else "")
+            if el_count:
+                el_item.setForeground(QtWidgets.QApplication.palette().windowText())
+            self._table.setItem(row, 4, el_item)
+
+        # Render EXCLUDED-LOSSY warnings (distinct severity, entry-centric).
+        el_list = getattr(report, "excluded_lossy", ())
+        if el_list:
+            lines = [f"[WARN] {el.message}" for el in el_list]
+            self._warn_view.setPlainText("\n".join(lines))
+            self._warn_view.setVisible(True)
+        else:
+            self._warn_view.setPlainText("(no warnings)")
+            self._warn_view.setVisible(True)
 
         if report.skips:
             lines = []

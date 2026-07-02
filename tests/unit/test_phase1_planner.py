@@ -116,7 +116,7 @@ def test_phase0_default_target_has_guid_emits_skip_not_overwrite(_patch_lcm):
     tgt = _Project("tgt", verb=None, all_pos=(tgt_verb,))
 
     sel = Selection(
-        categories={GrammarCategory.POS: True, GrammarCategory.TEMPLATES: True, GrammarCategory.SLOTS: True},
+        categories={GrammarCategory.POS: True, GrammarCategory.AFFIX_TEMPLATES: True, GrammarCategory.SLOTS: True},
         include_closure=True,
         enable_overwrite=False,  # Phase 0 default
     )
@@ -197,7 +197,7 @@ def test_phase1_overwrite_propagates_to_templates_and_slots(_patch_lcm):
     tgt.MorphRules = _TargetMorphRulesOps()
 
     sel = Selection(
-        categories={GrammarCategory.POS: True, GrammarCategory.TEMPLATES: True, GrammarCategory.SLOTS: True},
+        categories={GrammarCategory.POS: True, GrammarCategory.AFFIX_TEMPLATES: True, GrammarCategory.SLOTS: True},
         include_closure=True,
         enable_overwrite=True,
     )
@@ -207,7 +207,7 @@ def test_phase1_overwrite_propagates_to_templates_and_slots(_patch_lcm):
     overwrite_cats = sorted([o.category.value for o in plan.overwrites])
     action_cats = sorted([a.category.value for a in plan.actions])
     assert "pos" in overwrite_cats
-    assert "templates" in overwrite_cats
+    assert "affix_templates" in overwrite_cats
     assert "slots" in overwrite_cats  # s-a
     assert action_cats == ["slots"]  # s-b
 

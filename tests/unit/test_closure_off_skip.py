@@ -139,14 +139,14 @@ def test_closure_off_with_only_pos_selected_plans_only_pos(_patch_lcm):
 
 
 def test_closure_off_with_pos_and_templates_no_slots_skips_template_bare_bones(_patch_lcm):
-    """User picked POS + TEMPLATES but not SLOTS; closure off; template has
+    """User picked POS + AFFIX_TEMPLATES but not SLOTS; closure off; template has
     slots → template becomes BARE_BONES_MISSING_CLOSURE skip."""
     src = _src_with_full_verb()
     tgt = _Project("tgt")
     sel = Selection(
         categories={
             GrammarCategory.POS: True,
-            GrammarCategory.TEMPLATES: True,
+            GrammarCategory.AFFIX_TEMPLATES: True,
         },
         include_closure=False,
     )
@@ -154,10 +154,10 @@ def test_closure_off_with_pos_and_templates_no_slots_skips_template_bare_bones(_
 
     action_cats = [a.category for a in plan.actions]
     assert GrammarCategory.POS in action_cats
-    assert GrammarCategory.TEMPLATES not in action_cats
+    assert GrammarCategory.AFFIX_TEMPLATES not in action_cats
     assert GrammarCategory.SLOTS not in action_cats
 
-    template_skips = [s for s in plan.skips if s.category == GrammarCategory.TEMPLATES]
+    template_skips = [s for s in plan.skips if s.category == GrammarCategory.AFFIX_TEMPLATES]
     assert len(template_skips) == 1
     assert template_skips[0].reason == SkipReason.BARE_BONES_MISSING_CLOSURE
     assert "slots" in template_skips[0].detail
@@ -169,28 +169,28 @@ def test_closure_off_with_templates_only_skips_template_for_missing_owner_pos(_p
     src = _src_with_full_verb()
     tgt = _Project("tgt")
     sel = Selection(
-        categories={GrammarCategory.TEMPLATES: True},
+        categories={GrammarCategory.AFFIX_TEMPLATES: True},
         include_closure=False,
     )
     plan = build_run_plan(_ctx(src, tgt), sel, WSMapping(entries=()), src, tgt)
 
     # No actions (POS not user-selected; template skipped; slots not selected)
     assert plan.actions == ()
-    template_skips = [s for s in plan.skips if s.category == GrammarCategory.TEMPLATES]
+    template_skips = [s for s in plan.skips if s.category == GrammarCategory.AFFIX_TEMPLATES]
     assert len(template_skips) == 1
     assert template_skips[0].reason == SkipReason.BARE_BONES_MISSING_CLOSURE
     assert "owner POS" in template_skips[0].detail
 
 
 def test_closure_off_with_all_three_categories_selected_plans_all(_patch_lcm):
-    """User picked POS + TEMPLATES + SLOTS; closure off; everything user-selected
+    """User picked POS + AFFIX_TEMPLATES + SLOTS; closure off; everything user-selected
     → all actions, no skips."""
     src = _src_with_full_verb()
     tgt = _Project("tgt")
     sel = Selection(
         categories={
             GrammarCategory.POS: True,
-            GrammarCategory.TEMPLATES: True,
+            GrammarCategory.AFFIX_TEMPLATES: True,
             GrammarCategory.SLOTS: True,
         },
         include_closure=False,
@@ -198,7 +198,7 @@ def test_closure_off_with_all_three_categories_selected_plans_all(_patch_lcm):
     plan = build_run_plan(_ctx(src, tgt), sel, WSMapping(entries=()), src, tgt)
     cats = sorted({a.category for a in plan.actions}, key=lambda c: c.value)
     assert GrammarCategory.POS in cats
-    assert GrammarCategory.TEMPLATES in cats
+    assert GrammarCategory.AFFIX_TEMPLATES in cats
     assert GrammarCategory.SLOTS in cats
     assert plan.skips == ()
 
@@ -215,7 +215,7 @@ def test_closure_on_pulls_in_everything_regardless(_patch_lcm):
     plan = build_run_plan(_ctx(src, tgt), sel, WSMapping(entries=()), src, tgt)
     cats = {a.category for a in plan.actions}
     assert GrammarCategory.POS in cats
-    assert GrammarCategory.TEMPLATES in cats
+    assert GrammarCategory.AFFIX_TEMPLATES in cats
     assert GrammarCategory.SLOTS in cats
     # Templates and slots carry pulled_in_by because they came via closure.
     for a in plan.actions:
@@ -231,10 +231,10 @@ def test_closure_off_template_with_no_slots_does_not_skip_for_slots(_patch_lcm):
     src = _Project("src", verb=verb, templates=(empty_tpl,))
     tgt = _Project("tgt")
     sel = Selection(
-        categories={GrammarCategory.POS: True, GrammarCategory.TEMPLATES: True},
+        categories={GrammarCategory.POS: True, GrammarCategory.AFFIX_TEMPLATES: True},
         include_closure=False,
     )
     plan = build_run_plan(_ctx(src, tgt), sel, WSMapping(entries=()), src, tgt)
     cats = [a.category for a in plan.actions]
-    assert GrammarCategory.TEMPLATES in cats
+    assert GrammarCategory.AFFIX_TEMPLATES in cats
     assert plan.skips == ()

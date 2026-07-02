@@ -25,10 +25,14 @@ from flextoolslib import *  # noqa: F401,F403 — FlexTools host names
 import datetime
 import os
 import site
+import sys
 
-# Make `Lib/` importable per the FLExTrans module convention.
+# Make `Lib/` importable per the FLExTrans module convention. `Lib/ui/` is
+# added too so the PyQt widgets load flat (top-level module names), which keeps
+# their `if __package__:` dual-mode guards on the flat branch at runtime.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 site.addsitedir(os.path.join(_THIS_DIR, "Lib"))
+site.addsitedir(os.path.join(_THIS_DIR, "Lib", "ui"))
 
 # ============================================================================
 # CRITICAL: explicit flexlibs2 imports (template-mandatory)
@@ -115,24 +119,102 @@ def MainFunction(project, report, modifyAllowed):
     """Standard FlexTools entry.
 
     Args:
-        project: FLExProject connected to the user's TARGET project (per
-            FlexTools convention — `MainFunction`'s `project` is the host's
-            currently-open project, which we treat as the SOURCE per
-            Clarification Q2).
+        project: FLExProject connected to the host's currently-open project.
+            In the GUI flow this is the SOURCE (Clarification Q2: open=source,
+            picker=target). In the headless fallback it is the TARGET and the
+            source is `DEFAULT_SOURCE_PROJECT`.
         report: report.Info / .Warning / .Error / .Blank for log output.
         modifyAllowed: True when FlexTools is running write-enabled.
+
+    Primary path (T057): opens the GramTrans PyQt main window dialog (FR-002
+    picker + category toggles + Preview/Move). The host's open project is the
+    source; the user picks the target from the dialog.
+
+    Headless fallback (PyQt unavailable): runs the additive verb-vertical from
+    `DEFAULT_SOURCE_PROJECT` into the host's open project directly.
 
     Phase 0 semantics: additive only. Each source piece becomes a new
     target object with the same GUID (FR-012). Duplicates allowed (FR-009).
     The FlexTools host wraps this call in a UOW (research.md R10), so
     `Ctrl+Z` once in FLEx undoes the entire run.
-
-    UI scaffolding (T057): If PyQt is available, this opens the GramTrans
-    PyQt main window dialog (FR-002 picker + category toggles + Preview/Move).
-    Headless fallback (no PyQt available, or running under T-Spike step 3
-    parity-verification scaffolding) runs the verb-vertical against
-    `DEFAULT_SOURCE_PROJECT` directly.
     """
+    QtWidgets = _try_import_qt()
+    if QtWidgets is None:
+        report.Warning(
+            "[GramTrans] PyQt6 not available; running headless Phase-0 "
+            "fallback (source={0!r}).".format(DEFAULT_SOURCE_PROJECT)
+        )
+        _headless_phase0(project, report, modifyAllowed)
+        return
+
+    try:
+        _run_gui(project, report, modifyAllowed, QtWidgets)
+    except Exception as e:  # noqa: BLE001 — FlexTools silences raw exceptions
+        report.Error(f"[GramTrans] GUI fatal: {e}")
+        import traceback
+        report.Error(traceback.format_exc())
+
+
+def _try_import_qt():
+    """Return the PyQt6 QtWidgets module, or None if PyQt6 is not importable —
+    the caller falls back to the headless path. PyQt6 is the project's mandated
+    toolkit (initial design constraint); there is no PyQt5/PySide fallback."""
+    try:
+        from PyQt6 import QtWidgets
+        return QtWidgets
+    except ImportError:
+        return None
+
+
+def _run_gui(project, report, modifyAllowed, QtWidgets):
+    """Launch the GramTrans PyQt main window. The host's open project is the
+    source; the user picks the target inside the dialog.
+
+    FlexTools' own GUI is wxPython, so there is normally no live QApplication;
+    we reuse an existing instance if present, otherwise create one for the
+    lifetime of the modal dialog. The target project opened by the dialog's
+    target-picker is closed here after the dialog returns, to release its lock.
+    """
+    # Phase 3c: use the SelectionWizard (replaces main_window.MainWindow).
+    # Flat import (Lib/ui on sys.path) so the dual-mode guard takes its flat
+    # branch; fall back to the package path for non-addsitedir hosts.
+    try:
+        from selection_wizard import SelectionWizard
+    except ImportError:
+        from gramtrans.Lib.ui.selection_wizard import SelectionWizard
+
+    source_name = project.ProjectName()
+    report.Info("[GramTrans] Launching Selection Wizard (Phase 3c).")
+    report.Info(f"  Source (open project): {source_name!r}")
+    report.Info(f"  Mode: {'MOVE-enabled' if modifyAllowed else 'PREVIEW-only'}")
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv[:1])
+
+    wizard = SelectionWizard(
+        project,
+        report,
+        modifyAllowed,
+        source_project_name=source_name,
+    )
+    try:
+        wizard.exec()
+    finally:
+        ctx = wizard.context()
+        target = getattr(ctx, "target_handle", None) if ctx is not None else None
+        if target is not None:
+            try:
+                target.CloseProject()
+                report.Info("[GramTrans] Target project closed.")
+            except Exception as exc:  # noqa: BLE001
+                report.Warning(f"[GramTrans] Could not close target project: {exc}")
+    report.Info("[GramTrans] Selection Wizard closed.")
+
+
+def _headless_phase0(project, report, modifyAllowed):
+    """Headless additive verb-vertical (original MVP path). Source is
+    `DEFAULT_SOURCE_PROJECT`; the host's open project is the target."""
     try:
         run_id, started_at = _make_run_id()
         source_name = DEFAULT_SOURCE_PROJECT
@@ -169,7 +251,7 @@ def MainFunction(project, report, modifyAllowed):
             selection = Selection(
                 categories={
                     GrammarCategory.POS: True,
-                    GrammarCategory.TEMPLATES: True,
+                    GrammarCategory.AFFIX_TEMPLATES: True,
                     GrammarCategory.SLOTS: True,
                 },
                 include_closure=True,
@@ -296,7 +378,7 @@ def phase2_interactive_move(
         # 2. Build plan (interactive_merge=True gates Phase 2 path)
         if categories is None:
             categories = {c: True for c in (
-                GrammarCategory.POS, GrammarCategory.TEMPLATES, GrammarCategory.SLOTS,
+                GrammarCategory.POS, GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.SLOTS,
                 GrammarCategory.ENTRY, GrammarCategory.SENSE, GrammarCategory.MSA,
                 GrammarCategory.ALLOMORPH, GrammarCategory.PH_ENVIRONMENT,
             )}

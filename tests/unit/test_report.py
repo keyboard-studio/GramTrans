@@ -70,7 +70,7 @@ def test_report_aggregates_counts() -> None:
         actions=(
             _action(GrammarCategory.AFFIXES, "a-1"),
             _action(GrammarCategory.AFFIXES, "a-2", pulled_in=True),
-            _action(GrammarCategory.TEMPLATES, "t-1"),
+            _action(GrammarCategory.AFFIX_TEMPLATES, "t-1"),
         ),
         skips=(_skip(GrammarCategory.AFFIXES, "a-3"),),
     )
@@ -78,13 +78,13 @@ def test_report_aggregates_counts() -> None:
     assert report.per_category[GrammarCategory.AFFIXES] == CategoryReport(
         added=2, skipped=1, closure_pulled_in=1
     )
-    assert report.per_category[GrammarCategory.TEMPLATES] == CategoryReport(added=1)
+    assert report.per_category[GrammarCategory.AFFIX_TEMPLATES] == CategoryReport(added=1)
 
 
 def test_snapshot_json_is_valid_json_and_orders_categories_by_enum_order() -> None:
     plan = _plan(
         actions=(
-            _action(GrammarCategory.TEMPLATES, "t-1"),
+            _action(GrammarCategory.AFFIX_TEMPLATES, "t-1"),
             _action(GrammarCategory.AFFIXES, "a-1"),
         ),
         skips=(),
@@ -92,10 +92,10 @@ def test_snapshot_json_is_valid_json_and_orders_categories_by_enum_order() -> No
     report = RunReport.build_from_plan(plan, RunMode.PREVIEW)
     snap = report.to_snapshot_json()
     data = json.loads(snap)
-    # GrammarCategory enum declares AFFIXES before TEMPLATES; the snapshot
+    # GrammarCategory enum declares AFFIXES before AFFIX_TEMPLATES; the snapshot
     # MUST honor that order for deterministic diffs.
     cats = list(data["per_category"].keys())
-    assert cats.index("AFFIXES") < cats.index("TEMPLATES")
+    assert cats.index("AFFIXES") < cats.index("AFFIX_TEMPLATES")
     assert data["mode"] == "PREVIEW"
 
 

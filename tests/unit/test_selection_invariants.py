@@ -18,7 +18,7 @@ def test_affix_picks_require_affixes_category_on() -> None:
 def test_template_picks_require_templates_category_on() -> None:
     with pytest.raises(ValueError, match="template_picks non-empty requires"):
         Selection(
-            categories={GrammarCategory.TEMPLATES: False},
+            categories={GrammarCategory.AFFIX_TEMPLATES: False},
             template_picks=frozenset({"some-guid"}),
         )
 

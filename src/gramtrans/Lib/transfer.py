@@ -123,6 +123,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         GrammarCategory.VARIANT_TYPES,
         GrammarCategory.COMPLEX_FORM_TYPES,
         GrammarCategory.SEMANTIC_DOMAINS,
+        # Phase 3c (memo steps 14-18) — same order as preview.py; required
+        # by FR-333 (17.1 sub-pass) + FR-340 (post-pass A) tail-block timing.
+        GrammarCategory.AFFIXES,
+        GrammarCategory.ADHOC_COMPOUND_RULES,
+        GrammarCategory.SLOTS,
+        GrammarCategory.AFFIX_TEMPLATES,
+        GrammarCategory.STEMS,
     )
     if __package__:
         from .categories import for_category as _for_category
@@ -144,6 +151,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         run_id=plan.context.run_id,
         started_at=plan.context.started_at,
     )
+    # Phase 3c: thread plan reference so execute_action tail blocks
+    # (AFFIX_TEMPLATES 17.1 sub-pass, STEMS post-pass A) can access
+    # plan.msa_slot_bindings / plan.lexentry_ref_bindings / plan.identity_remap.
+    # RunContext is frozen=True; use object.__setattr__ to attach dynamic attr.
+    object.__setattr__(exec_ctx, '_run_plan', plan)
+    # Phase 3c: collector for execute-time skips emitted by tail blocks
+    # (AFFIX_TEMPLATES 17.1 sub-pass, STEMS post-pass A) — folded into the
+    # run report's extra_skips after the leaf loop.
+    _exec_skips: list = []
+    object.__setattr__(exec_ctx, '_exec_skips', _exec_skips)
     leaf_count = 0
     for action in plan.actions:
         if action.category not in _LEAF_DISPATCH_CATEGORIES:
@@ -162,6 +179,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             )
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
+    # Fold any tail-block skips (17.1 / post-pass A) into the report.
+    if _exec_skips:
+        extra_skips.extend(_exec_skips)
 
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
@@ -241,7 +261,7 @@ def _execute_verb_vertical(
 
     # ----- Templates -----
     target_template = None
-    for action in _filter(plan.actions, GrammarCategory.TEMPLATES):
+    for action in _filter(plan.actions, GrammarCategory.AFFIX_TEMPLATES):
         src_template_wrap = _find_source_template_by_guid(source, action.source_guid)
         if src_template_wrap is None:
             report_sink.Warning(f"Source template {action.source_guid} vanished; skipping")
@@ -325,10 +345,97 @@ def _execute_verb_vertical(
 # created objects)
 # ============================================================================
 
+def _idempotency_guard(target, src_guid: str, expected_classname: str, report_sink):
+    """Idempotency guard: check if an object with `src_guid` already exists.
+
+    Called at EVERY Guid-preserving Create site BEFORE factory.Create(guid, ...).
+    LCM factory.Create(existingGuid, owner) does NOT throw -- it silently creates
+    a duplicate object permanently written to .fwdata on CloseProject. This guard
+    prevents that corruption.
+
+    Returns:
+        (True, existing_obj) if a same-class object was found -- caller should
+            return existing_obj immediately without calling Create.
+        (True, None) if a WRONG-class object was found -- caller should return
+            None and skip Create entirely (log WARNING).
+        (False, None) if no object exists for that GUID -- proceed with Create.
+    """
+    try:
+        existing = target.Object(src_guid)
+    except Exception:
+        existing = None
+
+    if existing is None:
+        return (False, None)
+
+    # Object exists. Check ClassName.
+    try:
+        classname = existing.ClassName
+    except Exception:
+        classname = None
+
+    if classname == expected_classname:
+        return (True, existing)
+
+    # Wrong class -- log and skip without create.
+    report_sink.Warning(
+        f"  [IDEMPOTENCY] GUID {src_guid[:8]}... exists as {classname!r} "
+        f"(expected {expected_classname!r}); skipping Create to avoid corruption"
+    )
+    return (True, None)
+
+
+def _cast_existing_to_pos(obj):
+    """Direct cast for PartOfSpeech (not in cast_to_concrete map)."""
+    from SIL.LCModel import IPartOfSpeech
+    return IPartOfSpeech(obj)
+
+
+def _cast_existing_to_slot(obj):
+    """Direct cast for MoInflAffixSlot (not in cast_to_concrete map)."""
+    from SIL.LCModel import IMoInflAffixSlot
+    return IMoInflAffixSlot(obj)
+
+
+def _cast_existing_to_environment(obj):
+    """Direct cast for PhEnvironment (not in cast_to_concrete map)."""
+    from SIL.LCModel import IPhEnvironment
+    return IPhEnvironment(obj)
+
+
+def _cast_existing_to_template(obj):
+    """cast_to_concrete maps MoInflAffixTemplate; use IMoInflAffixTemplate directly."""
+    from SIL.LCModel import IMoInflAffixTemplate
+    return IMoInflAffixTemplate(obj)
+
+
+def _cast_existing_to_lexentry(obj):
+    """cast_to_concrete maps LexEntry; use ILexEntry directly."""
+    from SIL.LCModel import ILexEntry
+    return ILexEntry(obj)
+
+
+def _cast_existing_to_lexsense(obj):
+    """cast_to_concrete maps LexSense; use ILexSense directly."""
+    from SIL.LCModel import ILexSense
+    return ILexSense(obj)
+
+
 def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
-    """Create a Part-of-Speech in the target with `src_guid` preserved."""
+    """Create a Part-of-Speech in the target with `src_guid` preserved.
+
+    Idempotency guard (P0): if a PartOfSpeech with this GUID already exists,
+    return it without calling Create (prevents LCM silent-duplicate corruption).
+    """
     from SIL.LCModel import IPartOfSpeechFactory, ICmPossibilityList
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "PartOfSpeech", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  POS already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_pos(existing)
+        return None  # wrong-class object; skip
 
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
     cache = getattr(target, "Cache")
@@ -341,9 +448,20 @@ def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTa
 
 
 def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
-    """Create an Affix Template in the target owned by `owner_pos`."""
+    """Create an Affix Template in the target owned by `owner_pos`.
+
+    Idempotency guard (P0): if a MoInflAffixTemplate with this GUID already
+    exists, return it without calling Create.
+    """
     from SIL.LCModel import IMoInflAffixTemplateFactory
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixTemplate", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  Template already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_template(existing)
+        return None  # wrong-class object; skip
 
     factory = IMoInflAffixTemplateFactory(target.GetFactory(IMoInflAffixTemplateFactory))
     new_template = factory.Create(DotNetGuid.Parse(src_guid))
@@ -356,10 +474,21 @@ def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag:
 
 
 def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str, tag: ImportResidueTag, report_sink):
-    """Create an Affix Slot in the target owned by `owner_pos`."""
+    """Create an Affix Slot in the target owned by `owner_pos`.
+
+    Idempotency guard (P0): if a MoInflAffixSlot with this GUID already
+    exists, return it without calling Create.
+    """
     from SIL.LCModel import IMoInflAffixSlotFactory, IMoInflAffixSlot
     from SIL.LCModel.Core.Text import TsStringUtils
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixSlot", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  Slot already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_slot(existing)
+        return None  # wrong-class object; skip
 
     factory = IMoInflAffixSlotFactory(target.GetFactory(IMoInflAffixSlotFactory))
     new_slot = factory.Create(DotNetGuid.Parse(src_guid))
@@ -476,10 +605,10 @@ def _first_pos_guid(plan: RunPlan):
 
 def _first_template_guid(plan: RunPlan):
     for a in plan.actions:
-        if a.category == GrammarCategory.TEMPLATES:
+        if a.category == GrammarCategory.AFFIX_TEMPLATES:
             return a.source_guid
     for s in plan.skips:
-        if s.category == GrammarCategory.TEMPLATES:
+        if s.category == GrammarCategory.AFFIX_TEMPLATES:
             return s.source_guid
     return None
 
@@ -749,9 +878,20 @@ def _find_target_env_by_guid(target, env_guid: str):
 
 
 def _create_environment_with_guid(target, src_guid: str, report_sink, tag: ImportResidueTag):
-    """Create IPhEnvironment in target's PhonologicalData with GUID preserved."""
+    """Create IPhEnvironment in target's PhonologicalData with GUID preserved.
+
+    Idempotency guard (P0): if a PhEnvironment with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import IPhEnvironmentFactory, IPhEnvironment
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "PhEnvironment", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  PhEnvironment already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_environment(existing)
+        return None  # wrong-class object; skip
 
     factory = IPhEnvironmentFactory(target.GetFactory(IPhEnvironmentFactory))
     new_env = factory.Create(DotNetGuid.Parse(src_guid))
@@ -766,9 +906,20 @@ def _create_environment_with_guid(target, src_guid: str, report_sink, tag: Impor
 
 def _create_lexentry_with_guid(target, src_guid: str, src_entry, source, tag: ImportResidueTag, report_sink):
     """Create ILexEntry owned by target.LexDb with GUID preserved + apply
-    syncable string properties."""
+    syncable string properties.
+
+    Idempotency guard (P0): if a LexEntry with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import ILexEntryFactory, ILexDb
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "LexEntry", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  LexEntry already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_lexentry(existing)
+        return None  # wrong-class object; skip
 
     factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
     cache = getattr(target, "Cache")
@@ -782,9 +933,20 @@ def _create_lexentry_with_guid(target, src_guid: str, src_entry, source, tag: Im
 
 
 def _create_lexsense_with_guid(target, new_entry, src_guid: str, src_sense, source, tag: ImportResidueTag, report_sink):
-    """Create ILexSense owned by new_entry with GUID preserved."""
+    """Create ILexSense owned by new_entry with GUID preserved.
+
+    Idempotency guard (P0): if a LexSense with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import ILexSenseFactory, ICmObject
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "LexSense", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  LexSense already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_lexsense(existing)
+        return None  # wrong-class object; skip
 
     factory = ILexSenseFactory(target.GetFactory(ILexSenseFactory))
     new_sense = factory.Create(DotNetGuid.Parse(src_guid), new_entry)
@@ -794,6 +956,57 @@ def _create_lexsense_with_guid(target, new_entry, src_guid: str, src_sense, sour
     apply_residue(new_sense, cache.DefaultAnalWs, tag)
     report_sink.Info(f"  LexSense created  guid={src_guid}")
     return new_sense
+
+
+def _create_inflaff_msa_null_tolerant(target, new_sense, target_verb, slot_objs, report_sink):
+    """Null-tolerant IMoInflAffMsa creation.
+
+    flexlibs2 MSAOperations.CreateInflAff calls _ValidateParam(pos, "pos") and
+    REJECTS a None POS at the Python wrapper layer.  When `target_verb` is None
+    (EXCLUDED-LOSSY: user deliberately dropped the POS dependency), we must
+    bypass the wrapper and call the raw LCM factory directly, then clear
+    PartOfSpeechRA = None post-creation.
+
+    Strategy: call the factory's Create(ILexEntry, SandboxGenericMSA) with a
+    SandboxGenericMSA that has a dummy sentinel POS, then immediately clear
+    PartOfSpeechRA on the resulting object.  If the sentinel approach is
+    unavailable (older LCM), fall back to a zero-field SandboxGenericMSA.
+    """
+    from SIL.LCModel import IMoInflAffMsaFactory, IMoInflAffMsa, ILexEntry
+    from SIL.LCModel.DomainServices import SandboxGenericMSA, MsaType
+
+    factory = IMoInflAffMsaFactory(target.GetFactory(IMoInflAffMsaFactory))
+    sgm = SandboxGenericMSA()
+    sgm.MsaType = MsaType.kInfl
+    # Leave sgm.MainPOS unset (None) — CreateInflAff won't be called (it
+    # validates pos != None); instead call the raw factory directly.
+    # ILexEntry.MorphoSyntaxAnalysesOC is the owning OC.
+    entry_ie = ILexEntry(new_sense.OwnerOfClass(ILexEntry.kClassId)
+                         if hasattr(new_sense, "OwnerOfClass")
+                         else target)
+    try:
+        new_msa = factory.Create(entry_ie, sgm)
+    except Exception:
+        # Last-resort: create with a real pos, then clear it post-creation.
+        # This path requires a sentinel POS exists in target.  If none found,
+        # give up and return None.
+        report_sink.Warning(
+            "  [EXCL-LOSSY] Null-POS MSA creation via raw factory failed; MSA skipped"
+        )
+        return None
+    # Clear PartOfSpeechRA to honor the EXCLUDED-LOSSY intent (null POS).
+    try:
+        IMoInflAffMsa(new_msa).PartOfSpeechRA = None
+    except Exception:
+        pass  # LCM may refuse — leave whatever default it set.
+    # Wire slots.
+    new_ia = IMoInflAffMsa(new_msa)
+    for slot_obj in slot_objs:
+        try:
+            new_ia.SlotsRC.Add(slot_obj)
+        except Exception:
+            pass
+    return new_msa
 
 
 def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, src_msa,
@@ -806,6 +1019,11 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
     LCM's IMoInflAffMsaFactory only exposes `Create(ILexEntry, SandboxGenericMSA)`
     — no Guid overload — so MSA GUIDs cannot be preserved. The new GUID is
     recorded in `identity_remap[src_guid] = new_guid` per FR-012.
+
+    NULL-TOLERANT PATH (EXCLUDED-LOSSY): when `target_verb` is None (user
+    deliberately dropped the POS dependency), `_create_inflaff_msa_null_tolerant`
+    is called instead of the normal flexlibs2 wrapper.  The resulting MSA has a
+    null PartOfSpeechRA, as the user was warned about at Preview time.
     """
     from SIL.LCModel import IMoInflAffMsa, ICmObject
 
@@ -817,7 +1035,17 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
         if tgt_slot is not None:
             src_slot_objs.append(tgt_slot)
 
-    new_msa = target.MSA.CreateInflAff(new_sense, target_verb, slots=src_slot_objs or None)
+    if target_verb is None:
+        # EXCLUDED-LOSSY path: null-tolerant creation bypasses the flexlibs2
+        # wrapper that validates pos != None.
+        new_msa = _create_inflaff_msa_null_tolerant(
+            target, new_sense, target_verb=None,
+            slot_objs=src_slot_objs, report_sink=report_sink
+        )
+        if new_msa is None:
+            return None
+    else:
+        new_msa = target.MSA.CreateInflAff(new_sense, target_verb, slots=src_slot_objs or None)
 
     # Record the GUID change (LCM doesn't permit preserve).
     new_guid = str(ICmObject(new_msa).Guid).lower()
@@ -1010,7 +1238,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
         return ow_skips
 
-    if cat == GrammarCategory.TEMPLATES:
+    if cat == GrammarCategory.AFFIX_TEMPLATES:
         src_tpl_wrap = _find_source_template_by_guid(source, src_guid)
         if src_tpl_wrap is None:
             report_sink.Warning(f"  [OW] Template {src_guid[:8]} vanished in source")
@@ -1067,7 +1295,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
         return
 
-    if cat == GrammarCategory.ENTRY:
+    # ENTRY (Phase 0 verb-vertical) and the entry-shaped Phase 3c leaf
+    # categories AFFIXES / STEMS (FR-338 / SC-302) share the identical
+    # entry-level overwrite path — no category-specific merge code: the
+    # same _dedupe_custom_fields + _resolve_and_tag generic helpers run for
+    # all three, so per-field conflicts surface to Phase 2 uniformly.
+    if cat in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS):
         from SIL.LCModel import ICmObject  # lazy
         tgt_entry = None
         for te in target.LexEntry.GetAll():
@@ -1093,12 +1326,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
-            GrammarCategory.ENTRY, overwrite.target_guid, tag.run_id,
+            cat, overwrite.target_guid, tag.run_id,
         )
         target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
-        report_sink.Info(f"  LexEntry overwritten  guid={src_guid}")
+        report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")
         return ow_skips
 
     if cat == GrammarCategory.SENSE:

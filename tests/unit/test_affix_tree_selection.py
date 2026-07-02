@@ -118,8 +118,8 @@ def test_build_selection_sets_affixes_category_when_picks_present() -> None:
     sel = build_selection(picker, INV)
     assert sel.affix_picks == frozenset({"a1"})
     assert sel.categories.get(GrammarCategory.AFFIXES) is True
-    # No templates picked → TEMPLATES not in categories
-    assert sel.categories.get(GrammarCategory.TEMPLATES) is not True
+    # No templates picked → AFFIX_TEMPLATES not in categories
+    assert sel.categories.get(GrammarCategory.AFFIX_TEMPLATES) is not True
 
 
 def test_build_selection_sets_templates_category_when_picks_present() -> None:
@@ -128,7 +128,7 @@ def test_build_selection_sets_templates_category_when_picks_present() -> None:
     assert sel.template_picks == frozenset({"T1"})
     # T1 expansion pulled a1, a2, a3 into affix_picks too
     assert sel.affix_picks == frozenset({"a1", "a2", "a3"})
-    assert sel.categories.get(GrammarCategory.TEMPLATES) is True
+    assert sel.categories.get(GrammarCategory.AFFIX_TEMPLATES) is True
     assert sel.categories.get(GrammarCategory.AFFIXES) is True
 
 
