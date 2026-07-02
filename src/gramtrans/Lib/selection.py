@@ -153,10 +153,11 @@ def _pos_label(pos) -> str:
             return name
     except (AttributeError, TypeError):
         pass
-    try:
-        return str(pos.Guid)
-    except (AttributeError, TypeError):
-        return "?"
+    # Both Abbreviation and Name are empty ('***'/blank). Do NOT fall back to the
+    # raw GUID (unreadable in the UI); a genuinely blank-named POS reads as
+    # "(unnamed POS)". Such nodes are usually pruned anyway when they hold no
+    # affixes, but a blank-named POS that DOES carry affixes still needs a label.
+    return "(unnamed POS)"
 
 
 def _pos_guid(pos) -> Optional[str]:
@@ -475,8 +476,14 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
                 msa_kind="uncl", from_pos=None, to_pos=None, role="attaches",
             ))
 
-    # --- Freeze the hierarchy ---
-    frozen_roots = tuple(acc.freeze() for acc in root_accs)
+    # --- Freeze the hierarchy, then prune POS nodes that hold no affixes ---
+    # A node is kept iff it carries affix rows itself OR has a surviving
+    # descendant (so the hierarchy path to a populated sub-POS is preserved).
+    # This drops parts of speech with nothing to transfer -- including blank /
+    # unnamed POSes the user never populated.
+    frozen_roots = tuple(
+        n for n in (_prune_empty(acc.freeze()) for acc in root_accs) if n is not None
+    )
     junk = JunkDrawer(
         no_pos=tuple(sorted(no_pos_rows, key=lambda r: r.form)),
         no_analysis=tuple(sorted(no_analysis_rows, key=lambda r: r.form)),
@@ -502,6 +509,32 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
         )
 
     return result
+
+
+def _prune_empty(node: PosNode) -> Optional[PosNode]:
+    """Return `node` with empty descendant POS nodes removed, or None if the
+    whole subtree carries no affixes.
+
+    A node survives iff it holds any affix row (inflectional, deriv_attaches, or
+    deriv_produces) OR at least one descendant survives -- so an intermediate POS
+    with no affixes of its own is kept only as a path to a populated sub-POS.
+    """
+    kept_children = tuple(
+        c for c in (_prune_empty(ch) for ch in node.children) if c is not None
+    )
+    has_rows = bool(node.inflectional or node.deriv_attaches or node.deriv_produces)
+    if not has_rows and not kept_children:
+        return None
+    if kept_children == node.children:
+        return node
+    return PosNode(
+        pos_guid=node.pos_guid,
+        label=node.label,
+        children=kept_children,
+        inflectional=node.inflectional,
+        deriv_attaches=node.deriv_attaches,
+        deriv_produces=node.deriv_produces,
+    )
 
 
 def _merge_row_glosses(rows: List[AffixRow], entry_guid: str, new_glosses: str) -> None:
