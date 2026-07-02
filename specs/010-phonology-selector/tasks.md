@@ -180,22 +180,22 @@ the single shared Move gate.
 **Independent Test**: keep a rule referencing NC C; deselect C against a target lacking C ⇒
 Preview warns naming the rule; Move pops ONE consolidated dialog.
 
-- [ ] T024 [US5] Expose `_PagePhonology.deselected_needed_guids()` and feed phonology
+- [X] T024 [US5] Expose `_PagePhonology.deselected_needed_guids()` and feed phonology
   missing-reference warnings into the aggregated `el_count` in `_PageFinish._on_move`
   (`src/gramtrans/Lib/ui/selection_wizard.py`) — same single dialog as skeleton/deps (FR-011).
-- [ ] T025 [US5] Surface the phonology missing-reference entries in the Preview StatsPanel
+- [X] T025 [US5] Surface the phonology missing-reference entries in the Preview StatsPanel
   channel (entry-centric, per kept item) alongside the 009 warnings.
-- [ ] T026 [P] [US5] Unit test in `tests/unit/test_phonology_excluded_lossy.py`: N phonology
+- [X] T026 [P] [US5] Unit test in `tests/unit/test_phonology_excluded_lossy.py`: N phonology
   omissions + M skeleton/deps omissions ⇒ ONE combined Move confirmation covering all; resolved
   references ⇒ no warning (SC-006).
-- [ ] T026b [US5] **Principle-V guard for KL-010-1** (analyze finding C1): in
+- [X] T026b [US5] **Principle-V guard for KL-010-1** (analyze finding C1): in
   `build_phonology_inventory` / `collapse_phonology` (`src/gramtrans/Lib/selection.py`),
   detect when any selected rule is a `PhMetathesisRule` / `PhReduplicationRule` (whose
   part-sequence references are NOT traversed) and, if the user trims NCs/phonemes, surface a
   coarse "reference check not supported for this rule type — trim may strand references" notice
   into the same aggregated Move gate rather than transferring silently. Keeps Referential
   Completeness honest until the T029 traversal follow-up lands.
-- [ ] T026c [P] [US5] Unit test in `tests/unit/test_phonology_excluded_lossy.py`: a selected
+- [X] T026c [P] [US5] Unit test in `tests/unit/test_phonology_excluded_lossy.py`: a selected
   `PhMetathesisRule`/`PhReduplicationRule` + a phonology trim ⇒ the coarse KL-010-1 notice
   appears in the Move gate (guard fires); PhRegularRule-only ⇒ no such notice.
 

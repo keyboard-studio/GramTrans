@@ -33,6 +33,7 @@ if __package__:
     from ..models import (
         CategoryScope,
         ConflictMode,
+        ExcludedLossy,
         GrammarCategory,
         RunMode,
         Selection,
@@ -65,6 +66,7 @@ else:
     from models import (  # type: ignore
         CategoryScope,
         ConflictMode,
+        ExcludedLossy,
         GrammarCategory,
         RunMode,
         Selection,
@@ -1935,6 +1937,97 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
 
 # ---------------------------------------------------------------------------
+# Shared phonology EXCLUDED-LOSSY channel (spec 010 US5 — T024/T025/T026b)
+# ---------------------------------------------------------------------------
+
+def _phonology_nc_or_phoneme_trimmed(inventory, checked_by_category) -> bool:
+    """True iff the user deselected any NC or phoneme (KL-010-1 guard input)."""
+    for cat in (GrammarCategory.NATURAL_CLASSES, GrammarCategory.PHONEMES):
+        grp = inventory.group_for(cat)
+        if grp is None:
+            continue
+        all_guids = {r.guid for r in grp.rows}
+        if all_guids - set(checked_by_category.get(cat, set())):
+            return True
+    return False
+
+
+def _kl010_notice(inventory, checked_rule_guids) -> ExcludedLossy:
+    """Coarse Principle-V notice for a kept metathesis/reduplication rule.
+
+    The reference traversal does not follow metathesis/reduplication part
+    sequences (KL-010-1), so a trim MIGHT strand a reference we cannot see.
+    Surface one honest notice into the shared Move gate rather than transfer
+    silently. Attributed to the first such kept rule.
+    """
+    rule_guids = sorted(inventory.untraversed_rule_guids & set(checked_rule_guids))
+    rg = rule_guids[0] if rule_guids else "?"
+    label = rg[:8]
+    grp = inventory.group_for(GrammarCategory.PHONOLOGICAL_RULES)
+    if grp is not None:
+        for r in grp.rows:
+            if r.guid == rg:
+                label = r.label
+                break
+    return ExcludedLossy(
+        category=GrammarCategory.PHONOLOGICAL_RULES,
+        entry_guid=rg or "?",
+        entry_label=label,
+        dep_category=GrammarCategory.PHONOLOGICAL_RULES,
+        dep_guid=rg or "?",
+        dep_label=label,
+        message=(
+            f"Reference check is not supported for rule '{label}' "
+            "(metathesis/reduplication); trimming phonemes or natural classes "
+            "may strand references not verified here (KL-010-1)."
+        ),
+    )
+
+
+def _phonology_excluded_lossy_for(wizard) -> list:
+    """Intra-phonology EXCLUDED-LOSSY warnings for the current page state.
+
+    Shared by Preview (StatsPanel channel, T025) and Finish (Move gate, T024)
+    so both agree on the entry-centric count. Returns a list of ExcludedLossy;
+    empty when there is no phonology page / inventory. Appends the coarse
+    KL-010-1 notice (T026b) when a kept metathesis/reduplication rule coincides
+    with an NC/phoneme trim.
+    """
+    phon_page = (wizard.page_phonology()
+                 if hasattr(wizard, "page_phonology") else None)
+    if phon_page is None or phon_page.inventory() is None:
+        return []
+    inventory = phon_page.inventory()
+    checked = phon_page.collect_phonology_picks()
+
+    # Target GUIDs per category drive the absent-from-target test. Reuse the
+    # builder against the target handle (read-only) rather than re-deriving.
+    target = None
+    try:
+        p0 = wizard.page_project_ws()
+        ctx = p0.context() if p0 is not None else None
+        target = getattr(ctx, "target_handle", None) if ctx is not None else None
+    except Exception:  # noqa: BLE001
+        target = None
+    tgt_by_cat: dict = {}
+    if target is not None:
+        try:
+            tinv = build_phonology_inventory(target)
+            tgt_by_cat = {g.category: {r.guid for r in g.rows}
+                          for g in tinv.groups}
+        except Exception:  # noqa: BLE001
+            tgt_by_cat = {}
+
+    warnings = list(build_phonology_excluded_lossy(inventory, checked, tgt_by_cat))
+
+    checked_rules = checked.get(GrammarCategory.PHONOLOGICAL_RULES, set())
+    if (phonology_uses_untraversed_rules(inventory, checked_rules)
+            and _phonology_nc_or_phoneme_trimmed(inventory, checked)):
+        warnings.append(_kl010_notice(inventory, checked_rules))
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
@@ -2031,7 +2124,13 @@ class _PagePreview(QtWidgets.QWizardPage):
             from ..report import RunReport
         else:
             from report import RunReport  # type: ignore
-        report = RunReport.build_from_plan(payload, RunMode.PREVIEW)
+        # Surface intra-phonology missing-reference warnings alongside the
+        # plan's own EXCLUDED-LOSSY entries (spec 010 T025). Same channel the
+        # Move gate counts, so Preview and Move agree.
+        phon_warnings = _phonology_excluded_lossy_for(wizard)
+        report = RunReport.build_from_plan(
+            payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings
+        )
         self._stats.set_report(report)
         self.completeChanged.emit()
 
@@ -2131,6 +2230,11 @@ class _PageFinish(QtWidgets.QWizardPage):
                     target_slot_guids=set(),
                 )
                 el_count += len(extra_warnings)
+
+        # Extra phonology EXCLUDED-LOSSY + KL-010-1 guard (spec 010 T024/T026b).
+        # Aggregated into the SAME el_count so a single consolidated dialog
+        # covers skeleton/deps AND phonology (FR-011 — no second dialog).
+        el_count += len(_phonology_excluded_lossy_for(wizard))
 
         # Consolidated single confirmation dialog (FR-011 / T017).
         if el_count > 0:

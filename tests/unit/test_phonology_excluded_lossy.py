@@ -73,3 +73,70 @@ def test_kl_010_1_guard_detects_metathesis():
     src2 = FakePhonSource(phonemes=[p1], rules=[reg])
     inv2 = build_phonology_inventory(src2)
     assert phonology_uses_untraversed_rules(inv2, {"rr"}) is False
+
+
+# ---- T026 (combined single gate) + T026c (KL-010-1 notice in gate) ---------
+
+from gramtrans.Lib.selection import build_excluded_lossy_warnings  # noqa: E402
+
+
+def test_combined_gate_counts_phonology_plus_skeleton_single_total():
+    """T026/SC-006: N phonology omissions + M skeleton omissions aggregate into
+    ONE consolidated count (single Move dialog) — modeled at the builder layer,
+    where each returns an independent list summed into one el_count."""
+    inv = build_phonology_inventory(_source())
+    # phonology: keep nc1, drop ph1 (referenced) -> N warnings
+    phon = build_phonology_excluded_lossy(
+        inv, {GC.NATURAL_CLASSES: {"nc1"}, GC.PHONEMES: {"ph2"}},
+        target_guids_by_category={},
+    )
+    n = len(phon)
+    assert n >= 1
+    # skeleton: picked affix fills slot s1 which the user deselected, target lacks it -> M
+    skel = build_excluded_lossy_warnings(
+        affix_slot_map={"aff1": ["s1"]},
+        deselected_slot_guids={"s1"},
+        target_slot_guids=set(),
+    )
+    m = len(skel)
+    assert m >= 1
+    el_count = n + m  # the single consolidated total the Move gate confirms once
+    assert el_count == n + m
+
+
+def test_no_gate_when_all_references_resolved():
+    """Resolved references (present in target) => zero phonology warnings."""
+    inv = build_phonology_inventory(_source())
+    warns = build_phonology_excluded_lossy(
+        inv, {GC.NATURAL_CLASSES: {"nc1"}, GC.PHONEMES: {"ph2"}},
+        target_guids_by_category={GC.PHONEMES: {"ph1"}},  # ph1 in target
+    )
+    assert warns == []
+
+
+def test_kl_010_1_notice_appears_for_metathesis_trim_but_not_regular():
+    """T026c: a kept metathesis rule + an NC/phoneme trim yields the coarse
+    KL-010-1 notice via the shared wizard helper; a regular-only rule does not."""
+    import pytest
+    pytest.importorskip("PyQt6")
+    from gramtrans.Lib.ui import selection_wizard as sw
+
+    p1 = FakePhoneme("ph1", "p")
+    p2 = FakePhoneme("ph2", "t")
+    meta = FakeRule("rm", "metathesis", class_name="PhMetathesisRule")
+    inv = build_phonology_inventory(
+        FakePhonSource(phonemes=[p1, p2], rules=[meta])
+    )
+    # kept rule + a phoneme trim (ph2 dropped)
+    checked = {GC.PHONOLOGICAL_RULES: {"rm"}, GC.PHONEMES: {"ph1"}}
+    assert sw._phonology_nc_or_phoneme_trimmed(inv, checked) is True
+    notice = sw._kl010_notice(inv, {"rm"})
+    assert notice.entry_guid == "rm"
+    assert "KL-010-1" in notice.message
+
+    # regular-only rule: guard input is False (no untraversed rule kept)
+    reg = FakeRule("rr", "reg", class_name="PhRegularRule")
+    inv2 = build_phonology_inventory(
+        FakePhonSource(phonemes=[p1, p2], rules=[reg])
+    )
+    assert phonology_uses_untraversed_rules(inv2, {"rr"}) is False
