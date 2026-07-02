@@ -1591,15 +1591,29 @@ def stems_execute_action(action, context, ws_mapping, tag):
 # implementations use that path with identity_remap as runtime safety net.
 # ============================================================================
 
-def _phonology_simple_enumerate(context, ops_attr):
-    """Shared enumerate_source helper for the 5 simple phonology categories."""
+def _phonology_simple_enumerate(context, ops_attr, selection=None, category=None):
+    """Shared enumerate_source helper for the simple phonology categories.
+
+    When `selection`/`category` are given and the selection carries a
+    per-item pick subset for that category (`leaf_item_picks`), the returned
+    list is filtered to only those source objects whose GUID is in the subset.
+    A None subset (key absent) ⇒ transfer ALL (unchanged behavior for every
+    pre-Phase-010 caller). GUIDs on BOTH sides are normalized via
+    `_guid_str_from` so a raw uppercase/braced `str(obj.Guid)` never causes a
+    silent total miss (spec 010 GUID-normalization invariant).
+    """
     source = context.source_handle
     if source is None or not hasattr(source, ops_attr):
         return ()
     try:
-        return list(getattr(source, ops_attr).GetAll())
+        items = list(getattr(source, ops_attr).GetAll())
     except (AttributeError, TypeError):
         return ()
+    if selection is not None and category is not None:
+        picks = selection.leaf_picks_for(category)
+        if picks is not None:
+            items = [it for it in items if _guid_str_from(it) in picks]
+    return items
 
 
 def _phonology_simple_plan(piece, context, category, ops_attr, label):
@@ -1694,7 +1708,8 @@ def _create_with_guid(factory_iface, owner_collection, guid_str, target):
 # ----- phonological_features (memo step 2) ---------------------------------
 
 def phonological_features_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "PhonFeatures")
+    return _phonology_simple_enumerate(
+        context, "PhonFeatures", selection, GrammarCategory.PHONOLOGICAL_FEATURES)
 
 
 def phonological_features_dependencies(piece):
@@ -1748,7 +1763,8 @@ def phonological_features_execute_action(action, context, ws_mapping, tag):
 # ----- phonemes (memo step 3) ----------------------------------------------
 
 def phonemes_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "Phonemes")
+    return _phonology_simple_enumerate(
+        context, "Phonemes", selection, GrammarCategory.PHONEMES)
 
 
 def phonemes_dependencies(piece):
@@ -1821,7 +1837,8 @@ def natural_classes_dependencies(piece):
 
 
 def natural_classes_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "NaturalClasses")
+    return _phonology_simple_enumerate(
+        context, "NaturalClasses", selection, GrammarCategory.NATURAL_CLASSES)
 
 
 def natural_classes_required_writing_systems(piece):
@@ -1916,7 +1933,8 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
 # ----- ph_environment (memo step 4b -- project-wide, not allomorph-bundled) -
 
 def ph_environment_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "Environments")
+    return _phonology_simple_enumerate(
+        context, "Environments", selection, GrammarCategory.PH_ENVIRONMENT)
 
 
 def ph_environment_dependencies(piece):
@@ -1970,7 +1988,8 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
 # ----- strata (memo step 5b) -----------------------------------------------
 
 def strata_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "Strata")
+    return _phonology_simple_enumerate(
+        context, "Strata", selection, GrammarCategory.STRATA)
 
 
 def strata_dependencies(piece):
@@ -2023,7 +2042,8 @@ def strata_execute_action(action, context, ws_mapping, tag):
 # ----- phonological_rules (memo step 5) -- WITH FR-304 dependency closure --
 
 def phonological_rules_enumerate_source(context, selection):
-    return _phonology_simple_enumerate(context, "PhonRules")
+    return _phonology_simple_enumerate(
+        context, "PhonRules", selection, GrammarCategory.PHONOLOGICAL_RULES)
 
 
 def phonological_rules_required_writing_systems(piece):

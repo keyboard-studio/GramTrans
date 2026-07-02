@@ -288,6 +288,19 @@ class Selection:
     # Per-category conflict mode (section h).  When absent for a category, the
     # Layer-1 default from `_DEFAULT_CONFLICT_MODES` is used via `conflict_mode_for`.
     category_conflict_modes: dict = field(default_factory=dict)  # dict[GrammarCategory, ConflictMode]
+    # Phase 010 (Phonology Model-B): per-category item-pick subset for LEAF
+    # categories.  dict[GrammarCategory, frozenset[str]] of source GUIDs.
+    # Semantics: key PRESENT => transfer ONLY those GUIDs within the category;
+    # key ABSENT => transfer ALL (unchanged behavior for every prior caller);
+    # empty frozenset => transfer none of that category.  Consulted by the
+    # phonology `enumerate_source` helpers via `leaf_picks_for`.
+    #
+    # DELIBERATE no-coupling exemption: unlike affix_picks/template_picks/
+    # pos_picks (which __post_init__ guards against a disabled category), a
+    # leaf_item_picks entry for an off category is simply inert -- the
+    # leaf-dispatch `is_on(cat)` gate fires first, so a stale key is harmless.
+    # No __post_init__ validation is added for it by design.
+    leaf_item_picks: dict = field(default_factory=dict)  # dict[GrammarCategory, frozenset[str]]
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -332,6 +345,15 @@ class Selection:
     def is_dep_excluded(self, dep_guid: str) -> bool:
         """Return True iff `dep_guid` is in the per-item exclusion set."""
         return dep_guid in self.excluded_deps
+
+    def leaf_picks_for(self, category: "GrammarCategory"):
+        """Return the per-item GUID subset for a leaf `category`, or None.
+
+        None (key absent) ⇒ transfer ALL items in the category (default,
+        back-compatible). A frozenset ⇒ transfer only those GUIDs; an empty
+        frozenset ⇒ transfer none. See `leaf_item_picks`.
+        """
+        return self.leaf_item_picks.get(category)
 
     def conflict_mode_for(self, category: "GrammarCategory") -> "ConflictMode":
         """Return the effective ConflictMode for `category`.
