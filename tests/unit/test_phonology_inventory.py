@@ -112,3 +112,46 @@ def test_collapse_whole_block_off():
                                     GC.PHONOLOGICAL_RULES)})
     assert out["categories"] == {}
     assert out["leaf_item_picks"] == {}
+
+
+# ---- T016 (US1): preselect-all => 5 cats on, no picks; no conflict control --
+
+def test_us1_preselect_all_five_categories_on_no_picks():
+    """SC-001/SC-002: the page opens ALL preselected; collapsing that state
+    turns every one of the five populated categories on with no trim keys."""
+    inv = build_phonology_inventory(_rich_source())
+    out = collapse_phonology(inv, _all_checked(inv))
+    for cat in (GC.PHONOLOGICAL_FEATURES, GC.PHONEMES, GC.NATURAL_CLASSES,
+                GC.PH_ENVIRONMENT, GC.PHONOLOGICAL_RULES):
+        assert out["categories"][cat] is True, cat
+    assert out["leaf_item_picks"] == {}  # transfer-all, no GUID lists
+
+
+def test_us1_no_conflict_mode_control_on_phonology_page():
+    """SC-008 / FR-012 (analyze finding G1): _PagePhonology must render NO
+    ADD_NEW/MERGE/OVERWRITE conflict-mode control. Verified by source scan
+    (instantiating the QWizardPage pollutes sip state across the suite)."""
+    import ast
+    from pathlib import Path
+
+    from gramtrans.Lib.ui import selection_wizard as _sw
+
+    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    page_cls = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "_PagePhonology"
+    )
+    # Collect referenced identifiers (Name ids + Attribute attrs) — ignores
+    # docstrings/comments, which legitimately spell out FR-012 by name.
+    identifiers = set()
+    for node in ast.walk(page_cls):
+        if isinstance(node, ast.Name):
+            identifiers.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            identifiers.add(node.attr)
+    for banned in ("ConflictMode", "_CONFLICT_LABELS", "_allowed_modes",
+                   "OVERWRITE", "ADD_NEW", "MERGE"):
+        assert banned not in identifiers, (
+            f"phonology page must not reference {banned}"
+        )

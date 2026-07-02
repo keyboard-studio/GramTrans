@@ -101,16 +101,16 @@ domains; conflict-mode UI; KL-010-1 (metathesis/reduplication reference traversa
 **Independent Test**: Bind Ejagham Mini; page 2 is Phonology; all categories preselected with
 correct counts; advancing unchanged plans every phonology item.
 
-- [ ] T013 [US1] Add `_PagePhonology` (grouped tree: 5 category groups, item rows, counts on
+- [X] T013 [US1] Add `_PagePhonology` (grouped tree: 5 category groups, item rows, counts on
   headers, ALL preselected) in `src/gramtrans/Lib/ui/selection_wizard.py`; `initializePage`
   builds via `build_phonology_inventory(source, target)`; empty category renders (no error).
-- [ ] T014 [US1] Insert `_PagePhonology` at index 1 in `SelectionWizard` (order: Project+WS,
+- [X] T014 [US1] Insert `_PagePhonology` at index 1 in `SelectionWizard` (order: Project+WS,
   Phonology, Affixes, Skeleton, GramDeps, Preview, Finish); update step titles ("Step N of 7").
   Relies on T005 accessors so downstream pages resolve correctly.
-- [ ] T015 [US1] Merge phonology picks into the Selection built in `_PagePreview._on_preview`
+- [X] T015 [US1] Merge phonology picks into the Selection built in `_PagePreview._on_preview`
   (`collapse_phonology` → `categories` + `leaf_item_picks`), applying Layer-1 default conflict
   modes; nothing writes (Move only).
-- [ ] T016 [P] [US1] Unit test in `tests/unit/test_phonology_inventory.py`: page preselect-all
+- [X] T016 [P] [US1] Unit test in `tests/unit/test_phonology_inventory.py`: page preselect-all
   state → collapse yields all 5 categories on with no `leaf_item_picks` keys (SC-001/SC-002);
   **and assert `_PagePhonology` renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode control
   (SC-008 / FR-012)** — closes analyze finding G1.
