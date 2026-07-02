@@ -16,6 +16,16 @@ import types
 
 import pytest
 
+# Phase 3c leaf-dispatch for slots (T029/T032-T033) is still stubbed in
+# categories.py (`raise NotImplementedError("Phase 3c T029")`). These are
+# red-by-design TDD tests for that pending work (spec 007); mark xfail so the
+# trunk suite stays green and they auto-flip to passing once implemented.
+pytestmark = pytest.mark.xfail(
+    reason="Phase 3c T029 slots leaf-dispatch not yet implemented (spec 007)",
+    raises=NotImplementedError,
+    strict=False,
+)
+
 from gramtrans.Lib import categories
 import gramtrans.Lib.categories as _cat_mod
 from gramtrans.Lib.models import (

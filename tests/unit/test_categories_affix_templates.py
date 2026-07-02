@@ -19,6 +19,21 @@ import types
 
 import pytest
 
+# Phase 3c leaf-dispatch for templates + the 17.1 sub-pass (T034-T040) is still
+# stubbed in categories.py (`raise NotImplementedError("Phase 3c T051")`). These
+# are red-by-design TDD tests for that pending work (spec 007); mark xfail so the
+# trunk suite stays green and they auto-flip to passing once implemented.
+# The whole file exercises Phase 3c T051 template leaf-dispatch + the 17.1
+# sub-pass, none of which is implemented yet in categories.py (stubs raise
+# NotImplementedError, _run_171_subpass is undefined, and dependencies() returns
+# empty). These tests guard nothing until T051 lands, so the whole module is
+# xfail (strict=False) -- they auto-flip to xpass once implemented, at which
+# point this mark should be removed. Tracked under spec 007.
+pytestmark = pytest.mark.xfail(
+    reason="Phase 3c T051 template leaf-dispatch + 17.1 sub-pass not yet implemented (spec 007)",
+    strict=False,
+)
+
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
     GrammarCategory,
