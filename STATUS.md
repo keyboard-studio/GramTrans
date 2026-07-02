@@ -1,5 +1,56 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 010 — Phonology Selector (Model-B) COMPLETE (2026-07-02)
+
+**Branch**: `feature/010-phonology-selector` (off `main`)
+**Spec**: [specs/010-phonology-selector/](specs/010-phonology-selector/) — all 30 tasks
+resolved (T001–T012 Phase 1–2 in a prior session; **T013–T030 this session**).
+
+### Shipped this session (Phases 3–8)
+
+| Phase | Tasks | What |
+|-------|-------|------|
+| 3 (US1) | T013–T016 | `_PagePhonology` at wizard index 1 (grouped tree, 5 preselected category groups, counts on headers, target-status column, NO conflict-mode control per FR-012/SC-008); step titles now "of 7"; `collapse_phonology` picks merged into the Preview `Selection`. |
+| 4 (US2) | T017–T019 | Tristate whole-block toggle (empty block ⇒ unchecked+disabled) + per-category AutoTristate headers + per-item deselect ⇒ `leaf_item_picks` subsets; full categories omit the key (transfer-all). |
+| 5 (US3) | T020–T021 | Confirmed strata gating lives in `collapse_phonology` ({STRATA: True} iff a rule kept); strata never a group/row. |
+| 6 (US4) | T022–T023 | Target-status column rendered; extended `build_phonology_inventory` to compute SIMILAR by casefolded label match (mirrors 008/009 `_entry_status`) alongside IN TARGET / NEW / blank. |
+| 7 (US5) | T024–T026c | Shared `_phonology_excluded_lossy_for(wizard)` feeds intra-phonology missing-reference warnings into BOTH the Preview StatsPanel (`extra_excluded_lossy`) and the Finish Move gate's shared `el_count` (ONE consolidated dialog, FR-011). KL-010-1 Principle-V guard: kept metathesis/reduplication rule + NC/phoneme trim ⇒ coarse notice into the same gate. |
+| 8 (Polish) | T027–T030 | Live integration scaffold `tests/integration/test_phonology_live.py` (Scenarios A–E, skip-by-default); regression sweep; this handoff + KL-010-1 backlog. |
+
+### Test totals
+
+- Unit: **633 passed**, 6 skipped, 13 xfailed, 1 xpassed (baseline was 624 passed;
+  +9 new: 2 US1, 3 US2, 1 US4, 3 US5). The absent-`leaf_item_picks`-key back-compat
+  contract held — zero regressions.
+- Integration: `test_phonology_live.py` collects and skips cleanly (6 skipped); **live
+  execution against Ejagham Mini → Ejagham Full GT-Test is deferred to a human session**
+  with the FlexTools MCP active (quickstart.md prerequisites: fresh target restore).
+
+### Post-010 backlog
+
+- **KL-010-1 (metathesis/reduplication reference traversal)** — the EXCLUDED-LOSSY
+  reference traversal in `build_phonology_inventory` covers `PhRegularRule` only
+  (`StrucDescOS` + `rhs.Left/RightContextOA`). It does NOT traverse `PhMetathesisRule`
+  (`Left/RightPartOfMetathesisOS`) or `PhReduplicationRule`
+  (`Left/RightPartOfReduplicationOS`) part-sequences, whose `IPhSimpleContext*` entries
+  can also reference NCs/phonemes. **Interim guard shipped** (T026b): a kept
+  metathesis/reduplication rule + an NC/phoneme trim surfaces a coarse "reference check
+  not supported" notice into the Move gate rather than transferring silently. **Fix**:
+  extend `_rule_context_refs` to walk those two part-sequences + add
+  metathesis/reduplication fixtures to `tests/unit/_fakes_phonology.py`. Safe to defer —
+  the Ejagham corpus is `PhRegularRule`-only.
+
+### Next pickup checklist (feature 010)
+
+1. **Run the live Scenarios A–E** (`pytest tests/integration/test_phonology_live.py -m
+   integration -v`) with Ejagham Mini open + a freshly-restored Ejagham Full GT-Test.
+   Verify/adjust the quickstart count anchors (32 phonemes, 5 NCs, 2+ envs) inline.
+2. **Optional** `/lex-lead` review cycle on the finished UI before merging to `main`
+   (spec + plan already passed cycles 1–3).
+3. **Then** close KL-010-1 if a metathesis/reduplication-bearing source becomes available.
+
+---
+
 **Updated**: 2026-06-21 (22:50 close-sweep)
 **Branch**: `main`
 **Phase**: Phase 3b **CLOSED** — all 41 tasks resolved (4 deferred-with-rationale; 37 shipped). US2 creation still blocked at flexlibs2 layer (detect-and-report posture adopted). Phase 3c spec scaffolded at [specs/007-affixes-stems/](specs/007-affixes-stems/) — memo steps 14-18 (affixes, ad-hoc / compound rules, slots, affix templates, stems).

@@ -205,15 +205,15 @@ Preview warns naming the rule; Move pops ONE consolidated dialog.
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T027 [P] Live MCP integration in `tests/integration/test_phonology_live.py`: Ejagham Mini
+- [X] T027 [P] Live MCP integration in `tests/integration/test_phonology_live.py`: Ejagham Mini
   → Ejagham Full GT-Test — Scenarios A–E from quickstart.md (whole-block, block-off, per-item
   trim, rule-gated strata, FR-307 idempotency re-run). (Written; main session executes.)
-- [ ] T028 Full regression sweep: confirm the 324+ existing unit tests remain green
+- [X] T028 Full regression sweep: confirm the 324+ existing unit tests remain green
   (leaf_item_picks absent-key back-compat) and the 009 wizard pages still resolve via accessors.
-- [ ] T029 [P] KL-010-1 follow-up entry: record the metathesis/reduplication reference-traversal
+- [X] T029 [P] KL-010-1 follow-up entry: record the metathesis/reduplication reference-traversal
   gap (extend traversal to `Left/RightPartOfMetathesisOS` + `Left/RightPartOfReduplicationOS`,
   add fixtures) as a post-010 backlog item in STATUS.md.
-- [ ] T030 Update STATUS.md handoff + point the CLAUDE.md SPECKIT marker note; commit
+- [X] T030 Update STATUS.md handoff + point the CLAUDE.md SPECKIT marker note; commit
   topic-aligned increments.
 
 ---
