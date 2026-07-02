@@ -1732,3 +1732,365 @@ def build_selection(picker: PickerState,
         category_scopes=dict(category_scopes) if category_scopes else {},
         excluded_deps=excluded_deps if excluded_deps is not None else frozenset(),
     )
+
+
+# ===========================================================================
+# Phonology Selector — Model-B independent block (spec 010)
+# ===========================================================================
+
+def _phon_guid(obj) -> str:
+    """Lower-cased GUID for a phonology object.
+
+    IDENTICAL normalization to categories.py `_guid_str_from` so the builder
+    (which stores `row.guid`) and the leaf-dispatch trim filter (which compares
+    `_guid_str_from(item)`) agree on both sides (spec 010 GUID-normalization
+    invariant, P0). Real LCM path via ICmObject; fake fallback via `.guid`.
+    """
+    try:
+        from SIL.LCModel import ICmObject  # lazy — absent in unit tests
+        return str(ICmObject(obj).Guid).lower()
+    except Exception:  # noqa: BLE001
+        return str(getattr(obj, "guid", "")).lower()
+
+
+def _phon_label(obj) -> str:
+    """Best display label for a phonology object; degrades to guid prefix."""
+    try:
+        t = obj.Name.BestAnalysisAlternative.Text
+        if t:
+            return str(t)
+    except Exception:  # noqa: BLE001
+        pass
+    n = getattr(obj, "name", None)
+    if n:
+        return str(n)
+    g = _phon_guid(obj)
+    return g[:8] if g else "?"
+
+
+# The five user-facing phonology categories, in page display order, paired with
+# the flexlibs2 Operations accessor attribute each enumerates.
+_PHON_CATEGORY_ACCESSORS = (
+    (GrammarCategory.PHONOLOGICAL_FEATURES, "PhonFeatures", "Phonological Features"),
+    (GrammarCategory.PHONEMES, "Phonemes", "Phonemes"),
+    (GrammarCategory.NATURAL_CLASSES, "NaturalClasses", "Natural Classes"),
+    (GrammarCategory.PH_ENVIRONMENT, "Environments", "Environments"),
+    (GrammarCategory.PHONOLOGICAL_RULES, "PhonRules", "Phonological Rules"),
+)
+
+# Concrete LCM rule types whose reference part-sequences the builder does NOT
+# traverse (KL-010-1). Presence of one triggers the Principle-V guard.
+_UNTRAVERSED_RULE_CLASSES = frozenset({"PhMetathesisRule", "PhReduplicationRule"})
+
+
+@dataclass(frozen=True)
+class PhonologyRow:
+    """One selectable phonology item."""
+    guid: str
+    label: str
+    category: "GrammarCategory"
+    preselected: bool = True
+    status: Optional[str] = None  # "new" | "in_target" | None (no target)
+
+
+@dataclass(frozen=True)
+class PhonologyCategoryGroup:
+    category: "GrammarCategory"
+    label: str
+    rows: Tuple[PhonologyRow, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return len(self.rows)
+
+
+@dataclass(frozen=True)
+class PhonologyInventory:
+    """Result of build_phonology_inventory (data-model.md).
+
+    Reference maps are all `dict[guid -> frozenset[guid]]` so an EXCLUDED-LOSSY
+    warning can be attributed to the specific KEPT item (entry-centric SC-006).
+    """
+    groups: Tuple[PhonologyCategoryGroup, ...] = ()
+    rule_referenced_nc_guids: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+    rule_referenced_phoneme_guids: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+    nc_referenced_phoneme_guids: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+    phoneme_referenced_feature_guids: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+    has_rules: bool = False
+    # rule_guid -> True when the rule is a type whose refs we do NOT traverse
+    # (metathesis / reduplication) — KL-010-1 guard input.
+    untraversed_rule_guids: FrozenSet[str] = field(default_factory=frozenset)
+
+    def group_for(self, category) -> Optional[PhonologyCategoryGroup]:
+        for g in self.groups:
+            if g.category == category:
+                return g
+        return None
+
+
+def _phon_target_guids(target, accessor: str) -> Set[str]:
+    """Lower-cased GUID set for one category in the target, or empty."""
+    out: Set[str] = set()
+    if target is None or not hasattr(target, accessor):
+        return out
+    try:
+        for obj in getattr(target, accessor).GetAll():
+            out.add(_phon_guid(obj))
+    except (AttributeError, TypeError):
+        pass
+    return out
+
+
+def _rule_context_refs(rule) -> List[object]:
+    """Best-effort gather of the objects a rule's contexts reference.
+
+    Covers PhRegularRule shapes: StrucDescOS[*].FeatureStructureRA and
+    RightHandSidesOS[*].{Left,Right}ContextOA.FeatureStructureRA. Metathesis /
+    reduplication part-sequences are NOT traversed (KL-010-1).
+    """
+    refs: List[object] = []
+
+    def _add_ctx(ctx):
+        if ctx is None:
+            return
+        ref = getattr(ctx, "FeatureStructureRA", None)
+        if ref is not None:
+            refs.append(ref)
+
+    try:
+        for ctx in getattr(rule, "StrucDescOS", ()) or ():
+            _add_ctx(ctx)
+    except TypeError:
+        pass
+    try:
+        for rhs in getattr(rule, "RightHandSidesOS", ()) or ():
+            _add_ctx(getattr(rhs, "LeftContextOA", None))
+            _add_ctx(getattr(rhs, "RightContextOA", None))
+    except TypeError:
+        pass
+    return refs
+
+
+def build_phonology_inventory(source, target=None) -> PhonologyInventory:
+    """Enumerate the five phonology categories + reference maps (data-model.md).
+
+    Pure/read-only. All items preselected. Target-status is by-GUID
+    (in_target) else new; None when no target bound. Reference maps classify
+    each reference by membership in the phoneme/NC/feature GUID sets, so no
+    LCM type-checks are needed and the logic works for fakes and live objects.
+    """
+    # 1. Enumerate rows per category + collect per-category GUID sets.
+    groups: List[PhonologyCategoryGroup] = []
+    guid_sets: Dict[object, Set[str]] = {}
+    objs_by_cat: Dict[object, List[object]] = {}
+    for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
+        tgt_guids = _phon_target_guids(target, accessor)
+        rows: List[PhonologyRow] = []
+        cat_guids: Set[str] = set()
+        objs: List[object] = []
+        if source is not None and hasattr(source, accessor):
+            try:
+                items = list(getattr(source, accessor).GetAll())
+            except (AttributeError, TypeError):
+                items = []
+            for obj in items:
+                g = _phon_guid(obj)
+                cat_guids.add(g)
+                objs.append(obj)
+                status = None
+                if target is not None:
+                    status = "in_target" if g in tgt_guids else "new"
+                rows.append(PhonologyRow(
+                    guid=g, label=_phon_label(obj),
+                    category=category, preselected=True, status=status,
+                ))
+        guid_sets[category] = cat_guids
+        objs_by_cat[category] = objs
+        groups.append(PhonologyCategoryGroup(
+            category=category, label=label, rows=tuple(rows)))
+
+    phoneme_guids = guid_sets.get(GrammarCategory.PHONEMES, set())
+    nc_guids = guid_sets.get(GrammarCategory.NATURAL_CLASSES, set())
+    feature_guids = guid_sets.get(GrammarCategory.PHONOLOGICAL_FEATURES, set())
+
+    # 2. phoneme -> feature refs (FeaturesOA.FeatureSpecsOC[*].FeatureRA)
+    phoneme_feats: Dict[str, FrozenSet[str]] = {}
+    for ph in objs_by_cat.get(GrammarCategory.PHONEMES, []):
+        refs: Set[str] = set()
+        feat_struc = getattr(ph, "FeaturesOA", None)
+        if feat_struc is not None:
+            try:
+                for spec in getattr(feat_struc, "FeatureSpecsOC", ()) or ():
+                    fref = getattr(spec, "FeatureRA", None)
+                    if fref is not None:
+                        fg = _phon_guid(fref)
+                        if fg in feature_guids:
+                            refs.add(fg)
+            except TypeError:
+                pass
+        if refs:
+            phoneme_feats[_phon_guid(ph)] = frozenset(refs)
+
+    # 3. nc -> phoneme refs (SegmentsRC)
+    nc_phonemes: Dict[str, FrozenSet[str]] = {}
+    for nc in objs_by_cat.get(GrammarCategory.NATURAL_CLASSES, []):
+        refs = set()
+        try:
+            for seg in getattr(nc, "SegmentsRC", ()) or ():
+                sg = _phon_guid(seg)
+                if sg in phoneme_guids:
+                    refs.add(sg)
+        except TypeError:
+            pass
+        if refs:
+            nc_phonemes[_phon_guid(nc)] = frozenset(refs)
+
+    # 4. rule -> NC / phoneme refs; flag untraversed rule types.
+    rule_ncs: Dict[str, FrozenSet[str]] = {}
+    rule_phonemes: Dict[str, FrozenSet[str]] = {}
+    untraversed: Set[str] = set()
+    rules = objs_by_cat.get(GrammarCategory.PHONOLOGICAL_RULES, [])
+    for rule in rules:
+        rg = _phon_guid(rule)
+        if getattr(rule, "ClassName", "") in _UNTRAVERSED_RULE_CLASSES:
+            untraversed.add(rg)
+        ncs: Set[str] = set()
+        phs: Set[str] = set()
+        for ref in _rule_context_refs(rule):
+            g = _phon_guid(ref)
+            if g in nc_guids:
+                ncs.add(g)
+            elif g in phoneme_guids:
+                phs.add(g)
+        if ncs:
+            rule_ncs[rg] = frozenset(ncs)
+        if phs:
+            rule_phonemes[rg] = frozenset(phs)
+
+    return PhonologyInventory(
+        groups=tuple(groups),
+        rule_referenced_nc_guids=rule_ncs,
+        rule_referenced_phoneme_guids=rule_phonemes,
+        nc_referenced_phoneme_guids=nc_phonemes,
+        phoneme_referenced_feature_guids=phoneme_feats,
+        has_rules=bool(rules),
+        untraversed_rule_guids=frozenset(untraversed),
+    )
+
+
+def collapse_phonology(inventory: PhonologyInventory,
+                       checked_by_category: Dict[object, Set[str]]) -> dict:
+    """Fold the page's checked GUIDs into Selection fragments (data-model.md).
+
+    Returns ``{"categories": {...}, "leaf_item_picks": {...}}``:
+      - categories[cat] = True for each category with >=1 checked row.
+      - categories[STRATA] = True iff PHONOLOGICAL_RULES on with >=1 checked
+        rule (FR-009 — strata are rule-scoped, never user-facing).
+      - leaf_item_picks[cat] = frozenset(checked) ONLY when the category is
+        trimmed (checked is a proper subset of its rows); omitted when all
+        rows are checked (=> transfer-all) or none are.
+    """
+    categories: Dict[object, bool] = {}
+    leaf_item_picks: Dict[object, FrozenSet[str]] = {}
+    for group in inventory.groups:
+        checked = {g for g in checked_by_category.get(group.category, set())}
+        all_guids = {r.guid for r in group.rows}
+        checked &= all_guids  # ignore stray guids
+        if not checked:
+            continue
+        categories[group.category] = True
+        if checked != all_guids:  # trimmed -> record the subset
+            leaf_item_picks[group.category] = frozenset(checked)
+
+    # FR-009: strata travel iff at least one phonological rule is kept.
+    rules_checked = checked_by_category.get(GrammarCategory.PHONOLOGICAL_RULES, set())
+    rule_guids = set()
+    rg = inventory.group_for(GrammarCategory.PHONOLOGICAL_RULES)
+    if rg is not None:
+        rule_guids = {r.guid for r in rg.rows}
+    if categories.get(GrammarCategory.PHONOLOGICAL_RULES) and (rules_checked & rule_guids):
+        categories[GrammarCategory.STRATA] = True
+
+    return {"categories": categories, "leaf_item_picks": leaf_item_picks}
+
+
+def phonology_uses_untraversed_rules(inventory: PhonologyInventory,
+                                     checked_rule_guids: Set[str]) -> bool:
+    """True iff any KEPT rule is a metathesis/reduplication type (KL-010-1)."""
+    return bool(inventory.untraversed_rule_guids & set(checked_rule_guids))
+
+
+def build_phonology_excluded_lossy(
+    inventory: PhonologyInventory,
+    checked_by_category: Dict[object, Set[str]],
+    target_guids_by_category: Optional[Dict[object, Set[str]]] = None,
+) -> List:
+    """Entry-centric EXCLUDED-LOSSY warnings for intra-phonology trims (FR-010).
+
+    A kept item whose reference is (a) deselected on this page AND (b) absent
+    from the target yields ONE warning attributed to the kept item. Aggregated
+    into a single list for the shared Move gate (FR-011). Chains:
+      rule -> NC / phoneme-direct ; NC -> phoneme ; phoneme -> feature.
+    """
+    if __package__:
+        from .models import ExcludedLossy, GrammarCategory as _GC
+    else:
+        from models import ExcludedLossy, GrammarCategory as _GC  # type: ignore
+
+    target_guids_by_category = target_guids_by_category or {}
+    warnings: List = []
+
+    def _checked(cat) -> Set[str]:
+        return set(checked_by_category.get(cat, set()))
+
+    def _label_for(cat, guid) -> str:
+        grp = inventory.group_for(cat)
+        if grp is not None:
+            for r in grp.rows:
+                if r.guid == guid:
+                    return r.label
+        return guid[:8]
+
+    def _stranded(ref_guid, ref_cat) -> bool:
+        """True iff ref is deselected AND absent from target."""
+        if ref_guid in _checked(ref_cat):
+            return False
+        return ref_guid not in target_guids_by_category.get(ref_cat, set())
+
+    def _emit(kept_cat, kept_guid, dep_cat, dep_guid):
+        warnings.append(ExcludedLossy(
+            category=kept_cat,
+            entry_guid=kept_guid,
+            entry_label=_label_for(kept_cat, kept_guid),
+            dep_category=dep_cat,
+            dep_guid=dep_guid,
+            dep_label=_label_for(dep_cat, dep_guid),
+            message=(
+                f"'{_label_for(kept_cat, kept_guid)}' references "
+                f"'{_label_for(dep_cat, dep_guid)}' which will be missing "
+                f"(deselected and absent from target)."
+            ),
+        ))
+
+    # Kept rules -> NC / phoneme
+    for rule_guid in _checked(_GC.PHONOLOGICAL_RULES):
+        for nc_guid in inventory.rule_referenced_nc_guids.get(rule_guid, ()):  # noqa
+            if _stranded(nc_guid, _GC.NATURAL_CLASSES):
+                _emit(_GC.PHONOLOGICAL_RULES, rule_guid, _GC.NATURAL_CLASSES, nc_guid)
+        for ph_guid in inventory.rule_referenced_phoneme_guids.get(rule_guid, ()):
+            if _stranded(ph_guid, _GC.PHONEMES):
+                _emit(_GC.PHONOLOGICAL_RULES, rule_guid, _GC.PHONEMES, ph_guid)
+
+    # Kept NCs -> phoneme
+    for nc_guid in _checked(_GC.NATURAL_CLASSES):
+        for ph_guid in inventory.nc_referenced_phoneme_guids.get(nc_guid, ()):
+            if _stranded(ph_guid, _GC.PHONEMES):
+                _emit(_GC.NATURAL_CLASSES, nc_guid, _GC.PHONEMES, ph_guid)
+
+    # Kept phonemes -> feature
+    for ph_guid in _checked(_GC.PHONEMES):
+        for feat_guid in inventory.phoneme_referenced_feature_guids.get(ph_guid, ()):
+            if _stranded(feat_guid, _GC.PHONOLOGICAL_FEATURES):
+                _emit(_GC.PHONEMES, ph_guid, _GC.PHONOLOGICAL_FEATURES, feat_guid)
+
+    return warnings

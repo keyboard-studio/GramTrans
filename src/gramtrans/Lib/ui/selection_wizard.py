@@ -686,7 +686,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             wizard = self.wizard()
             if wizard is None:
                 return None
-            page0 = wizard.page(0)
+            page0 = wizard.page_project_ws()
             if page0 is None:
                 return None
             # Try context().source_handle first, then _host directly
@@ -711,7 +711,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             wizard = self.wizard()
             if wizard is None:
                 return None
-            page0 = wizard.page(0)
+            page0 = wizard.page_project_ws()
             if page0 is None:
                 return None
             ctx = page0.context()
@@ -1327,7 +1327,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return None
-            p0 = w.page(0)
+            p0 = w.page_project_ws()
             if p0 is None:
                 return None
             ctx = p0.context()
@@ -1344,7 +1344,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return None
-            p0 = w.page(0)
+            p0 = w.page_project_ws()
             if p0 is None:
                 return None
             ctx = p0.context()
@@ -1360,7 +1360,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return frozenset()
-            page_items = w.page(1)
+            page_items = w.page_items()
             if page_items is None:
                 return frozenset()
             sel = page_items.collect_selection()
@@ -1540,7 +1540,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return None
-            p0 = w.page(0)
+            p0 = w.page_project_ws()
             if p0 is None:
                 return None
             ctx = p0.context()
@@ -1557,7 +1557,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return None
-            p0 = w.page(0)
+            p0 = w.page_project_ws()
             if p0 is None:
                 return None
             ctx = p0.context()
@@ -1572,7 +1572,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             w = self.wizard()
             if w is None:
                 return frozenset()
-            page_items = w.page(1)
+            page_items = w.page_items()
             if page_items is None:
                 return frozenset()
             sel = page_items.collect_selection()
@@ -1673,7 +1673,7 @@ class _PagePreview(QtWidgets.QWizardPage):
         wizard = self.wizard()
         if wizard is None:
             return
-        context = wizard.page(0).context()
+        context = wizard.page_project_ws().context()
         if context is None:
             QtWidgets.QMessageBox.warning(
                 self, "GramTrans", "No target project bound. Go back to page 1."
@@ -1686,7 +1686,7 @@ class _PagePreview(QtWidgets.QWizardPage):
         #   4 = _PagePreview (this page)
         # _PageScopeConflict is no longer in the flow (FR-012/FR-013);
         # Layer-1 defaults are applied automatically (T020).
-        page_items = wizard.page(1)
+        page_items = wizard.page_items()
         affix_selection = page_items.collect_selection()
 
         # Apply Layer-1 conflict-mode defaults automatically (T020, FR-012).
@@ -1708,7 +1708,7 @@ class _PagePreview(QtWidgets.QWizardPage):
         )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
 
         # WS mapping from page 0 (three-way MAP/CREATE/SKIP control).
-        page0 = wizard.page(0)
+        page0 = wizard.page_project_ws()
         ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
         state, payload = gt_api.compute_preview(context, selection, ws_mapping)
         # Phase 3c: compute_preview always returns PREVIEW_READY
@@ -1777,14 +1777,14 @@ class _PageFinish(QtWidgets.QWizardPage):
         if wizard is None:
             return
         # T019: Preview is now at index 4 (Skeleton=2, GramDeps=3, Preview=4, Finish=5).
-        preview_page = wizard.page(4)
+        preview_page = wizard.page_preview()
         plan = preview_page.cached_plan() if preview_page is not None else None
         if plan is None:
             QtWidgets.QMessageBox.warning(
                 self, "GramTrans", "No preview plan available. Go back to page 5."
             )
             return
-        context = wizard.page(0).context()
+        context = wizard.page_project_ws().context()
         if context is None:
             return
 
@@ -1795,7 +1795,7 @@ class _PageFinish(QtWidgets.QWizardPage):
         el_count = plan.excluded_lossy_count()
 
         # Extra skeleton EXCLUDED-LOSSY (T017)
-        skel_page = wizard.page(2)
+        skel_page = wizard.page_skeleton()
         if skel_page is not None and hasattr(skel_page, "deselected_filled_slot_guids"):
             deselected_slots = skel_page.deselected_filled_slot_guids()
             if deselected_slots and skel_page._skeleton is not None:
@@ -1929,6 +1929,31 @@ class SelectionWizard(QtWidgets.QWizard):
     def context(self):
         """Return the bound RunContext (available after page 1 is completed)."""
         return self._page_project_ws.context()
+
+    # -- Named page accessors (spec 010 P-1) ---------------------------------
+    # Pages MUST reference each other through these, never by literal index:
+    # inserting a page (e.g. Phonology at index 1) shifts every literal
+    # `wizard.page(N)` silently. Each accessor returns the stored attribute.
+    def page_project_ws(self):
+        return self._page_project_ws
+
+    def page_phonology(self):
+        return self._page_phonology
+
+    def page_items(self):
+        return self._page_items
+
+    def page_skeleton(self):
+        return self._page_skeleton
+
+    def page_gram_deps(self):
+        return self._page_gram_deps
+
+    def page_preview(self):
+        return self._page_preview
+
+    def page_finish(self):
+        return self._page_finish
 
 
 # ---------------------------------------------------------------------------
