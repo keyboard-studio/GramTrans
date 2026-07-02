@@ -42,7 +42,15 @@ if __package__:
         _DEFAULT_CONFLICT_MODES,
     )
     from ..protection import _is_protected, apply_isprotected_layer2
-    from ..selection import PickerState, SourceAffixInventory, build_selection
+    from ..selection import (
+        PickerState,
+        PosGroupedAffixInventory,
+        SourceAffixInventory,
+        build_pos_grouped_inventory,
+        build_selection,
+        collapse_pos_grouped,
+        mirror_check_state,
+    )
     from .stats_panel import StatsPanel
     from .target_picker import TargetPickerDialog
 else:
@@ -59,7 +67,15 @@ else:
         _DEFAULT_CONFLICT_MODES,
     )
     from protection import _is_protected, apply_isprotected_layer2  # type: ignore
-    from selection import PickerState, SourceAffixInventory, build_selection  # type: ignore
+    from selection import (  # type: ignore
+        PickerState,
+        PosGroupedAffixInventory,
+        SourceAffixInventory,
+        build_pos_grouped_inventory,
+        build_selection,
+        collapse_pos_grouped,
+        mirror_check_state,
+    )
     from stats_panel import StatsPanel  # type: ignore
     from target_picker import TargetPickerDialog  # type: ignore
 
@@ -495,42 +511,84 @@ class _PageProjectWS(QtWidgets.QWizardPage):
 
 
 # ---------------------------------------------------------------------------
-# Page 2 -- Item picker
+# Item-data roles used throughout _PageItemPicker
+# ---------------------------------------------------------------------------
+
+_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1   # entry_guid string
+_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2   # "affix" | "pos_group" | "subgroup"
+_ROLE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3   # "attaches" | "produces" (leaf rows)
+_IS_PRODUCES = QtCore.Qt.ItemDataRole.UserRole + 4  # bool: True for deriv_produces rows
+
+
+# ---------------------------------------------------------------------------
+# Page 2 -- Item picker (POS-grouped, specs/008-affix-pos-picker)
 # ---------------------------------------------------------------------------
 
 class _PageItemPicker(QtWidgets.QWizardPage):
-    """Page 2: item picker (affix / stem / affix-template tree).
+    """Page 2: POS-grouped affix item picker.
+
+    Tree layout (4 columns):
+        Col 0: Affix form -> glosses  |  Col 1: Type  |  Col 2: From  |  Col 3: To
+
+    POS hierarchy:
+        [POS node]
+          [Inflectional]   <- swept by POS header-check
+            affix rows...
+          [Derivation - attaches to]  <- swept by POS header-check
+            affix rows...
+          [Derivation - produces]  <- NOT swept by POS header-check
+            affix rows...
+        [Unattached affixes]
+          [No part of speech]
+            affix rows...
+          [No sense / no analysis]
+            affix rows...
 
     Stems tab is STUBBED / DISABLED (Layer-3 stems land later).
-    Re-hosts the existing AffixTreePicker widget verbatim.
+
+    Group-check semantics:
+        Checking a POS node sweeps Inflectional + Derivation-attaches subgroups
+        and descendant POS nodes, but NOT the Derivation-produces subgroup.
+        This is achieved by marking produces rows with _IS_PRODUCES=True so that
+        the Qt auto-tristate propagation covers the entire subtree; the header
+        check logic in collect_selection filters them out by role.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("Step 2 of 5: Item Picker")
         self.setSubTitle(
-            "Select the affixes and templates to transfer. "
+            "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
         )
+        self._inventory: Optional[PosGroupedAffixInventory] = None
+        # Map from entry_guid -> list of QTreeWidgetItem (for mirroring)
+        self._guid_to_items: dict = {}
+        # Re-entrancy guard for itemChanged mirroring
+        self._mirroring: bool = False
         self._build_ui()
 
+    # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
 
         # Tab widget: Affixes (active) + Stems (disabled stub)
         self._tabs = QtWidgets.QTabWidget(self)
 
-        # --- Affixes tab (re-hosts the existing AffixTreePicker inline) ---
+        # --- Affixes tab (POS-grouped tree) ---
         affix_tab = QtWidgets.QWidget()
         affix_tab_layout = QtWidgets.QVBoxLayout(affix_tab)
         affix_tab_layout.addWidget(QtWidgets.QLabel(
-            "Check templates, slots, or individual affixes to include.\n"
-            "Checking a template selects all affixes under it.",
+            "Check POS groups or individual affixes to include in the transfer.\n"
+            "Checking a POS group selects all affixes that attach to it "
+            "(not affixes that only produce it).",
             affix_tab,
         ))
         self._tree = QtWidgets.QTreeWidget(affix_tab)
-        self._tree.setColumnCount(1)
-        self._tree.setHeaderLabels(["Affixes by template"])
+        self._tree.setColumnCount(4)
+        self._tree.setHeaderLabels(["Affix / Group", "Type", "From", "To"])
+        self._tree.header().setStretchLastSection(False)
+        self._tree.setAlternatingRowColors(True)
         affix_tab_layout.addWidget(self._tree, 1)
         self._tabs.addTab(affix_tab, "Affixes")
 
@@ -548,107 +606,248 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         layout.addWidget(self._tabs, 1)
 
     # ------------------------------------------------------------------
-    def populate_tree(self, inventory: SourceAffixInventory,
-                      affix_labels: dict = None,
-                      slot_labels: dict = None,
-                      template_labels: dict = None) -> None:
-        """Populate the affix tree from a SourceAffixInventory."""
+    def initializePage(self) -> None:
+        """Called when the wizard enters page 2.
+
+        Builds the inventory from the bound source project and populates
+        the tree. This is the missing feed that caused the empty picker.
+        Guards for no-source (renders empty labeled tree, no crash).
+        """
+        self._tree.itemChanged.disconnect() if self._tree.receivers(
+            self._tree.itemChanged
+        ) > 0 else None
+
+        source = self._get_source()
+        if source is None:
+            # No source bound yet -- show empty labeled tree, no crash
+            self._inventory = None
+            self._guid_to_items = {}
+            self._tree.clear()
+            empty_item = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No source project bound)"]
+            )
+            empty_item.setFlags(empty_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            return
+
+        try:
+            inventory = build_pos_grouped_inventory(source)
+        except Exception:  # noqa: BLE001
+            inventory = None  # type: ignore[assignment]
+
+        if inventory is None:
+            self._inventory = None
+            self._guid_to_items = {}
+            return
+
         self._inventory = inventory
-        self._affix_labels = affix_labels or {}
-        self._slot_labels = slot_labels or {}
-        self._template_labels = template_labels or {}
+        self._guid_to_items = {}
+        self.populate_pos_tree(inventory)
+        self._tree.itemChanged.connect(self._on_item_changed)
 
-        _GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
-        _KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
+    def _get_source(self):
+        """Return the source project handle from page 0, or None."""
+        try:
+            wizard = self.wizard()
+            if wizard is None:
+                return None
+            page0 = wizard.page(0)
+            if page0 is None:
+                return None
+            # Try context().source_handle first, then _host directly
+            ctx = page0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            host = getattr(page0, "_host", None)
+            return host
+        except Exception:  # noqa: BLE001
+            return None
 
+    # ------------------------------------------------------------------
+    def populate_pos_tree(self, inventory: PosGroupedAffixInventory) -> None:
+        """Populate the 4-column POS-hierarchy tree from inventory.
+
+        Called by initializePage; may also be called directly in tests.
+        """
         self._tree.clear()
-        self._tree.itemChanged.disconnect() if True else None
+        self._guid_to_items = {}
 
-        for tpl_guid, slot_guids in inventory.template_to_slots.items():
-            tpl_label = template_labels.get(tpl_guid, tpl_guid) if template_labels else tpl_guid
-            tpl_item = QtWidgets.QTreeWidgetItem(self._tree, [f"Template: {tpl_label}"])
-            tpl_item.setData(0, _GUID_ROLE, tpl_guid)
-            tpl_item.setData(0, _KIND_ROLE, "template")
-            tpl_item.setFlags(
-                tpl_item.flags()
-                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+        # --- POS hierarchy nodes ---
+        for pos_node in inventory.roots:
+            self._add_pos_node(self._tree.invisibleRootItem(), pos_node)
+
+        # --- Unattached drawer ---
+        has_junk = bool(inventory.junk.no_pos or inventory.junk.no_analysis)
+        if has_junk:
+            drawer = self._make_group_item(
+                self._tree, "Unattached affixes",
+                kind="pos_group", checkable=True, is_produces_group=False,
             )
-            tpl_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-            for slot_guid in slot_guids:
-                slot_label = self._slot_labels.get(slot_guid, slot_guid)
-                slot_item = QtWidgets.QTreeWidgetItem(tpl_item, [f"Slot: {slot_label}"])
-                slot_item.setData(0, _GUID_ROLE, slot_guid)
-                slot_item.setData(0, _KIND_ROLE, "slot")
-                slot_item.setFlags(
-                    slot_item.flags()
-                    | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                    | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            if inventory.junk.no_pos:
+                sg = self._make_group_item(
+                    drawer, "No part of speech",
+                    kind="subgroup", checkable=True, is_produces_group=False,
                 )
-                slot_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-                for affix_guid in inventory.slot_to_affixes.get(slot_guid, ()):
-                    af_label = self._affix_labels.get(affix_guid, affix_guid)
-                    ai = QtWidgets.QTreeWidgetItem(slot_item, [af_label])
-                    ai.setData(0, _GUID_ROLE, affix_guid)
-                    ai.setData(0, _KIND_ROLE, "affix")
-                    ai.setFlags(ai.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                    ai.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-
-        if inventory.unbound_affixes:
-            unbound = QtWidgets.QTreeWidgetItem(
-                self._tree, ["Unbound (not attached to any template)"]
-            )
-            unbound.setFlags(
-                unbound.flags()
-                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
-            )
-            unbound.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-            for affix_guid in sorted(inventory.unbound_affixes):
-                af_label = self._affix_labels.get(affix_guid, affix_guid)
-                ai = QtWidgets.QTreeWidgetItem(unbound, [af_label])
-                ai.setData(0, _GUID_ROLE, affix_guid)
-                ai.setData(0, _KIND_ROLE, "affix")
-                ai.setFlags(ai.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                ai.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+                for row in inventory.junk.no_pos:
+                    self._add_affix_row(sg, row)
+            if inventory.junk.no_analysis:
+                sg2 = self._make_group_item(
+                    drawer, "No sense / no analysis",
+                    kind="subgroup", checkable=True, is_produces_group=False,
+                )
+                for row in inventory.junk.no_analysis:
+                    self._add_affix_row(sg2, row)
 
         self._tree.expandAll()
+        # Resize columns to content after population
+        for col in range(4):
+            self._tree.resizeColumnToContents(col)
 
-    def picker_state(self) -> PickerState:
-        """Collapse tree checked state to PickerState."""
-        _GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
-        _KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
-
-        checked_templates: set = set()
-        checked_slots: set = set()
-        checked_affixes: set = set()
-
-        root = self._tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            top = root.child(i)
-            kind = top.data(0, _KIND_ROLE)
-            if kind == "template":
-                if top.checkState(0) == QtCore.Qt.CheckState.Checked:
-                    checked_templates.add(top.data(0, _GUID_ROLE))
-                for j in range(top.childCount()):
-                    slot = top.child(j)
-                    if slot.checkState(0) == QtCore.Qt.CheckState.Checked:
-                        checked_slots.add(slot.data(0, _GUID_ROLE))
-                    for k in range(slot.childCount()):
-                        a = slot.child(k)
-                        if a.checkState(0) == QtCore.Qt.CheckState.Checked:
-                            checked_affixes.add(a.data(0, _GUID_ROLE))
-            else:
-                for j in range(top.childCount()):
-                    a = top.child(j)
-                    if a.checkState(0) == QtCore.Qt.CheckState.Checked:
-                        checked_affixes.add(a.data(0, _GUID_ROLE))
-
-        return PickerState(
-            checked_templates=frozenset(checked_templates),
-            checked_slots=frozenset(checked_slots),
-            checked_affixes=frozenset(checked_affixes),
+    def _add_pos_node(self, parent, pos_node) -> None:
+        """Recursively add a PosNode and its subgroups/children to the tree."""
+        pos_item = self._make_group_item(
+            parent, pos_node.label,
+            kind="pos_group", checkable=True, is_produces_group=False,
         )
+        pos_item.setData(0, _GUID_ROLE, pos_node.pos_guid)
+
+        # Inflectional subgroup
+        if pos_node.inflectional:
+            sg_infl = self._make_group_item(
+                pos_item, "Inflectional",
+                kind="subgroup", checkable=True, is_produces_group=False,
+            )
+            for row in pos_node.inflectional:
+                self._add_affix_row(sg_infl, row)
+
+        # Derivation - attaches to subgroup
+        if pos_node.deriv_attaches:
+            sg_att = self._make_group_item(
+                pos_item, "Derivation - attaches to",
+                kind="subgroup", checkable=True, is_produces_group=False,
+            )
+            for row in pos_node.deriv_attaches:
+                self._add_affix_row(sg_att, row)
+
+        # Derivation - produces subgroup (NOT swept by header check)
+        if pos_node.deriv_produces:
+            sg_prod = self._make_group_item(
+                pos_item, "Derivation - produces",
+                kind="subgroup", checkable=True, is_produces_group=True,
+            )
+            for row in pos_node.deriv_produces:
+                self._add_affix_row(sg_prod, row)
+
+        # Descendant POS nodes
+        for child in pos_node.children:
+            self._add_pos_node(pos_item, child)
+
+    def _make_group_item(self, parent, label: str, *,
+                         kind: str, checkable: bool,
+                         is_produces_group: bool) -> QtWidgets.QTreeWidgetItem:
+        """Create a group/header tree item."""
+        if isinstance(parent, QtWidgets.QTreeWidget):
+            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", ""])
+        else:
+            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", ""])
+        item.setData(0, _KIND_ROLE, kind)
+        item.setData(0, _IS_PRODUCES, is_produces_group)
+        if checkable:
+            item.setFlags(
+                item.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+        return item
+
+    def _add_affix_row(self, parent: QtWidgets.QTreeWidgetItem,
+                       row) -> None:
+        """Add a leaf AffixRow item to the tree under parent."""
+        label = f"{row.form}  ->  {row.glosses}"
+        type_label = {"infl": "Infl", "deriv": "Deriv", "uncl": "Uncl"}.get(
+            row.msa_kind, row.msa_kind
+        )
+        from_label = row.from_pos if row.from_pos else ("—" if row.role == "produces" else "")
+        to_label = row.to_pos if row.to_pos else ("—" if row.msa_kind == "deriv" else "")
+
+        item = QtWidgets.QTreeWidgetItem(
+            parent, [label, type_label, from_label, to_label]
+        )
+        item.setData(0, _GUID_ROLE, row.entry_guid)
+        item.setData(0, _KIND_ROLE, "affix")
+        item.setData(0, _ROLE_ROLE, row.role)
+        item.setData(0, _IS_PRODUCES, row.role == "produces")
+        item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+
+        # Register for GUID mirroring
+        guid = row.entry_guid
+        if guid not in self._guid_to_items:
+            self._guid_to_items[guid] = []
+        self._guid_to_items[guid].append(item)
+
+    # ------------------------------------------------------------------
+    def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
+        """Mirror check state to all other appearances of the same entry GUID."""
+        if self._mirroring:
+            return
+        if column != 0:
+            return
+        guid = item.data(0, _GUID_ROLE)
+        kind = item.data(0, _KIND_ROLE)
+        if kind != "affix" or guid is None:
+            return
+        new_state = item.checkState(0)
+        siblings = self._guid_to_items.get(guid, [])
+        if len(siblings) <= 1:
+            return
+        assignments = mirror_check_state(siblings, new_state)
+        self._mirroring = True
+        try:
+            for sibling, state in assignments:
+                if sibling is not item:
+                    sibling.setCheckState(0, state)
+        finally:
+            self._mirroring = False
+
+    # ------------------------------------------------------------------
+    def picker_state(self) -> PickerState:
+        """Collect checked leaf entry_guids from the tree."""
+        checked: set = set()
+        self._collect_checked(self._tree.invisibleRootItem(), checked)
+        return PickerState(checked_affixes=frozenset(checked))
+
+    def _collect_checked(self, node: QtWidgets.QTreeWidgetItem, out: set) -> None:
+        """Recursively collect checked affix entry_guids.
+
+        Produces-role rows (_IS_PRODUCES=True) are excluded from header-driven
+        collection (FR-008): a POS-header check must not pull produces-only GUIDs
+        into affix_picks.  Only attaches-role leaf rows contribute.
+        """
+        for i in range(node.childCount()):
+            child = node.child(i)
+            kind = child.data(0, _KIND_ROLE)
+            if kind == "affix":
+                # Skip produces-role rows; they MUST NOT be swept by header check
+                is_produces = child.data(0, _IS_PRODUCES)
+                if is_produces:
+                    continue
+                if child.checkState(0) == QtCore.Qt.CheckState.Checked:
+                    guid = child.data(0, _GUID_ROLE)
+                    if guid:
+                        out.add(guid)
+            else:
+                self._collect_checked(child, out)
+
+    def collect_selection(self) -> Selection:
+        """Build a Selection from the current picker state."""
+        if self._inventory is None:
+            dummy = SourceAffixInventory()
+            return build_selection(PickerState(), dummy)
+        ps = self.picker_state()
+        return collapse_pos_grouped(ps.checked_affixes, self._inventory)
 
 
 # ---------------------------------------------------------------------------
@@ -798,11 +997,23 @@ class _PagePreview(QtWidgets.QWizardPage):
                 self, "GramTrans", "No target project bound. Go back to page 1."
             )
             return
-        selection = wizard.page(2).collect_selection(
-            wizard.page(1).picker_state(),
-            wizard.page(1)._inventory
-            if hasattr(wizard.page(1), "_inventory")
-            else SourceAffixInventory(),
+        # Page 1 (index 1) is _PageItemPicker -- it now owns collect_selection()
+        # and reads its own inventory. Page 2 (index 2) is _PageScopeConflict.
+        page_items = wizard.page(1)
+        affix_selection = page_items.collect_selection()
+        # Merge scope/conflict settings from page 2 (_PageScopeConflict).
+        # Preserve template_picks from the item-picker selection so they are
+        # not discarded when re-wrapping into PickerState/SourceAffixInventory.
+        page_scope = wizard.page(2)
+        selection = page_scope.collect_selection(
+            PickerState(
+                checked_affixes=affix_selection.affix_picks,
+                checked_templates=affix_selection.template_picks,
+            ),
+            SourceAffixInventory(
+                unbound_affixes=affix_selection.affix_picks,
+                template_to_slots={t: () for t in affix_selection.template_picks},
+            ),
         )
         # WS mapping from page 1 (three-way MAP/CREATE/SKIP control).
         # Falls back to an empty mapping if page 1 has not yet built the table.

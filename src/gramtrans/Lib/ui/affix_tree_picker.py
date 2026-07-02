@@ -13,6 +13,17 @@ Convenience-toggle semantics (verified by T072 unit tests in
 Returns the picker's checked state as a `PickerState` from `Lib/selection.py`;
 the caller passes it through `selection.build_selection(picker, inventory)`
 to produce the canonical `Selection`.
+
+[LEGACY / UNUSED in wizard path - T022, specs/008-affix-pos-picker R6]
+The standalone `AffixTreePicker` dialog below is a pre-wizard entry point
+and is NOT on the active wizard path.  The live item-picker surface on
+wizard page 2 is `_PageItemPicker` in `Lib/ui/selection_wizard.py`, which
+uses the new POS-grouped inventory (`build_pos_grouped_inventory` /
+`PosGroupedAffixInventory`) from `Lib/selection.py`.  This dialog is
+retained for the deferred template-grouping phase and its existing unit
+tests (`test_affix_tree_selection.py`) remain green (they exercise the
+`SourceAffixInventory` shape, which is unchanged).  Do not port the new
+POS-grouping logic here until a non-wizard entry point is needed.
 """
 from __future__ import annotations
 
