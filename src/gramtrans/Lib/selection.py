@@ -26,9 +26,9 @@ from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tup
 from gramtrans.Lib.ws_fonts import LabelRun, WsRole, runs_to_text
 
 if __package__:
-    from .models import CategoryScope, GrammarCategory, Selection
+    from .models import CategoryScope, GrammarCategory, Selection, SimilarCandidate
 else:
-    from models import CategoryScope, GrammarCategory, Selection  # type: ignore
+    from models import CategoryScope, GrammarCategory, Selection, SimilarCandidate  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,10 @@ class AffixRow:
     to_pos: Optional[str]    # produces POS label (deriv only)
     role: str              # "attaches" | "produces"
     status: Optional[str] = None  # FR-018: "new" | "in_target" | "similar" | None
+    # spec 011 FR-004: suggested target entry GUID for a SIMILAR row (the first
+    # candidate for this row's normalized form, HVO-ascending). None for
+    # NEW/IN-TARGET rows and whenever no target is bound.
+    suggested_target_guid: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,11 @@ class PosGroupedAffixInventory:
     """Top-level result of build_pos_grouped_inventory."""
     roots: Tuple[PosNode, ...]
     junk: JunkDrawer
+    # spec 011 FR-005: flat, deduplicated (by target_guid), HVO-ascending
+    # collection of every distinct target affix candidate across the source --
+    # the backing store for a global searchable dropdown. Empty when no target
+    # is bound. Tuple order is canonical (see SimilarCandidate ordering contract).
+    target_affix_candidates: Tuple[SimilarCandidate, ...] = ()
 
     def all_affix_guids(self) -> FrozenSet[str]:
         """Return all affix GUIDs in the inventory, deduplicated."""
@@ -307,23 +316,55 @@ class _PosAccumulator:
         )
 
 
-def _build_target_sets(target) -> Tuple[Set[str], Set[str]]:
-    """Build (target_guids, target_forms) from the target project for FR-018.
+# Sentinel HVO for objects whose Hvo is unreadable: sorts LAST, deterministically.
+_HVO_SENTINEL = 2 ** 63 - 1
 
-    Both sets are built by enumerating the TARGET's affix entries with the
-    same IsAffixType filter + casts used for source entries.
+
+def _hvo(obj) -> int:
+    """Best-effort LCM Hvo for deterministic (creation-order) sorting (spec 011 D2).
+
+    HVO is the sequential creation-order integer; ascending HVO gives a stable,
+    reproducible "first candidate = suggested match" order. Returns a large
+    sentinel when unreadable so such objects sort last rather than crashing.
+    """
+    try:
+        h = obj.Hvo
+        if h is None:
+            return _HVO_SENTINEL
+        return int(h)
+    except (AttributeError, TypeError, ValueError):
+        return _HVO_SENTINEL
+
+
+def _build_target_sets(
+    target,
+) -> Tuple[Set[str], Set[str], Dict[str, Tuple[SimilarCandidate, ...]],
+           Tuple[SimilarCandidate, ...]]:
+    """Build target lookup structures from the target project (FR-018 + spec 011).
+
+    Enumerates the TARGET's affix entries with the same IsAffixType filter +
+    casts used for source entries. The (guids, forms) sets are unchanged so the
+    existing SIMILAR/IN-TARGET status logic (`_entry_status`) keeps working
+    identically; the two new outputs (spec 011 FR-002) add candidate capture.
 
     Returns
     -------
     target_guids : set of lower-cased entry GUID strings
     target_forms : set of stripped/casefold best-vernacular lexeme forms
+    form_to_candidates : dict[normalized form -> HVO-ascending tuple of
+        SimilarCandidate]. Tuples may have length > 1 (live-proven: form 'n'
+        maps to 5 distinct target affixes). '?' forms are excluded.
+    all_candidates : flat tuple of every distinct candidate deduplicated by
+        target_guid, HVO-ascending (SC-002) -- the global dropdown backing store.
     """
     target_guids: Set[str] = set()
     target_forms: Set[str] = set()
+    # normalized form -> list of (hvo, SimilarCandidate); sorted + frozen below.
+    cand_by_form: Dict[str, List[Tuple[int, SimilarCandidate]]] = {}
     try:
         entries = list(target.Cache.LangProject.LexDbOA.Entries)
     except (AttributeError, TypeError):
-        return target_guids, target_forms
+        return target_guids, target_forms, {}, ()
 
     for entry in entries:
         entry_c = _cast(entry, "ILexEntry")
@@ -335,15 +376,60 @@ def _build_target_sets(target) -> Tuple[Set[str], Set[str]]:
         except (AttributeError, TypeError):
             continue
         try:
-            g = str(entry.Guid).lower()
-            target_guids.add(g)
+            g: Optional[str] = str(entry.Guid).lower()
         except (AttributeError, TypeError):
-            pass
+            g = None
+        if g is not None:
+            target_guids.add(g)
         f = _best_form(entry)
         if f and f != "?":
-            target_forms.add(f.strip().casefold())
+            norm = f.strip().casefold()
+            target_forms.add(norm)
+            if g is not None:
+                cand = SimilarCandidate(
+                    target_guid=g, form=f, gloss=_collect_glosses(entry))
+                cand_by_form.setdefault(norm, []).append((_hvo(entry), cand))
 
-    return target_guids, target_forms
+    # Freeze per-form candidate tuples HVO-ascending (first = suggested match,
+    # FR-003/D2). Tie-break by target_guid so equal/sentinel HVOs still order
+    # reproducibly.
+    form_to_candidates: Dict[str, Tuple[SimilarCandidate, ...]] = {}
+    for norm, pairs in cand_by_form.items():
+        pairs.sort(key=lambda hc: (hc[0], hc[1].target_guid))
+        form_to_candidates[norm] = tuple(c for _h, c in pairs)
+
+    # Flat all-candidates: deduped by target_guid, HVO-ascending (SC-002).
+    all_pairs: List[Tuple[int, SimilarCandidate]] = [
+        hc for pairs in cand_by_form.values() for hc in pairs
+    ]
+    all_pairs.sort(key=lambda hc: (hc[0], hc[1].target_guid))
+    seen_guids: Set[str] = set()
+    all_candidates: List[SimilarCandidate] = []
+    for _h, c in all_pairs:
+        if c.target_guid in seen_guids:
+            continue
+        seen_guids.add(c.target_guid)
+        all_candidates.append(c)
+
+    return target_guids, target_forms, form_to_candidates, tuple(all_candidates)
+
+
+def _suggested_target_guid_for(
+    form: str,
+    form_to_candidates: Dict[str, Tuple[SimilarCandidate, ...]],
+) -> Optional[str]:
+    """FR-003 — suggested target GUID for a source form (first candidate,
+    HVO-ascending), or None when there is no target match.
+
+    Leaves the existing status computation unchanged: status is still derived
+    from `target_forms` membership; this only picks the display suggestion.
+    """
+    if not form or form == "?":
+        return None
+    cands = form_to_candidates.get(form.strip().casefold())
+    if not cands:
+        return None
+    return cands[0].target_guid
 
 
 def _entry_status(entry_guid: str, form: str,
@@ -531,12 +617,15 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
     PosGroupedAffixInventory
         Pure frozen result; retains no LCM handles.
     """
-    # --- FR-018: build target lookup sets once (empty when target=None) ---
+    # --- FR-018 + spec 011: build target lookup sets + candidate index once ---
     if target is not None:
-        target_guids, target_forms = _build_target_sets(target)
+        (target_guids, target_forms, form_to_candidates,
+         target_affix_candidates) = _build_target_sets(target)
     else:
         target_guids = set()
         target_forms = set()
+        form_to_candidates = {}
+        target_affix_candidates = ()
 
     # --- Build POS hierarchy ---
     try:
@@ -583,6 +672,12 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
         else:
             entry_st = None
 
+        # FR-004: suggested match, only for SIMILAR rows (shared by all its rows)
+        suggested = (
+            _suggested_target_guid_for(form, form_to_candidates)
+            if entry_st == "similar" else None
+        )
+
         # Collect MSAs
         try:
             msas = list(entry.MorphoSyntaxAnalysesOC)
@@ -594,7 +689,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
             no_analysis_rows.append(AffixRow(
                 entry_guid=guid, form=form, glosses=glosses,
                 msa_kind="uncl", from_pos=None, to_pos=None, role="attaches",
-                status=entry_st,
+                status=entry_st, suggested_target_guid=suggested,
             ))
             continue
 
@@ -627,7 +722,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                         continue
                     placed.add(key)
                     row = AffixRow(guid, form, glosses, "infl", pl, None, "attaches",
-                                  status=entry_st)
+                                  status=entry_st, suggested_target_guid=suggested)
                     if pg in acc_by_guid:
                         acc_by_guid[pg].inflectional.append(row)
                         any_placed = True
@@ -659,7 +754,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                         continue
                     placed.add(key)
                     row = AffixRow(guid, form, glosses, "uncl", pl, None, "attaches",
-                                  status=entry_st)
+                                  status=entry_st, suggested_target_guid=suggested)
                     if pg in acc_by_guid:
                         acc_by_guid[pg].inflectional.append(row)
                         any_placed = True
@@ -688,7 +783,8 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                             placed.add(key)
                             row = AffixRow(guid, form, glosses, "deriv",
                                           from_pl, to_pl, "attaches",
-                                          status=entry_st)
+                                          status=entry_st,
+                                          suggested_target_guid=suggested)
                             if from_pg in acc_by_guid:
                                 acc_by_guid[from_pg].deriv_attaches.append(row)
                             else:
@@ -704,7 +800,8 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                             placed.add(key)
                             row = AffixRow(guid, form, glosses, "deriv",
                                           from_pl, to_pl, "produces",
-                                          status=entry_st)
+                                          status=entry_st,
+                                          suggested_target_guid=suggested)
                             if to_pg in acc_by_guid:
                                 acc_by_guid[to_pg].deriv_produces.append(row)
                             else:
@@ -726,7 +823,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
             no_pos_rows.append(AffixRow(
                 entry_guid=guid, form=form, glosses=glosses,
                 msa_kind="uncl", from_pos=None, to_pos=None, role="attaches",
-                status=entry_st,
+                status=entry_st, suggested_target_guid=suggested,
             ))
 
     # --- Freeze the hierarchy, then prune POS nodes that hold no affixes ---
@@ -741,7 +838,10 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
         no_pos=tuple(sorted(no_pos_rows, key=lambda r: r.form)),
         no_analysis=tuple(sorted(no_analysis_rows, key=lambda r: r.form)),
     )
-    result = PosGroupedAffixInventory(roots=frozen_roots, junk=junk)
+    result = PosGroupedAffixInventory(
+        roots=frozen_roots, junk=junk,
+        target_affix_candidates=target_affix_candidates,
+    )
 
     # Guard: if every affix landed in the junk drawer (placed==0) warn rather
     # than silently returning an empty grouping -- this surfaces cast failures
@@ -812,6 +912,9 @@ def _merge_row_glosses(rows: List[AffixRow], entry_guid: str, new_glosses: str) 
                 to_pos=row.to_pos,
                 role=row.role,
                 status=row.status,
+                # spec 011 (lex-qc P1): forward the suggested match so a SIMILAR
+                # row surviving a gloss-merge does not silently lose its hint.
+                suggested_target_guid=row.suggested_target_guid,
             )
             return
 
@@ -1948,6 +2051,9 @@ class PhonologyRow:
     # spec 011: per-WS runs backing `label` (grapheme VERN + IPA split for
     # phonemes; single ANALYSIS run otherwise). `runs_to_text(runs) == label`.
     runs: Tuple[LabelRun, ...] = ()
+    # spec 011 FR-006: target GUID this SIMILAR row matched by casefold label
+    # (collision-aware, lowest-HVO pick). None for NEW rows and no-target case.
+    matched_target_guid: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -1986,29 +2092,54 @@ class PhonologyInventory:
 
 
 def _phon_target_sets(target, accessor: str, *,
-                      phoneme: bool = False) -> Tuple[Set[str], Set[str]]:
-    """Return (guids, labels) for one category in the target, or empties.
+                      phoneme: bool = False,
+                      ) -> Tuple[Set[str], Set[str], Dict[str, str]]:
+    """Return (guids, labels, label_to_guid) for one category in the target.
 
     Mirrors 008/009 `_build_target_sets`: GUID identity drives IN TARGET,
     casefolded label match drives SIMILAR (a same-name item with a different
     GUID). Labels use the same `_phon_label` the source rows display, so the
     phoneme vernacular+IPA labelling must match on both sides — hence `phoneme`.
+
+    spec 011 FR-006: `label_to_guid` maps each casefold label to ONE target GUID
+    for populating `PhonologyRow.matched_target_guid`. The resolution is
+    COLLISION-AWARE (its input is many-to-one): when a label maps to multiple
+    target objects (live-proven: every Ejagham NaturalClass name collides), the
+    lowest-HVO object wins and the collapse is logged at INFO. `(guids, labels)`
+    are unchanged so the existing status logic is unaffected.
     """
     guids: Set[str] = set()
     labels: Set[str] = set()
+    # casefold label -> (hvo, guid) chosen so far (lowest hvo wins).
+    best: Dict[str, Tuple[int, str]] = {}
     if target is None or not hasattr(target, accessor):
-        return guids, labels
+        return guids, labels, {}
     try:
         for obj in getattr(target, accessor).GetAll():
             if _phon_is_empty(obj, phoneme=phoneme):
                 continue  # dangling empty — never a match source
-            guids.add(_phon_guid(obj))
+            g = _phon_guid(obj)
+            guids.add(g)
             lbl = _phon_label(obj, phoneme=phoneme)
             if lbl and lbl != "?":
-                labels.add(lbl.strip().casefold())
+                norm = lbl.strip().casefold()
+                labels.add(norm)
+                h = _hvo(obj)
+                prev = best.get(norm)
+                if prev is None:
+                    best[norm] = (h, g)
+                else:
+                    # Collision: keep lowest HVO (tie-break by guid); log once.
+                    _logging.getLogger(__name__).info(
+                        "FR-006 label collision in %s: label %r maps to >1 "
+                        "target object; picking lowest-HVO guid.", accessor, norm,
+                    )
+                    if (h, g) < prev:
+                        best[norm] = (h, g)
     except (AttributeError, TypeError):
         pass
-    return guids, labels
+    label_to_guid = {norm: g for norm, (_h, g) in best.items()}
+    return guids, labels, label_to_guid
 
 
 def _rule_context_refs(rule) -> List[object]:
@@ -2055,8 +2186,8 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
     objs_by_cat: Dict[object, List[object]] = {}
     for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
         is_phoneme = category == GrammarCategory.PHONEMES
-        tgt_guids, tgt_labels = _phon_target_sets(target, accessor,
-                                                  phoneme=is_phoneme)
+        tgt_guids, tgt_labels, tgt_label_to_guid = _phon_target_sets(
+            target, accessor, phoneme=is_phoneme)
         rows: List[PhonologyRow] = []
         cat_guids: Set[str] = set()
         objs: List[object] = []
@@ -2074,16 +2205,22 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
                 runs = _phon_runs(obj, phoneme=is_phoneme)
                 lbl = runs_to_text(runs)
                 status = None
+                matched_target_guid: Optional[str] = None
                 if target is not None:
                     if g in tgt_guids:
                         status = "in_target"
                     elif lbl.strip().casefold() in tgt_labels:
                         status = "similar"
+                        # FR-006: record the matched target GUID (lowest-HVO
+                        # pick from the collision-aware label->guid map).
+                        matched_target_guid = tgt_label_to_guid.get(
+                            lbl.strip().casefold())
                     else:
                         status = "new"
                 rows.append(PhonologyRow(
                     guid=g, label=lbl, runs=runs,
                     category=category, preselected=True, status=status,
+                    matched_target_guid=matched_target_guid,
                 ))
         guid_sets[category] = cat_guids
         objs_by_cat[category] = objs

@@ -244,6 +244,71 @@ class RunContext:
 
 
 # ============================================================================
+# Similar-candidate capture & per-item resolution (spec 011)
+# ============================================================================
+
+@dataclass(frozen=True)
+class SimilarCandidate:
+    """FR-001 — one target entry a SIMILAR source item could correspond to.
+
+    Immutable ``(target_guid, form, gloss)``. ``target_guid`` is the identity
+    (GUID-first, constitution Principle I); ``form`` carries display identity
+    even when ``gloss`` is empty ("(no gloss)").
+
+    Ordering contract (spec 011 research D2): SimilarCandidate carries no
+    ordering key of its own. Candidate tuples are pre-sorted HVO-ascending at
+    construction time in the builder, and *tuple position is the contract* —
+    consumers MUST treat order as canonical and MUST NOT re-sort.
+    """
+    target_guid: str
+    form: str
+    gloss: str
+
+
+# Allowed SimilarResolution actions (spec 011 FR-007, three-way split).
+#   overwrite  -> source wins on every field (import golden); the seeded default
+#                 so the vocabulary change does not alter an un-touched SIMILAR row.
+#   merge      -> target-preserving fill-the-gaps (source written only where the
+#                 target field is empty).
+#   create_new -> a fresh entry, no link.
+# Execution of each action is 013's concern; 011 defines + validates only.
+_SIMILAR_ACTIONS_NEED_TARGET = frozenset({"overwrite", "merge"})
+_SIMILAR_ACTIONS = _SIMILAR_ACTIONS_NEED_TARGET | {"create_new"}
+
+
+@dataclass(frozen=True)
+class SimilarResolution:
+    """FR-007 — a per-source-entry overwrite / merge / create decision.
+
+    The typed contract the preview pane emits and the 013 planner reads.
+    Validated at construction; carried inertly on ``Selection`` until 013
+    consumes it (FR-010).
+    """
+    entry_guid: str
+    action: str  # "overwrite" | "merge" | "create_new"
+    target_guid: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.action not in _SIMILAR_ACTIONS:
+            raise ValueError(
+                f"SimilarResolution.action must be one of "
+                f"{sorted(_SIMILAR_ACTIONS)}, got {self.action!r}"
+            )
+        if self.action in _SIMILAR_ACTIONS_NEED_TARGET:
+            if not self.target_guid:
+                raise ValueError(
+                    f"SimilarResolution action {self.action!r} requires a "
+                    f"non-empty target_guid"
+                )
+        else:  # create_new
+            if self.target_guid:
+                raise ValueError(
+                    "SimilarResolution action 'create_new' must not name a "
+                    "target_guid"
+                )
+
+
+# ============================================================================
 # Selection (E2)
 # ============================================================================
 
@@ -301,6 +366,13 @@ class Selection:
     # leaf-dispatch `is_on(cat)` gate fires first, so a stale key is harmless.
     # No __post_init__ validation is added for it by design.
     leaf_item_picks: dict = field(default_factory=dict)  # dict[GrammarCategory, frozenset[str]]
+    # Spec 011 (Similar-resolution model): per-source-entry overwrite/merge/
+    # create decisions.  dict[source entry GUID -> SimilarResolution].
+    # Follows the SAME inert-when-off pattern as leaf_item_picks: NO
+    # __post_init__ guard by design -- nothing in this feature reads the map,
+    # so a resolution recorded for an unselected entry is simply inert
+    # (FR-010 inert guarantee / SC-004 byte-identical plans).  Consumed by 013.
+    similar_resolutions: dict = field(default_factory=dict)  # dict[str, SimilarResolution]
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -354,6 +426,15 @@ class Selection:
         frozenset ⇒ transfer none. See `leaf_item_picks`.
         """
         return self.leaf_item_picks.get(category)
+
+    def similar_resolution_for(self, guid: str) -> "Optional[SimilarResolution]":
+        """FR-008 — return the SimilarResolution for source `guid`, or None.
+
+        Mirrors ``leaf_picks_for``: returns None when no resolution is recorded
+        (the model layer fabricates no default; the page state seeds defaults,
+        per spec 011 Assumptions).
+        """
+        return self.similar_resolutions.get(guid)
 
     def conflict_mode_for(self, category: "GrammarCategory") -> "ConflictMode":
         """Return the effective ConflictMode for `category`.
