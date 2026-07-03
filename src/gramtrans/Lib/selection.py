@@ -23,6 +23,8 @@ import logging as _logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
+from gramtrans.Lib.ws_fonts import LabelRun, WsRole, runs_to_text
+
 if __package__:
     from .models import CategoryScope, GrammarCategory, Selection
 else:
@@ -224,6 +226,27 @@ def _collect_glosses(entry) -> str:
     except (AttributeError, TypeError):
         pass
     return "; ".join(seen) if seen else "(no gloss)"
+
+
+# Separator between an affix's vernacular form and its analysis gloss in the
+# item-picker tree. Kept here (not in the UI) so the WS-run split and the flat
+# label stay defined together. `runs_to_text(affix_label_runs(...))` == the old
+# `f"{form}  ->  {glosses}"` label.
+_AFFIX_FORM_GLOSS_SEP = "  ->  "
+
+
+def affix_label_runs(form: str, glosses: str) -> Tuple[LabelRun, ...]:
+    """WS-tagged runs for an affix row label (spec 011).
+
+    The lexeme form is vernacular; the gloss is analysis; the ' -> ' separator
+    carries no WS. Rendered per-run so the form shows in the vernacular font and
+    the gloss in the analysis font within the same tree cell.
+    """
+    return (
+        (form or "", WsRole.VERNACULAR),
+        (_AFFIX_FORM_GLOSS_SEP, None),
+        (glosses or "", WsRole.ANALYSIS),
+    )
 
 
 def _build_pos_tree(possibilities) -> Tuple[List[PosNode], Dict[str, "_PosAccumulator"]]:
@@ -1833,6 +1856,42 @@ def _phon_name_text(obj, *, phoneme: bool) -> str:
     return ""
 
 
+def _phon_runs(obj, *, phoneme: bool = False):
+    """WS-tagged runs for a phonology label (spec 011 per-WS rendering).
+
+    Returns ``tuple[LabelRun, ...]`` where each run is ``(text, WsRole|None)``.
+    This is the single source of truth for the label: `_phon_label` joins these
+    runs, so the flat string and the per-WS rendering can never diverge.
+
+    Phoneme runs split the grapheme (VERNACULAR) from the IPA symbol (IPA):
+    'y /j/' -> [('y', VERN), (' ', None), ('/j/', IPA)]. The Description
+    fallback is analysis text; the '(unnamed phoneme)' placeholder and the
+    non-phoneme guid fallback carry no WS (None -> default UI font).
+    """
+    base = _phon_name_text(obj, phoneme=phoneme)
+    if phoneme:
+        ipa = _phon_ipa(obj)
+        if base and ipa:
+            return ((base, WsRole.VERNACULAR), (" ", None),
+                    (f"/{ipa}/", WsRole.IPA))
+        if ipa:
+            return ((f"/{ipa}/", WsRole.IPA),)
+        if base:
+            return ((base, WsRole.VERNACULAR),)
+        # No grapheme and no IPA — fall back to the Description ('refer to as'),
+        # which a well-formed phoneme always carries. A fully empty phoneme is
+        # skipped by the builder (see `_phon_is_empty`); the placeholder below
+        # is only a defensive last resort if such a row is ever labelled direct.
+        desc = _phon_description(obj)
+        if desc:
+            return ((desc, WsRole.ANALYSIS),)
+        return (("(unnamed phoneme)", None),)
+    if base:
+        return ((base, WsRole.ANALYSIS),)
+    g = _phon_guid(obj)
+    return ((g[:8] if g else "?", None),)
+
+
 def _phon_label(obj, *, phoneme: bool = False) -> str:
     """Best display label for a phonology object; degrades to guid prefix.
 
@@ -1840,28 +1899,11 @@ def _phon_label(obj, *, phoneme: bool = False) -> str:
     symbol (when set) as '<vern> /<ipa>/' — e.g. 'y /j/', 'oo /oː/'. Either
     part is omitted when blank ('r' with no IPA -> 'r'; blank grapheme with IPA
     -> '/j/'); a phoneme with neither degrades to its guid prefix.
+
+    Derived from `_phon_runs` so the flat label always equals the concatenated
+    per-WS runs shown in the UI.
     """
-    base = _phon_name_text(obj, phoneme=phoneme)
-    if phoneme:
-        ipa = _phon_ipa(obj)
-        if base and ipa:
-            return f"{base} /{ipa}/"
-        if ipa:
-            return f"/{ipa}/"
-        if base:
-            return base
-        # No grapheme and no IPA — fall back to the Description ('refer to as'),
-        # which a well-formed phoneme always carries. A fully empty phoneme is
-        # skipped by the builder (see `_phon_is_empty`); the placeholder below
-        # is only a defensive last resort if such a row is ever labelled direct.
-        desc = _phon_description(obj)
-        if desc:
-            return desc
-        return "(unnamed phoneme)"
-    if base:
-        return base
-    g = _phon_guid(obj)
-    return g[:8] if g else "?"
+    return runs_to_text(_phon_runs(obj, phoneme=phoneme))
 
 
 def _phon_is_empty(obj, *, phoneme: bool) -> bool:
@@ -1903,6 +1945,9 @@ class PhonologyRow:
     category: "GrammarCategory"
     preselected: bool = True
     status: Optional[str] = None  # "new" | "in_target" | None (no target)
+    # spec 011: per-WS runs backing `label` (grapheme VERN + IPA split for
+    # phonemes; single ANALYSIS run otherwise). `runs_to_text(runs) == label`.
+    runs: Tuple[LabelRun, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2026,7 +2071,8 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
                 g = _phon_guid(obj)
                 cat_guids.add(g)
                 objs.append(obj)
-                lbl = _phon_label(obj, phoneme=is_phoneme)
+                runs = _phon_runs(obj, phoneme=is_phoneme)
+                lbl = runs_to_text(runs)
                 status = None
                 if target is not None:
                     if g in tgt_guids:
@@ -2036,7 +2082,7 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
                     else:
                         status = "new"
                 rows.append(PhonologyRow(
-                    guid=g, label=lbl,
+                    guid=g, label=lbl, runs=runs,
                     category=category, preselected=True, status=status,
                 ))
         guid_sets[category] = cat_guids

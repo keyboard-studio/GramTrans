@@ -47,6 +47,7 @@ if __package__:
         PickerState,
         PosGroupedAffixInventory,
         SourceAffixInventory,
+        affix_label_runs,
         build_deps_inventory,
         build_excluded_lossy_warnings,
         build_phonology_excluded_lossy,
@@ -59,8 +60,10 @@ if __package__:
         mirror_check_state,
         phonology_uses_untraversed_rules,
     )
+    from ..ws_fonts import WsFontRegistry, WsRole
     from .stats_panel import StatsPanel
     from .target_picker import TargetPickerDialog
+    from .ws_font_delegate import attach_ws_font_delegate, set_ws_runs
 else:
     import api as gt_api  # type: ignore
     from models import (  # type: ignore
@@ -80,6 +83,7 @@ else:
         PickerState,
         PosGroupedAffixInventory,
         SourceAffixInventory,
+        affix_label_runs,
         build_deps_inventory,
         build_excluded_lossy_warnings,
         build_phonology_excluded_lossy,
@@ -92,8 +96,10 @@ else:
         mirror_check_state,
         phonology_uses_untraversed_rules,
     )
+    from ws_fonts import WsFontRegistry, WsRole  # type: ignore
     from stats_panel import StatsPanel  # type: ignore
     from target_picker import TargetPickerDialog  # type: ignore
+    from ws_font_delegate import attach_ws_font_delegate, set_ws_runs  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -687,6 +693,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
         self._inventory = inventory
         self._guid_to_items = {}
+        # spec 011: vernacular lexeme forms (col 0) + analysis glosses/POS
+        # (cols 0/2/3) each in their FLEx-defined WS font.
+        attach_ws_font_delegate(
+            self._tree, [0, 2, 3], WsFontRegistry.from_project(source)
+        )
         self.populate_pos_tree(inventory)
         self._tree.itemChanged.connect(self._on_item_changed)
 
@@ -782,6 +793,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             kind="pos_group", checkable=True, is_produces_group=False,
         )
         pos_item.setData(0, _GUID_ROLE, pos_node.pos_guid)
+        # spec 011: POS name in the analysis WS font; affix-count suffix is chrome.
+        set_ws_runs(pos_item, 0, (
+            (pos_node.label, WsRole.ANALYSIS),
+            (f" -- {affix_count} {affix_word}", None),
+        ))
 
         # Inflectional subgroup
         if pos_node.inflectional:
@@ -846,7 +862,9 @@ class _PageItemPicker(QtWidgets.QWizardPage):
     def _add_affix_row(self, parent: QtWidgets.QTreeWidgetItem,
                        row) -> None:
         """Add a leaf AffixRow item to the tree under parent."""
-        label = f"{row.form}  ->  {row.glosses}"
+        # spec 011: form is vernacular, gloss is analysis -- split into WS runs.
+        label_runs = affix_label_runs(row.form, row.glosses)
+        label = "".join(text for text, _ in label_runs)
         type_label = {"infl": "Infl", "deriv": "Deriv", "uncl": "Uncl"}.get(
             row.msa_kind, row.msa_kind
         )
@@ -863,6 +881,12 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         item = QtWidgets.QTreeWidgetItem(
             parent, [label, type_label, from_label, to_label, target_label]
         )
+        # spec 011: per-WS fonts -- form+gloss on col 0, POS names on cols 2/3.
+        set_ws_runs(item, 0, label_runs)
+        if from_label and from_label != "—":
+            set_ws_runs(item, 2, ((from_label, WsRole.ANALYSIS),))
+        if to_label and to_label != "—":
+            set_ws_runs(item, 3, ((to_label, WsRole.ANALYSIS),))
         item.setData(0, _GUID_ROLE, row.entry_guid)
         item.setData(0, _KIND_ROLE, "affix")
         item.setData(0, _ROLE_ROLE, row.role)
@@ -1148,6 +1172,10 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             return
 
         self._skeleton = skeleton
+        # spec 011: POS / slot / template names render in the analysis WS font.
+        attach_ws_font_delegate(
+            self._tree, [0], WsFontRegistry.from_project(source)
+        )
         self._populate_skeleton_tree(skeleton)
         self._tree.expandAll()
         for col in range(3):
@@ -1162,6 +1190,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                 [pos_node.label, "", _STATUS_LABELS.get(pos_node.status or "", "")]
             )
             pos_item.setData(0, _SKEL_GUID_ROLE, pos_node.pos_guid)
+            set_ws_runs(pos_item, 0, ((pos_node.label, WsRole.ANALYSIS),))
             pos_item.setData(0, _SKEL_KIND_ROLE, "pos")
             pos_item.setFlags(
                 pos_item.flags()
@@ -1201,6 +1230,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                          _STATUS_LABELS.get(slot_node.status or "", "")]
                     )
                     slot_item.setData(0, _SKEL_GUID_ROLE, slot_node.slot_guid)
+                    set_ws_runs(slot_item, 0, ((slot_node.label, WsRole.ANALYSIS),))
                     slot_item.setData(0, _SKEL_KIND_ROLE, "slot")
                     slot_item.setFlags(
                         slot_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
@@ -1229,6 +1259,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                          _STATUS_LABELS.get(tpl_node.status or "", "")]
                     )
                     tpl_item.setData(0, _SKEL_GUID_ROLE, tpl_node.template_guid)
+                    set_ws_runs(tpl_item, 0, ((tpl_node.label, WsRole.ANALYSIS),))
                     tpl_item.setData(0, _SKEL_KIND_ROLE, "template")
                     tpl_item.setFlags(
                         tpl_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
@@ -1251,6 +1282,8 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                         ro_item = QtWidgets.QTreeWidgetItem(
                             tpl_item, [f"  {slot_label}", "", ""]
                         )
+                        set_ws_runs(ro_item, 0,
+                                    (("  ", None), (slot_label, WsRole.ANALYSIS)))
                         ro_item.setData(0, _SKEL_GUID_ROLE, ref_sg)
                         ro_item.setData(0, _SKEL_KIND_ROLE, "template_slot_ro")
                         ro_item.setData(0, _SKEL_READ_ONLY, True)
@@ -1556,6 +1589,10 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             return
 
         self._deps = deps
+        # spec 011: feature / class / stem-name labels in the analysis WS font.
+        attach_ws_font_delegate(
+            self._tree, [0], WsFontRegistry.from_project(source)
+        )
         self._populate_deps_tree(deps)
         self._tree.expandAll()
         for col in range(2):
@@ -1596,6 +1633,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                         section_item,
                         [row.label, _STATUS_LABELS.get(row.status or "", "")]
                     )
+                    set_ws_runs(row_item, 0, ((row.label, WsRole.ANALYSIS),))
                     row_item.setData(0, _SKEL_GUID_ROLE, row.guid)
                     row_item.setData(0, _SKEL_KIND_ROLE, "dep")
                     row_item.setFlags(
@@ -1797,6 +1835,11 @@ class _PagePhonology(QtWidgets.QWizardPage):
             return
 
         self._inventory = inventory
+        # spec 011: render each item in its FLEx-defined WS font (phoneme
+        # grapheme in the vernacular font, /IPA/ in the IPA font, etc.).
+        attach_ws_font_delegate(
+            self._tree, [0], WsFontRegistry.from_project(source)
+        )
         self._populate_tree(inventory)
         self._tree.expandAll()
         for col in range(2):
@@ -1835,6 +1878,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
                     header,
                     [row.label, _STATUS_LABELS.get(row.status or "", "")]
                 )
+                set_ws_runs(item, 0, row.runs)
                 item.setData(0, _PHON_GUID_ROLE, row.guid)
                 item.setData(0, _PHON_KIND_ROLE, "item")
                 item.setData(0, _PHON_CAT_ROLE, row.category)
