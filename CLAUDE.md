@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/011-similar-resolution-datamodel/plan.md
+at specs/012-merge-preview-diff-engine/plan.md
 <!-- SPECKIT END -->
 
 ## flexlibs2 fork dependency
