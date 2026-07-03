@@ -1238,11 +1238,16 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                     tpl_item.setCheckState(0, tpl_cs)
                     # Read-only slot list under the template (FR-006)
                     for ref_sg in tpl_node.referenced_slot_guids:
-                        # Find the slot label from the POS node
-                        slot_label = next(
-                            (s.label for s in pos_node.slots if s.slot_guid == ref_sg),
-                            ref_sg[:8],
+                        # Find the slot node from the POS to recover its label
+                        # and Optional flag.
+                        ref_slot = next(
+                            (s for s in pos_node.slots if s.slot_guid == ref_sg),
+                            None,
                         )
+                        slot_label = ref_slot.label if ref_slot else ref_sg[:8]
+                        # FLEx convention: optional slots are shown in parentheses.
+                        if ref_slot is not None and ref_slot.optional:
+                            slot_label = f"({slot_label})"
                         ro_item = QtWidgets.QTreeWidgetItem(
                             tpl_item, [f"  {slot_label}", "", ""]
                         )
@@ -1254,21 +1259,77 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                             ro_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsUserCheckable
                         )
 
+        # Strike through referenced-slot rows whose slot won't copy over.
+        self._refresh_template_strikethroughs()
+
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         """Handle template check/deselect semantics (T012)."""
         if self._mirroring or column != 0:
             return
-        kind = item.data(0, _SKEL_KIND_ROLE)
-        if kind != "template" or self._skeleton is None:
+        if self._skeleton is None:
             return
-        # Template check/deselect: update slot check states accordingly.
-        tpl_guid = item.data(0, _SKEL_GUID_ROLE)
-        new_state = item.checkState(0)
+        kind = item.data(0, _SKEL_KIND_ROLE)
+        if kind == "template":
+            # Template check/deselect: update slot check states accordingly.
+            tpl_guid = item.data(0, _SKEL_GUID_ROLE)
+            new_state = item.checkState(0)
+            self._mirroring = True
+            try:
+                self._apply_template_slot_semantics(tpl_guid, new_state)
+            finally:
+                self._mirroring = False
+        # Any slot/template toggle can change what copies over -> restrike
+        # the template referenced-slot rows. Font-only, so no itemChanged
+        # recursion, but keep it under the guard for safety.
         self._mirroring = True
         try:
-            self._apply_template_slot_semantics(tpl_guid, new_state)
+            self._refresh_template_strikethroughs()
         finally:
             self._mirroring = False
+
+    def _refresh_template_strikethroughs(self) -> None:
+        """Strike through template referenced-slot rows whose slot won't copy.
+
+        A referenced slot copies over iff its slot checkbox is currently
+        checked. Empty (deselected) slots -- including empty optional slots
+        like Repetitive -- render struck through so the user can see at a
+        glance which template positions carry nothing across.
+        """
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            pos_item = root.child(i)
+            if pos_item.data(0, _SKEL_KIND_ROLE) != "pos":
+                continue
+            # Map slot_guid -> checked for this POS's real (checkable) slots.
+            checked: dict = {}
+            for j in range(pos_item.childCount()):
+                group = pos_item.child(j)
+                if group.data(0, _SKEL_KIND_ROLE) != "slots_group":
+                    continue
+                for k in range(group.childCount()):
+                    slot_item = group.child(k)
+                    if slot_item.data(0, _SKEL_KIND_ROLE) != "slot":
+                        continue
+                    sg = slot_item.data(0, _SKEL_GUID_ROLE)
+                    checked[sg] = (
+                        slot_item.checkState(0) == QtCore.Qt.CheckState.Checked
+                    )
+            # Apply strikethrough to template_slot_ro rows accordingly.
+            for j in range(pos_item.childCount()):
+                group = pos_item.child(j)
+                if group.data(0, _SKEL_KIND_ROLE) != "templates_group":
+                    continue
+                for k in range(group.childCount()):
+                    tpl_item = group.child(k)
+                    for m in range(tpl_item.childCount()):
+                        ro = tpl_item.child(m)
+                        if ro.data(0, _SKEL_KIND_ROLE) != "template_slot_ro":
+                            continue
+                        sg = ro.data(0, _SKEL_GUID_ROLE)
+                        struck = not checked.get(sg, False)
+                        f = ro.font(0)
+                        f.setStrikeOut(struck)
+                        ro.setFont(0, f)
 
     def _apply_template_slot_semantics(self, tpl_guid: str,
                                         tpl_state) -> None:

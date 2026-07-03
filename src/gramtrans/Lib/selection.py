@@ -948,6 +948,9 @@ class SlotNode:
     preselected: bool          # True iff a picked affix fills this slot
     affix_count: int           # count of picked affixes that fill this slot
     status: Optional[str] = None  # "new" | "in_target" | "similar" | None
+    optional: bool = False     # IMoInflAffixSlot.Optional; an empty optional
+                               # slot is benign, an empty required slot would
+                               # break the template on transfer
 
 
 @dataclass(frozen=True)
@@ -1239,6 +1242,13 @@ def build_skeleton_inventory(
                 sl_label = sl_c.Name.BestAnalysisAlternative.Text
             except (AttributeError, TypeError):
                 sl_label = sl_guid
+            # IMoInflAffixSlot.Optional (Boolean on the live LCM runtime).
+            # Default False (treat as required) when unreadable so an
+            # unreadable slot errs toward "required" -- the case worth surfacing.
+            try:
+                sl_optional = bool(sl_c.Optional)
+            except (AttributeError, TypeError):
+                sl_optional = False
             fills = slot_affix_map.get(sl_guid, set())
             slot_presel = len(fills) > 0
             sl_status: Optional[str] = None
@@ -1251,6 +1261,7 @@ def build_skeleton_inventory(
                 preselected=slot_presel,
                 affix_count=len(fills),
                 status=sl_status,
+                optional=sl_optional,
             ))
 
         # CAST DISCIPLINE: read AffixTemplatesOS via IPartOfSpeech cast

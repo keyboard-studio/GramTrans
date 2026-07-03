@@ -241,9 +241,10 @@ class FakeSlot:
     """Duck-typed IMoInflAffixSlot."""
     ClassName = "MoInflAffixSlot"
 
-    def __init__(self, guid: str, name: str):
+    def __init__(self, guid: str, name: str, optional: bool = False):
         self.Guid = guid
         self.Name = FakeMultiUnicode(name)
+        self.Optional = optional
 
 
 class FakeTemplate:
@@ -405,9 +406,9 @@ class FakeInflMsaWithSlots(FakeInflMsa):
         self.SlotsRC = FakeSlotsRC(slots or [])
 
 
-def make_slot(guid: str, name: str) -> FakeSlot:
+def make_slot(guid: str, name: str, optional: bool = False) -> FakeSlot:
     """Create a FakeSlot."""
-    return FakeSlot(guid, name)
+    return FakeSlot(guid, name, optional)
 
 
 def make_template(guid: str, name: str,

@@ -129,6 +129,43 @@ class TestBuildSkeletonInventoryBasic:
         assert len(pos_node.templates) >= 1
         assert pos_node.templates[0].template_guid == "tpl-guid"
 
+
+class TestSlotOptionalFlag:
+    """IMoInflAffixSlot.Optional propagates to SlotNode.optional.
+
+    An empty optional slot is benign; an empty required slot would break the
+    template on transfer. The UI shows optional slots in parentheses (FLEx
+    convention) and strikes through any slot that won't copy over.
+    """
+
+    def test_optional_slot_flag_true(self):
+        slot_opt = make_slot("slot-opt", "Repetitive", optional=True)
+        slot_req = make_slot("slot-req", "SbjAgr", optional=False)
+        pos_v = make_pos_with_slots(
+            "pos-v", "v", "Verb", slots=[slot_opt, slot_req]
+        )
+        entry = make_infl_entry_with_slots(
+            "e1", "-s", ["3sg"], pos_v, [slot_req]
+        )
+        source = make_source([entry], [pos_v])
+        result = build_skeleton_inventory(source, frozenset(["e1"]))
+        pos_node = result.pos_nodes[0]
+        opt_node = next(s for s in pos_node.slots if s.slot_guid == "slot-opt")
+        req_node = next(s for s in pos_node.slots if s.slot_guid == "slot-req")
+        assert opt_node.optional is True
+        assert req_node.optional is False
+
+    def test_optional_defaults_false_when_unreadable(self):
+        """A slot fake lacking .Optional falls back to required (False)."""
+        slot = make_slot("slot-x", "X")
+        del slot.Optional  # simulate a runtime object without the property
+        pos_v = make_pos_with_slots("pos-v", "v", "Verb", slots=[slot])
+        entry = make_infl_entry_with_slots("e1", "-s", ["g"], pos_v, [slot])
+        source = make_source([entry], [pos_v])
+        result = build_skeleton_inventory(source, frozenset(["e1"]))
+        slot_node = result.pos_nodes[0].slots[0]
+        assert slot_node.optional is False
+
     def test_template_preselected_when_references_filled_slot(self):
         """Template is preselected when it arranges a slot a picked affix fills."""
         source, affix_picks, pos_v, slot_a, slot_b, tpl = _make_simple_scene()
