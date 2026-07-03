@@ -33,8 +33,12 @@ class _Coll:
 
 
 class _Name:
-    def __init__(self, text):
+    def __init__(self, text, vern=None):
         self.BestAnalysisAlternative = type("_T", (), {"Text": text})()
+        # Phonemes carry their grapheme in the vernacular alternative; only set
+        # it when a test supplies one so non-phoneme fakes stay analysis-only.
+        if vern is not None:
+            self.BestVernacularAlternative = type("_T", (), {"Text": vern})()
 
 
 class _PhonObj:
@@ -72,9 +76,18 @@ class _FeatStruc:
 
 
 class FakePhoneme(_PhonObj):
-    def __init__(self, guid, name="", feature_refs=(), raw_guid=None):
+    def __init__(self, guid, name="", feature_refs=(), raw_guid=None,
+                 vernacular=None, ipa=None, description=None):
         super().__init__(guid, name, raw_guid)
         self.FeaturesOA = _FeatStruc(feature_refs) if feature_refs else None
+        # FLEx phoneme fields, all distinct: 'Refer to as' -> Name (grapheme,
+        # vernacular alternative; analysis alt is the '***' sentinel), 'IPA
+        # Symbol' -> BasicIPASymbol, 'Description' -> Description (analysis).
+        if vernacular is not None:
+            self.Name = _Name("***", vern=vernacular)
+        self.BasicIPASymbol = (
+            type("_T", (), {"Text": ipa})() if ipa is not None else None)
+        self.Description = _Name(description) if description is not None else None
 
 
 class FakeNC(_PhonObj):

@@ -1764,19 +1764,120 @@ def _phon_guid(obj) -> str:
         return str(getattr(obj, "guid", "")).lower()
 
 
-def _phon_label(obj) -> str:
-    """Best display label for a phonology object; degrades to guid prefix."""
+def _phon_ipa(obj) -> str:
+    """Bare IPA symbol of a phoneme (IPhPhoneme.BasicIPASymbol), or ''.
+
+    Unset renders as None or the '***' empty sentinel; both map to ''. The
+    symbol is stored bare (e.g. 'j', 'oː'); callers wrap it in slashes.
+    """
+    sym = getattr(obj, "BasicIPASymbol", None)
+    if sym is None:
+        return ""
     try:
-        t = obj.Name.BestAnalysisAlternative.Text
-        if t:
-            return str(t)
+        t = sym.Text
     except Exception:  # noqa: BLE001
-        pass
+        return ""
+    if t and t not in ("***", ""):
+        return str(t).strip()
+    return ""
+
+
+def _phon_description(obj) -> str:
+    """Phoneme Description field (analysis WS), or ''.
+
+    In FLEx's phoneme editor 'Description' is a field distinct from 'Refer to
+    as' (the Name / grapheme, read by `_phon_name_text`) and 'IPA Symbol'. It
+    is used here only as a last-resort label when a phoneme carries neither a
+    grapheme nor an IPA symbol, in preference to an anonymous placeholder.
+    """
+    desc = getattr(obj, "Description", None)
+    if desc is None:
+        return ""
+    alt = getattr(desc, "BestAnalysisAlternative", None)
+    try:
+        t = alt.Text if alt is not None else None
+    except Exception:  # noqa: BLE001
+        return ""
+    if t and t not in ("***", ""):
+        return str(t).strip()
+    return ""
+
+
+def _phon_name_text(obj, *, phoneme: bool) -> str:
+    """Best Name alternative for a phonology object; '' when only the sentinel.
+
+    For a phoneme this is FLEx's 'Refer to as' field. Phonemes store their
+    grapheme in the *vernacular* alternative — the analysis
+    alternative is FLEx's '***' empty-multistring sentinel — so they are read
+    vernacular-first, then analysis as a fallback. Every other phonology
+    category names itself in the analysis WS. The '***' sentinel is filtered at
+    every step so it never leaks to the UI, then a fake's `.name` attr, else ''.
+    """
+    name = getattr(obj, "Name", None)
+    if name is not None:
+        accessors = (("BestVernacularAlternative", "BestAnalysisAlternative")
+                     if phoneme else ("BestAnalysisAlternative",))
+        for acc in accessors:
+            alt = getattr(name, acc, None)
+            if alt is None:
+                continue
+            try:
+                t = alt.Text
+            except Exception:  # noqa: BLE001
+                continue
+            if t and t not in ("***", ""):
+                return str(t)
     n = getattr(obj, "name", None)
-    if n:
+    if n and n not in ("***", ""):
         return str(n)
+    return ""
+
+
+def _phon_label(obj, *, phoneme: bool = False) -> str:
+    """Best display label for a phonology object; degrades to guid prefix.
+
+    For phonemes the label concatenates the vernacular grapheme with the IPA
+    symbol (when set) as '<vern> /<ipa>/' — e.g. 'y /j/', 'oo /oː/'. Either
+    part is omitted when blank ('r' with no IPA -> 'r'; blank grapheme with IPA
+    -> '/j/'); a phoneme with neither degrades to its guid prefix.
+    """
+    base = _phon_name_text(obj, phoneme=phoneme)
+    if phoneme:
+        ipa = _phon_ipa(obj)
+        if base and ipa:
+            return f"{base} /{ipa}/"
+        if ipa:
+            return f"/{ipa}/"
+        if base:
+            return base
+        # No grapheme and no IPA — fall back to the Description ('refer to as'),
+        # which a well-formed phoneme always carries. A fully empty phoneme is
+        # skipped by the builder (see `_phon_is_empty`); the placeholder below
+        # is only a defensive last resort if such a row is ever labelled direct.
+        desc = _phon_description(obj)
+        if desc:
+            return desc
+        return "(unnamed phoneme)"
+    if base:
+        return base
     g = _phon_guid(obj)
     return g[:8] if g else "?"
+
+
+def _phon_is_empty(obj, *, phoneme: bool) -> bool:
+    """True when a phonology item has no usable content in any field.
+
+    Such items — typically dangling phonemes left behind by a BasicIPAInfo
+    catalog import (observed as 32 unreferenced empties in the Ejagham Full
+    GT-Test target) — are silently skipped from the inventory. For a phoneme,
+    'content' spans the grapheme (Name in any WS), the IPA symbol, and the
+    Description ('refer to as'); for every other category only the Name applies.
+    """
+    if _phon_name_text(obj, phoneme=phoneme):
+        return False
+    if phoneme and (_phon_ipa(obj) or _phon_description(obj)):
+        return False
+    return True
 
 
 # The five user-facing phonology categories, in page display order, paired with
@@ -1839,12 +1940,14 @@ class PhonologyInventory:
         return None
 
 
-def _phon_target_sets(target, accessor: str) -> Tuple[Set[str], Set[str]]:
+def _phon_target_sets(target, accessor: str, *,
+                      phoneme: bool = False) -> Tuple[Set[str], Set[str]]:
     """Return (guids, labels) for one category in the target, or empties.
 
     Mirrors 008/009 `_build_target_sets`: GUID identity drives IN TARGET,
     casefolded label match drives SIMILAR (a same-name item with a different
-    GUID). Labels use the same `_phon_label` the source rows display.
+    GUID). Labels use the same `_phon_label` the source rows display, so the
+    phoneme vernacular+IPA labelling must match on both sides — hence `phoneme`.
     """
     guids: Set[str] = set()
     labels: Set[str] = set()
@@ -1852,8 +1955,10 @@ def _phon_target_sets(target, accessor: str) -> Tuple[Set[str], Set[str]]:
         return guids, labels
     try:
         for obj in getattr(target, accessor).GetAll():
+            if _phon_is_empty(obj, phoneme=phoneme):
+                continue  # dangling empty — never a match source
             guids.add(_phon_guid(obj))
-            lbl = _phon_label(obj)
+            lbl = _phon_label(obj, phoneme=phoneme)
             if lbl and lbl != "?":
                 labels.add(lbl.strip().casefold())
     except (AttributeError, TypeError):
@@ -1904,7 +2009,9 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
     guid_sets: Dict[object, Set[str]] = {}
     objs_by_cat: Dict[object, List[object]] = {}
     for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
-        tgt_guids, tgt_labels = _phon_target_sets(target, accessor)
+        is_phoneme = category == GrammarCategory.PHONEMES
+        tgt_guids, tgt_labels = _phon_target_sets(target, accessor,
+                                                  phoneme=is_phoneme)
         rows: List[PhonologyRow] = []
         cat_guids: Set[str] = set()
         objs: List[object] = []
@@ -1914,10 +2021,12 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
             except (AttributeError, TypeError):
                 items = []
             for obj in items:
+                if _phon_is_empty(obj, phoneme=is_phoneme):
+                    continue  # empty in all fields — silently skip (FR: dangling)
                 g = _phon_guid(obj)
                 cat_guids.add(g)
                 objs.append(obj)
-                lbl = _phon_label(obj)
+                lbl = _phon_label(obj, phoneme=is_phoneme)
                 status = None
                 if target is not None:
                     if g in tgt_guids:
