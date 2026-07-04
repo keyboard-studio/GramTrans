@@ -41,9 +41,9 @@ IDs (A1–A3, B1–B6, test cells 1–15) are cited inline for traceability.
 
 **Purpose**: Confirm the workspace can build/test the new module headlessly.
 
-- [ ] T001 Confirm dev deps are installed and unit tests run: `pip install -e ".[dev]"` then
+- [X] T001 Confirm dev deps are installed and unit tests run: `pip install -e ".[dev]"` then
       `python -m pytest tests/unit -m "not integration" -q` (baseline green before adding 012).
-- [ ] T002 [P] Create the empty test modules with a module docstring citing feature 012 and the
+- [X] T002 [P] Create the empty test modules with a module docstring citing feature 012 and the
       user story each covers: `tests/unit/test_merge_preview_diff.py`,
       `tests/unit/test_merge_preview_html.py`, `tests/unit/test_merge_preview_props.py`,
       `tests/unit/test_merge_preview_service.py`, `tests/unit/test_merge_preview_qt_free.py`.
@@ -58,16 +58,16 @@ diff/render/props/service code lands.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 **[B6 — Qt-free audit gate]** Audit `src/gramtrans/Lib/models.py` (011
+- [X] T003 **[B6 — Qt-free audit gate]** Audit `src/gramtrans/Lib/models.py` (011
       `SimilarResolution` vocabulary) and every module `merge_preview.py` will import for a
       transitive Qt import. `ws_fonts.py` is already confirmed Qt-free. If a Qt import is found on
       the diff path, breaking it is a prerequisite task here — NOT a follow-up. Record the audit
       result as a comment in `tests/unit/test_merge_preview_qt_free.py`. (SC-007, lex-qc)
-- [ ] T004 Create `src/gramtrans/Lib/merge_preview.py` with `from __future__ import annotations`,
+- [X] T004 Create `src/gramtrans/Lib/merge_preview.py` with `from __future__ import annotations`,
       the module docstring (three layers; Qt-free; mirrors-not-imports `conflict.py`), and
       `typing` imports only (`Dict`, `Tuple`, `Optional`, `Callable`, `Any`; py38 target — no
       3.9+ syntax). MUST NOT import Qt; keep any flexlibs2 import lazy/guarded inside functions.
-- [ ] T005 Define the pure value types in `src/gramtrans/Lib/merge_preview.py` (FR-001,
+- [X] T005 Define the pure value types in `src/gramtrans/Lib/merge_preview.py` (FR-001,
       data-model.md): `SegmentKind` (added/unchanged/removed/note), frozen
       `DiffSegment(text, kind, ws_role=None)` — **no `rtl` field** (A2, lex-simplify: direction
       resolved at render), frozen `FieldDiff(field_name, segments, indent=0)`, frozen
@@ -90,7 +90,7 @@ value shape; assert segment kinds and field ordering — no Qt, no LCM.
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Implement the private value-shape helper
+- [X] T006 [US1] Implement the private value-shape helper
       `_segments_for_value(src_val, tgt_val, ws_role_of)` in
       `src/gramtrans/Lib/merge_preview.py` (**B4**, lex-simplify). Dispatch (FR-005): multistring
       dict keyed by ws id (recurse per ws — equal→unchanged, source-only→added,
@@ -100,7 +100,7 @@ value shape; assert segment kinds and field ordering — no Qt, no LCM.
       `conflict._deterministic_merge` taxonomy (`_NON_MERGEABLE_TYPES = (int, bool, NoneType)`;
       one-sided dict keys pass through WITHOUT recursion — conflict.py L188-190). Private; not in
       the contract.
-- [ ] T007 [US1] Implement `diff_props(src_props, tgt_props, mode, ws_role_of) -> MergePreview`
+- [X] T007 [US1] Implement `diff_props(src_props, tgt_props, mode, ws_role_of) -> MergePreview`
       in `src/gramtrans/Lib/merge_preview.py` as a thin mode-router over `_segments_for_value`
       (depends on T006):
       - NEW / `tgt_props is None` → every field/value `added` (FR-002, SC-001).
@@ -113,38 +113,38 @@ value shape; assert segment kinds and field ordering — no Qt, no LCM.
         (source value not applied) (FR-004a). Per-ws emptiness evaluated INSIDE the multistring
         dispatch; **"empty target ws" = ws key absent OR value is empty string** (lex-domain
         constraint 1).
-- [ ] T008 [US1] Ensure `MergePreview.fields` is always sorted **alphabetically** by
+- [X] T008 [US1] Ensure `MergePreview.fields` is always sorted **alphabetically** by
       `field_name` (FR-006, SC-003) and that keys absent on both sides are not emitted (edge
       case). Verify no import of `conflict._deterministic_merge` exists anywhere in the module
       (mirror-not-import boundary, R1).
 
 ### Tests for User Story 1 — `tests/unit/test_merge_preview_diff.py`
 
-- [ ] T009 [P] [US1] **NEW mode**: `diff_props(src, None, NEW, role_of)` across every value shape
+- [X] T009 [P] [US1] **NEW mode**: `diff_props(src, None, NEW, role_of)` across every value shape
       → 0 non-`added` segments (SC-001).
-- [ ] T010 [P] [US1] **Multistring dispatch — 3 distinct assertions** (test cells 3–5, FR-005):
+- [X] T010 [P] [US1] **Multistring dispatch — 3 distinct assertions** (test cells 3–5, FR-005):
       (a) source-only ws → `added`; (b) target-only ws → `unchanged` (one-sided-key pass-through,
       conflict.py L188-190); (c) both-differing ws → `removed`+`added` with **no run-id marker**
       in the preview.
-- [ ] T011 [P] [US1] **MERGE-KEEP × multistring, mixed empty/non-empty target ws** (test cell 1,
+- [X] T011 [P] [US1] **MERGE-KEEP × multistring, mixed empty/non-empty target ws** (test cell 1,
       FR-004a): fixture target `{"en":"text","koh":""}`, source `{"en":"other","koh":"fill"}` →
       `en` target-wins `unchanged`+note, `koh` `added`.
-- [ ] T012 [P] [US1] **FR-004a empty-check both forms** (test cell 2): assert absent-ws-key AND
+- [X] T012 [P] [US1] **FR-004a empty-check both forms** (test cell 2): assert absent-ws-key AND
       empty-string value (e.g. `{"en":"","koh":""}`) are both treated as "empty target."
-- [ ] T013 [P] [US1] **LINK-ONLY × multistring source-only field** (test cell 6): a source-only
+- [X] T013 [P] [US1] **LINK-ONLY × multistring source-only field** (test cell 6): a source-only
       field emits a `note` even when its value is a multistring (not just a scalar) (FR-003).
-- [ ] T014 [P] [US1] **Target-only key invariant** (test cell 7): parametrized across OVERWRITE,
+- [X] T014 [P] [US1] **Target-only key invariant** (test cell 7): parametrized across OVERWRITE,
       MERGE-KEEP, LINK-ONLY → target-only key renders `unchanged`, never implies deletion. Plus
       **both-absent → not emitted** (test cell 8).
-- [ ] T015 [P] [US1] **Scalar + other-object** (test cells 9–10, FR-005): differing scalar
+- [X] T015 [P] [US1] **Scalar + other-object** (test cells 9–10, FR-005): differing scalar
       (int/bool/None) → `removed`+`added`; an arbitrary object value exercises the `repr()`
       fallback branch.
-- [ ] T015a [P] [US1] **Plain-string + list/tuple/set shapes** (completes the SC-002 matrix,
+- [X] T015a [P] [US1] **Plain-string + list/tuple/set shapes** (completes the SC-002 matrix,
       FR-005): (a) a differing plain-`str` field → `removed`+`added` (no run-id marker); (b) a
       `list`/`tuple`/`set` field union → common members `unchanged`, source-only `added`,
       target-only `unchanged`. Exercise both OVERWRITE and MERGE-KEEP so every mode × shape cell
       of SC-002 has an assertion (closes analyze finding C1).
-- [ ] T016 [P] [US1] **Field ordering** (SC-003): assert `fields` alphabetical by `field_name`
+- [X] T016 [P] [US1] **Field ordering** (SC-003): assert `fields` alphabetical by `field_name`
       for a multi-field fixture in every mode.
 
 **Checkpoint**: US1 is the MVP — `diff_props` is fully functional and testable with no Qt/LCM.
@@ -161,7 +161,7 @@ assert escaping, per-role font family/size, RTL direction, strike-through, inden
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Implement `to_html(preview, registry) -> str` in
+- [X] T017 [US2] Implement `to_html(preview, registry) -> str` in
       `src/gramtrans/Lib/merge_preview.py` (FR-010, SC-004, depends on T005): `html.escape` all
       text; `added` green; `removed` red + strike-through; `note` gray italic; per-`WsRole`
       font-family + point size from `registry.font_for(role)`; **`dir="rtl"` resolved from the
@@ -171,15 +171,15 @@ assert escaping, per-role font family/size, RTL direction, strike-through, inden
 
 ### Tests for User Story 2 — `tests/unit/test_merge_preview_html.py`
 
-- [ ] T018 [P] [US2] **Escaping**: text with HTML metacharacters is escaped; and assert
+- [X] T018 [P] [US2] **Escaping**: text with HTML metacharacters is escaped; and assert
       `repr()`-fallback output (test cell 9 tie-in) is not mangled — no stray `<`/`>` survive.
-- [ ] T019 [P] [US2] **Per-role font + RTL**: a segment with an RTL role uses the registry's
+- [X] T019 [P] [US2] **Per-role font + RTL**: a segment with an RTL role uses the registry's
       font family/size and carries a right-to-left direction; an LTR role does not (SC-004).
       Use a fabricated `WsFontRegistry` with a known RTL `WsFont`.
-- [ ] T020 [P] [US2] **Color + strike + indent**: added green, removed red + strike-through,
+- [X] T020 [P] [US2] **Color + strike + indent**: added green, removed red + strike-through,
       note gray italic; `FieldDiff.indent > 0` produces a concrete, asserted indentation (test
       cell 12); field names bold.
-- [ ] T021 [P] [US2] **Chrome path** (test cell 11): a segment with `ws_role=None` (registry
+- [X] T021 [P] [US2] **Chrome path** (test cell 11): a segment with `ws_role=None` (registry
       returns `None`) renders in the default font with no font span. Covers the "ws id in value
       dict but absent from `ws_role_map`" case end-to-end with US3's classifier returning `None`.
 
@@ -200,7 +200,7 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Define the per-category props table in `src/gramtrans/Lib/merge_preview.py`
+- [X] T022 [US3] Define the per-category props table in `src/gramtrans/Lib/merge_preview.py`
       per the **enumerated rows in data-model.md** ("Enumerated rows (concrete starting point for
       T022)"): columns category key → ops accessor → finder → needs_owner → fallback. Populate
       the **4 fully-covered** rows reusing the existing `conflict._OW_OPS` finders (POS, LexEntry,
@@ -208,48 +208,48 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
       (`Environments`, `PhonRules`, `Strata`, `GramCat`) against `categories.py` / the flexlibs2
       Operations class before wiring — do not assume them. Add a comment that the other 8 finders
       are net-new (T023/T024) — the table MUST NOT imply they already exist (A3, lex-author; U1).
-- [ ] T023 [P] [US3] **[B1]** Implement the **7 one-arg** finders
+- [X] T023 [P] [US3] **[B1]** Implement the **7 one-arg** finders
       `_find_target_<cat>_by_guid(target, guid)` (linear `GetAll()` GUID scans) for the
       simple FINDER-NEEDED categories: Phonemes, NaturalClasses, Environments, PhonRules, Strata,
       GramCat, and InflectionFeatures (→ `IMoInflClass` inflection **classes**, NOT
       `IFsClosedFeature` — footnote per lex-author). Wire each into the props table. (The 8th
       finder-needed category, **MorphRules = templates**, is owner-dependent and handled in T024 —
       there is no separate non-template MorphRule finder.)
-- [ ] T024 [US3] **[B2]** Implement the **two-level, owner-required** template finder
+- [X] T024 [US3] **[B2]** Implement the **two-level, owner-required** template finder
       `_find_target_template_by_guid(target, guid, owner_pos_guid)` (R4a) — the **8th**
       finder-needed category (MorphRules/templates): locate the owner POS by GUID via
       `target.POS.GetAll(recursive=True)`, then scan its `AffixTemplatesOS` for the template
       GUID. This is the ONLY finder taking a required owner arg — do NOT collapse it into the
       T023 one-arg signature. Wire it into the props table with `needs_owner=True`.
-- [ ] T025 [US3] **[B5 — ops-table seam]** Make the per-category ops table injectable so the
+- [X] T025 [US3] **[B5 — ops-table seam]** Make the per-category ops table injectable so the
       covered path is testable without LCM (R6a, lex-qc): add a parameter to
       `props_for(handle, category, guid, *, index=None, owner_guid="", ops_table=<module const>)`
       (or make the table a monkeypatchable module constant — pick one and document it in the
       docstring). Build the GUID index once and reuse it (FR-007). Template/slot requests use
       `owner_guid` = the owning POS's GUID (R4a).
-- [ ] T026 [US3] **[B3]** Implement the **3 direct-read fallback** paths for the GAP categories
+- [X] T026 [US3] **[B3]** Implement the **3 direct-read fallback** paths for the GAP categories
       (Slots, Phonological Features, Stem Names) (FR-008): guarded per-ws reads of
       Name/Abbreviation/Description via `get_String` (+ optional slot bool `IMoAffixSlot.Optional`)
       into the **`{field: {ws_id: text}}`** shape — field-name keyed, NOT flat `{ws_id: text}`.
       Return `None` + a note on hard failure; **never raise to the caller** (SC-005).
-- [ ] T027 [US3] Implement `ws_role_map(project) -> dict[str, WsRole]` (FR-009, R5): classify
+- [X] T027 [US3] Implement `ws_role_map(project) -> dict[str, WsRole]` (FR-009, R5): classify
       each ws id as `VERNACULAR` (in the vernacular list), `IPA` (`"fonipa"` in the ws tag),
       `ANALYSIS` (otherwise); every accessor guarded so a missing/edge ws does not crash. Reuse
       the `ws_fonts._find_ipa_ws` `"fonipa" in wid.split("-")` heuristic.
 
 ### Tests for User Story 3 — `tests/unit/test_merge_preview_props.py`
 
-- [ ] T028 [P] [US3] **Covered path** (via the T025 seam): a fake ops table returns a syncable
+- [X] T028 [P] [US3] **Covered path** (via the T025 seam): a fake ops table returns a syncable
       dict for a covered category (ENTRY/LexEntry); assert the dict is returned and the GUID index
       is built once and reused (FR-007, SC-005).
-- [ ] T029 [P] [US3] **Fork-gap fallback shape** (test cell 14, FR-008): a Slots/Stem-Names fake
+- [X] T029 [P] [US3] **Fork-gap fallback shape** (test cell 14, FR-008): a Slots/Stem-Names fake
       returns the direct-read shape; assert **field-name keying** `{"Name": {"en": ...}}` (NOT
       flat `{"en": ...}`); assert the optional slot bool appears for Slots.
-- [ ] T030 [P] [US3] **Fallback hard failure**: a fake whose direct read raises → `props_for`
+- [X] T030 [P] [US3] **Fallback hard failure**: a fake whose direct read raises → `props_for`
       returns `None` + a note, never an exception (SC-005).
-- [ ] T031 [P] [US3] **Template owner path**: a template request resolves via `owner_guid`
+- [X] T031 [P] [US3] **Template owner path**: a template request resolves via `owner_guid`
       (owning POS GUID) through the two-level finder (T024).
-- [ ] T032 [P] [US3] **`ws_role_map`**: classifies VERNACULAR / IPA (`fonipa` tag) / ANALYSIS;
+- [X] T032 [P] [US3] **`ws_role_map`**: classifies VERNACULAR / IPA (`fonipa` tag) / ANALYSIS;
       a missing/edge ws does not crash; a ws id absent from the map yields `None` when the
       resulting `ws_role_of` callable is queried (feeds test cell 11 in US2).
 
@@ -268,12 +268,12 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Implement `MergePreviewService` in `src/gramtrans/Lib/merge_preview.py`
+- [X] T033 [US4] Implement `MergePreviewService` in `src/gramtrans/Lib/merge_preview.py`
       (FR-011, FR-012, depends on T007/T017/T025/T027): Qt-free; holds source/target handles, the
       ws-role classifier (from `ws_role_map`), a lazy target-GUID index, a props-dict cache, and a
       preview cache. Caches property **dicts, never live LCM objects**; re-fetches by GUID on
       first click (FR-012, constitution I).
-- [ ] T034 [US4] Implement `preview_for(category, source_guid, target_guid, status, mode,
+- [X] T034 [US4] Implement `preview_for(category, source_guid, target_guid, status, mode,
       owner_guid="") -> MergePreview` (**A1** — 4-tuple key): compute lazily; memoize on
       `(category, source_guid, target_guid, mode)`; re-link (different `target_guid`) AND a
       resolution change (different `mode`) are each distinct keys. `status` is computed into the
@@ -281,16 +281,16 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
 
 ### Tests for User Story 4 — `tests/unit/test_merge_preview_service.py`
 
-- [ ] T035 [P] [US4] **Memoization**: `preview_for` twice with identical 4-tuple args → the
+- [X] T035 [P] [US4] **Memoization**: `preview_for` twice with identical 4-tuple args → the
       second call recomputes zero times (spy/count the compute path) (SC-006).
-- [ ] T036 [P] [US4] **Re-link**: same source, different `target_guid` → distinct cached entry,
+- [X] T036 [P] [US4] **Re-link**: same source, different `target_guid` → distinct cached entry,
       exactly one new computation (SC-006).
-- [ ] T037 [P] [US4] **[A1 regression guard]** (test cell 13): same `(category, source_guid,
+- [X] T037 [P] [US4] **[A1 regression guard]** (test cell 13): same `(category, source_guid,
       target_guid)` but different `mode` → **cache MISS**, a distinct computed result. Assert the
       old 3-tuple key would have returned the stale entry (prove the fix).
-- [ ] T038 [P] [US4] **Invalidate**: after `invalidate()`, the next `preview_for` recomputes
+- [X] T038 [P] [US4] **Invalidate**: after `invalidate()`, the next `preview_for` recomputes
       (SC-006).
-- [ ] T039 [P] [US4] **No retained handles**: assert the cache holds dicts/`MergePreview` values,
+- [X] T039 [P] [US4] **No retained handles**: assert the cache holds dicts/`MergePreview` values,
       never LCM objects (FR-012).
 
 **Checkpoint**: All four user stories independently functional and testable headlessly.
@@ -299,18 +299,18 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T040 [P] **[SC-007]** Implement the Qt-free guarantee test in
+- [X] T040 [P] **[SC-007]** Implement the Qt-free guarantee test in
       `tests/unit/test_merge_preview_qt_free.py` (test cell 15, lex-domain constraint 5): import
       `gramtrans.Lib.merge_preview` in a **standalone subprocess with Qt forcibly absent**
       (e.g. inject a `sys.modules` sentinel that raises on `PyQt6`, or `subprocess` with a stub
       path) and assert the import succeeds and `diff_props`/`to_html` run. Covers the `models.py`
       + 011 transitive-import audit from T003.
-- [ ] T041 [P] Run `ruff check` and `black --check` on `src/gramtrans/Lib/merge_preview.py` and
+- [X] T041 [P] Run `ruff check` and `black --check` on `src/gramtrans/Lib/merge_preview.py` and
       the five test modules (line-length 100, target py38); fix findings.
-- [ ] T042 Run the full quickstart validation:
+- [X] T042 Run the full quickstart validation:
       `python -m pytest tests/unit/test_merge_preview_*.py -m "not integration" -v` and confirm
       all 7 quickstart scenarios (quickstart.md) pass.
-- [ ] T043 [P] Update module/API docs: ensure `merge_preview.py` docstrings match
+- [X] T043 [P] Update module/API docs: ensure `merge_preview.py` docstrings match
       contracts/merge_preview.md (4-tuple cache key; `rtl` render-resolved; coverage
       4/8/3). No `docs/` change required beyond docstrings for this internal module.
 
