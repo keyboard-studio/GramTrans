@@ -87,3 +87,40 @@ pre-pass at `CurrentDepth == 0`, before any value-write UndoableOperation block.
    pre-pass depends on it. The MCP proves the LCM capability; the GramTrans plumbing must be wired.
 3. **Ordering**: create-definition pre-pass runs at `CurrentDepth==0` BEFORE the value-write
    UndoableOperation blocks (FR-010).
+
+---
+
+## DECISION MEMO — US3 handle lifecycle (Cycle-3 gate, main-session MCP probe)
+
+**DECISION: PATH-CLOSE-REBIND (single-owner).** The "co-open a separate short-lived undoable
+handle while the primary stays open" path (wiring-probe's PATH-DEFER) is **empirically refuted**.
+
+### Evidence (op ids in the flextools-mcp log)
+
+| op | Test | Result |
+|----|------|--------|
+| 009 | Second write-open (undoable) + read-only open, while primary Phase-1 write handle held | Both **succeeded** — no in-process single-writer lock. (Co-open is *possible*.) |
+| 010 | Create field via secondary handle h2 → `h2.CloseProject()` → check primary (still open) and a fresh h3 | Primary does **NOT** see it (stale MDC); **fresh h3 also does NOT see it — the secondary write did NOT persist to disk** while another handle held the project. |
+| 011 | Re-init (clean disk read) | 11 fields, zero `GT016` ghosts — confirms non-persistence + GT-Test restored clean. |
+| 007/008 | (earlier) Single-owner create → full reopen | Field **persisted** and re-read cleanly. |
+
+**Interpretation:** schema creation only persists when there is a **single owner** of the project
+across create+close. Co-open "succeeds" but a secondary handle's `CloseProject` neither flushes the
+new field to disk nor updates the primary's `MetaDataCacheAccessor` — a new flavor of the ghost-field
+trap. Therefore the engine MUST NOT hold two handles during the schema mutation.
+
+### Required engine flow (Option B, PATH-CLOSE-REBIND)
+
+At Move time (preview/dry-run already approved, so the bind_target handle is disposable):
+1. **Close** `context.target_handle` (the Phase-1 handle bind_target opened for preview).
+2. **Open** a fresh `FLExProject(undoable=True)`; run the create-definition pre-pass — for each
+   NEW field (by `(class, name)` idempotency), `AddCustomField` wrapped in
+   `NonUndoableUnitOfWorkHelper.Do` at `CurrentDepth==0`. **Close** it (persists; single owner).
+3. **Re-open** the target Phase-1 (fresh handle now sees the persisted fields, per op 008) and
+   **re-bind**: reconstruct the frozen `RunContext`/`RunPlan` with the fresh handle.
+4. Run `execute()` (value-fill + existing transfer) against the fresh handle. Value-fill maps field
+   **names → flids** at this open (flids renumber on reload). `transfer.execute` internals unchanged.
+
+Fail-loud (flid==0 → RuntimeError, no orphan) and idempotency (name+class match → zero new creates)
+live entirely in the pre-pass. Scope: ~15 lines in the Move-entry path (api.py `apply_plan`/
+`execute_move`), zero changes to `transfer.execute`.
