@@ -1,6 +1,6 @@
 """Phase 3b US2 detect-and-skip unit tests for custom_fields callbacks.
 
-Schema creation is blocked at the flexlibs2 layer (see us2-blocker-memo.md).
+Schema creation is blocked at the flexicon layer (see us2-blocker-memo.md).
 US2 ships as detect-and-report: enumerate source's custom fields, compare
 to target's, emit Skip(NEEDS_MANUAL) for absent fields directing user to
 pre-create in FLEx UI. plan_action emits Skip directly (per lex-qc P1
@@ -27,7 +27,7 @@ from gramtrans.Lib.models import (
 # ============================================================================
 
 class _FakeCFOps:
-    """Mimics flexlibs2 CustomFieldOperations read surface."""
+    """Mimics flexicon CustomFieldOperations read surface."""
 
     def __init__(self, fields=None):
         # fields: dict[owner_class -> list[(field_id, name)]]

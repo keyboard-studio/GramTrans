@@ -12,7 +12,7 @@ touches the light ``flexicon`` package ``__init__``, not the heavy Operations
 submodules) so the test survives the fork being moved or re-cloned.
 
 Note: the distribution is ``pyflexicon`` and the import package is
-``flexicon`` (formerly ``flexlibs2``; that name is now a deprecated
+``flexicon`` (formerly ``flexicon``; that name is now a deprecated
 compat-shim alias).
 
 The test fails if:
@@ -37,7 +37,7 @@ def _resolve_fork_code_dir() -> pathlib.Path:
     spec = importlib.util.find_spec("flexicon")
     if spec is not None and spec.origin:
         return pathlib.Path(spec.origin).parent / "code"
-    return pathlib.Path("D:/Github/_Projects/_LEX/flexlibs2/flexicon/code")
+    return pathlib.Path("D:/Github/_Projects/_LEX/flexicon/flexicon/code")
 
 
 _FORK_CODE = _resolve_fork_code_dir()

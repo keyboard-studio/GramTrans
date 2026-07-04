@@ -4,7 +4,7 @@ Calls _apply_props_loop directly (T-R2c extraction) with fabricated item
 objects and a fake target_ws_by_id dict -- no live LCM fixture needed.
 
 Import path: flexicon.code.BaseOperations (installed editable package).
-Install: pip install -e D:/Github/_Projects/_LEX/flexlibs2
+Install: pip install -e D:/Github/_Projects/_LEX/flexicon
 
 All tests are NOT marked integration so they run in the default suite.
 """
@@ -76,7 +76,7 @@ class _FakeItem:
 
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
-    reason=f"flexlibs2 not installed editable: {_import_err_msg if not _IMPORT_OK else ''}",
+    reason=f"flexicon not installed editable: {_import_err_msg if not _IMPORT_OK else ''}",
 )
 
 HANDLE_EN = 100

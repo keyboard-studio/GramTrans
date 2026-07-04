@@ -23,7 +23,7 @@ from typing import Optional
 
 
 class _Coll:
-    """Wraps a list; exposes `.GetAll()` like a flexlibs2 Operations accessor."""
+    """Wraps a list; exposes `.GetAll()` like a flexicon Operations accessor."""
 
     def __init__(self, items):
         self._items = list(items)

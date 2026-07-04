@@ -1,7 +1,7 @@
 """T027: dependency-closure BFS (data-model.md / research.md R8).
 
 Pure-Python tests against `Lib/closure.py` using fake `dependencies()`
-callables — no LCM / flexlibs2 required.
+callables — no LCM / flexicon required.
 """
 from __future__ import annotations
 

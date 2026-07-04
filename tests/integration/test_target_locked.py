@@ -51,7 +51,7 @@ def test_read_only_project_directory_yields_target_unavailable() -> None:
     Asserts: api.bind_target(ctx, target_name='Ejagham Full GT-Test') raises
     TargetUnavailable when the LCM open attempt fails due to the filesystem
     being read-only.  The module must surface this as TargetUnavailable (not an
-    unhandled OSError / flexlibs2 exception) so the UI can present a meaningful
+    unhandled OSError / flexicon exception) so the UI can present a meaningful
     message.  FR-020 closes the coverage gap flagged in the 2026-06-19 audit.
     """
     pytest.skip(

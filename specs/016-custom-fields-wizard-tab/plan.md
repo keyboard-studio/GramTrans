@@ -34,7 +34,7 @@ downstream page. The wizard *step* is early; the *writes* still happen at Move, 
     Add the definition-before-value ordering constraint (see Design Decision 3).
   - `src/gramtrans/Lib/ui/selection_wizard.py` — new `_PageCustomFields` page class + named
     accessor `page_custom_fields()`; renumber page titles ("Step N of M").
-- **flexlibs2 fork surface** (`D:/Github/_Projects/_LEX/flexlibs2`):
+- **flexicon fork surface** (`D:/Github/_Projects/_LEX/flexicon`):
   - `System/CustomFieldOperations.py` — `GetAllFields(owner_class)`, `FindField`,
     `GetFieldType`, `GetFieldName`. Creation route per 006 contract is MDC-direct
     `target.Cache.MetaDataCacheAccessor.AddCustomField(...)`. **Probe required**: confirm
@@ -50,7 +50,7 @@ downstream page. The wizard *step* is early; the *writes* still happen at Move, 
   `(class, name)` identity (no GUID, correctly). No GOLD/reserved data touched. WS mapping
   precedes this page so multistring custom-field values write against validated WSes.
   Create-failure fails loud (FR-012), never silently drops a value.
-- **II. FlexTools-Compatible, flexlibs2-Direct** — PASS. Direct flexlibs2 /
+- **II. FlexTools-Compatible, flexicon-Direct** — PASS. Direct flexicon /
   `Cache.MetaDataCacheAccessor` calls; no `flavors/` indirection. New page lives under
   `src/gramtrans/Lib/ui/`. Degrades gracefully (level renders empty) when a source lacks
   custom fields.

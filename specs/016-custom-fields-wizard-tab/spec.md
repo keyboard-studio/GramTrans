@@ -221,7 +221,7 @@ confirm the row reads IN TARGET with a type-difference note and the plan still p
 - **FR-009**: For each selected field absent from the target, the transfer plan MUST emit
   exactly one create-definition action (via `MetaDataCacheAccessor.AddCustomField`) carrying
   the source field's type and, for list-backed types, its `list_root_guid`; help text and
-  label overrides MUST be applied where the flexlibs2 fork exposes the MDC setters (probe at
+  label overrides MUST be applied where the flexicon fork exposes the MDC setters (probe at
   planning time per the 006 contract).
 - **FR-010**: The plan MUST order every create-definition action strictly **before** any
   value-fill action that writes into that field, across all downstream wizard pages, so no
@@ -288,7 +288,7 @@ confirm the row reads IN TARGET with a type-difference note and the plan still p
   SCOPE this phase.
 - Custom fields have **no GUID**; identity is `(owner class, field name)`. Creation is via the
   MDC `AddCustomField` route documented in the 006 creation contract, not an `ICmObject`
-  factory. The flexlibs2 `CustomFieldOperations` wrapper's transaction-mode behavior for
+  factory. The flexicon `CustomFieldOperations` wrapper's transaction-mode behavior for
   creation MUST be confirmed at planning time; if its `CreateField` wrapper is blocked in
   transaction mode, the plan uses the MDC-direct `AddCustomField` path (probe recorded in
   research.md).

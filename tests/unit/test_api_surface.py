@@ -6,7 +6,7 @@ Tests cover the pure-Python paths that don't need a live LCM:
 - `bind_target` raises SameProjectError for matching source/target.
 - `compute_preview` returns NEEDS_WS_MAPPING when ws_mapping is None.
 
-Tests that touch `bind_target`'s real flexlibs2 open or `execute_move` belong
+Tests that touch `bind_target`'s real flexicon open or `execute_move` belong
 under tests/integration/ and require the FlexTools host.
 """
 from __future__ import annotations
@@ -102,7 +102,7 @@ def test_list_target_candidates_returns_empty_for_nonexistent_root() -> None:
 
 
 # ============================================================================
-# bind_target — pre-flexlibs2 path
+# bind_target — pre-flexicon path
 # ============================================================================
 
 def test_bind_target_raises_on_same_project_by_name() -> None:

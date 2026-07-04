@@ -28,7 +28,7 @@ def test_gold_objects_byte_identical_before_and_after_move() -> None:
 
     GOLD = objects in the LangProject.PartsOfSpeech hierarchy that carry the
     'gold' annotation per the GOLD Community of Practice ontology import.
-    Identification method: flexlibs2 object attribute or Description field
+    Identification method: flexicon object attribute or Description field
     containing the GOLD marker string (per research.md R8).
     """
     pytest.skip(

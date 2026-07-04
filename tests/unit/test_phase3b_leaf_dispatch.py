@@ -42,7 +42,7 @@ class _EmptyOps:
 
 
 class _EmptyProject:
-    """FakeProject whose every flexlibs2 Operations accessor returns []."""
+    """FakeProject whose every flexicon Operations accessor returns []."""
 
     # Phase 3a/3b accessors used by the leaf-dispatch enumerate callbacks.
     GramCat = _EmptyOps()

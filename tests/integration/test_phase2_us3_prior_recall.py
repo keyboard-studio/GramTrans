@@ -37,7 +37,7 @@ RUN2_TAG = ImportResidueTag(
 
 class _FakeTarget:
     """Stand-in for an LCM object exposing a LiftResidue attribute that
-    persists across reads -- mimics flexlibs2 setattr-on-None behaviour
+    persists across reads -- mimics flexicon setattr-on-None behaviour
     from Phase 1.3c."""
 
     LiftResidue = None

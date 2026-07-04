@@ -1,6 +1,6 @@
 """WsFontRegistry -- reads FLEx per-WS fonts by role (spec 011).
 
-Fakes mirror the flexlibs2 fork's WritingSystems surface: GetDefaultVernacular /
+Fakes mirror the flexicon fork's WritingSystems surface: GetDefaultVernacular /
 GetDefaultAnalysis / GetVernacular return WS objects, and GetFontName /
 GetFontSize / GetRightToLeft take a WS and return its FLEx-defined font.
 """

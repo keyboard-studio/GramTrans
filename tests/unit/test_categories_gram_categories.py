@@ -189,7 +189,7 @@ def test_contract_execute_action_does_not_reference_ms_feature_system() -> None:
 
 def test_contract_enumerate_source_walks_pos_not_gramcat() -> None:
     """Contract: gram_categories_enumerate_source walks source.POS, not
-    source.GramCat. The flexlibs2 project.GramCat accessor resolves to
+    source.GramCat. The flexicon project.GramCat accessor resolves to
     GramCatOperations which iterates IFsFeatStrucType -- the wrong list."""
     import inspect
     src = inspect.getsource(categories.gram_categories_enumerate_source)

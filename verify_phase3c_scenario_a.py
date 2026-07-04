@@ -59,7 +59,7 @@ def Main(project, report, modifyAllowed):
     # Build RunContext
     try:
         # Open target project
-        from flexlibs2 import OpenProject
+        from flexicon import OpenProject
         target_handle = OpenProject(str(target_path))
     except Exception as e:
         report.Error(f"Failed to open target project: {e!r}")

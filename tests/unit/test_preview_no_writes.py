@@ -90,7 +90,7 @@ class _FakePOSOps:
         self._verb = verb
         self._all = all_
 
-    def Find(self, name: str):  # noqa: N802 — matches flexlibs2 API
+    def Find(self, name: str):  # noqa: N802 — matches flexicon API
         return self._verb if name == "Verb" else None
 
     def GetAll(self, recursive: bool = False):  # noqa: N802
@@ -119,7 +119,7 @@ class _FakeMorphRulesOps:
 
 
 class _FakeProject:
-    """Pretends to be a flexlibs2 FLExProject for the preview walker.
+    """Pretends to be a flexicon FLExProject for the preview walker.
 
     Each instance gets its own POS/MorphRules accessor objects so source and
     target are distinct identities (RunContext FR-019 check).
@@ -145,7 +145,7 @@ class _FakeProject:
 @pytest.fixture
 def _patch_preview_lcm_helpers(monkeypatch):
     """Replace preview.py's LCM-cast helpers with attribute lookups so the
-    fakes above can stand in for flexlibs2 objects."""
+    fakes above can stand in for flexicon objects."""
     monkeypatch.setattr(preview_mod, "_guid_str", lambda obj: obj.guid)
     monkeypatch.setattr(preview_mod, "_unwrap", lambda obj: obj.concrete if hasattr(obj, "concrete") else obj)
     monkeypatch.setattr(preview_mod, "_slot_name", lambda slot: getattr(slot, "_name", "anon"))

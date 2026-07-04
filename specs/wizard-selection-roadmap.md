@@ -44,7 +44,7 @@ Project+WS  →  Phonology  →  Affixes  →  Skeleton  →  Grammatical deps  
 | 19 | Complex Form Types | `LexDbOA.ComplexEntryTypesOA` | Lexical-entry types | B | LATER (engine done) |
 | 20 | Ad Hoc Rules | `MorphologicalDataOA.AdhocCoProhibitionsOS` | Rules | B | LATER |
 | 21 | Compound Rules | `MorphologicalDataOA.CompoundRulesOS` | Rules | B | LATER |
-| 22 | Custom Fields | metadata cache | Custom Fields | B (detect + report) | LATER (creation blocked at flexlibs2 layer; detect-only) |
+| 22 | Custom Fields | metadata cache | Custom Fields | B (detect + report) | LATER (creation blocked at flexicon layer; detect-only) |
 | 23 | Stems (LexEntry, stem morphtype) | `LexDbOA.Entries` | Stems | A (item picker) | LATER (pane stubbed/disabled) |
 
 ## Undecided / to revisit
