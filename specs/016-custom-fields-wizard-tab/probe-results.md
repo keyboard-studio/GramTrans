@@ -124,3 +124,37 @@ At Move time (preview/dry-run already approved, so the bind_target handle is dis
 Fail-loud (flid==0 → RuntimeError, no orphan) and idempotency (name+class match → zero new creates)
 live entirely in the pre-pass. Scope: ~15 lines in the Move-entry path (api.py `apply_plan`/
 `execute_move`), zero changes to `transfer.execute`.
+
+---
+
+## T026 VALUE ROUND-TRIP — **PASS** (main-session MCP, ops 013–015)
+
+End-to-end mechanics the engine relies on, verified live on Ejagham Full GT-Test:
+
+1. **op 013** (undoable, single-owner): created `GT016RT` (Integer) via 4-arg + `GT016ListRA`
+   (ReferenceAtomic) via 7-arg; captured target entry GUID `000352c3…`.
+2. **op 014** (reopen Phase-1, fresh handle): both fields **persisted** (count 11→13; flids
+   renumbered on reload as expected); wrote Integer `42` into `GT016RT` on the entry (`SetInt`).
+3. **op 015** (reopen again): **persisted value = 42** confirmed on disk — schema AND data both
+   survive. Then deleted both test fields → back to the **11-field baseline** (GT-Test restored,
+   exact original names).
+
+**Verdict:** the issue-#21 corruption (schema-not-persisting-while-data-does) does NOT occur under
+PATH-CLOSE-REBIND (single-owner create + separate Phase-1 value-fill). US3 is persistence-correct.
+
+## destinationClass / list-field ruling — **engine needs a list-type fix**
+
+Confirmed live (op 013):
+
+| Field type | Call shape | destinationClass | fieldListRoot |
+|------------|-----------|------------------|---------------|
+| Value types — String(13)/MultiString(14)/MultiUnicode(16)/Integer(2)/GenDate(8)/Boolean(1) | **4-arg** | **0** | n/a |
+| List types — ReferenceAtomic(24)/ReferenceCollection(26) | **7-arg** | **CmPossibility class id = 7** | **the list's root GUID** |
+
+`GT016ListRA` created with the 7-arg overload read back correctly: `type=24`,
+`listRoot=ad469eea-…` (the POS-list guid). **The engine currently sends `destinationClass=0`/4-arg
+for ALL fields — correct for value types, WRONG for list-backed fields.** If list-typed custom
+fields are in scope (spec edge-cases mention `ReferenceAtom`/`ReferenceCollection` + `list_root_guid`),
+the engine's `_ensure_custom_fields` must branch: list types → 7-arg with `destinationClass=7` +
+`fieldListRoot=record.list_root_guid`. The Ejagham corpus has no list custom fields, so this is a
+correctness-completeness fix, not a blocker for the Ejagham verification.
