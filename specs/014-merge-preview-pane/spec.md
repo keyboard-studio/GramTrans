@@ -126,7 +126,7 @@ in its Target column, and the collected selection carries all resolutions into t
 this seeding + collection the transfer would not see the user's (or default) choices.
 
 **Independent Test**: Build the item-picker page, collect the selection without interacting, and
-assert every SIMILAR affix row has a default `merge`-to-suggested resolution in the returned
+assert every SIMILAR affix row has a default `overwrite`-to-suggested resolution in the returned
 `Selection`; change one to create-new and assert the collected selection reflects it.
 
 **Acceptance Scenarios**:
