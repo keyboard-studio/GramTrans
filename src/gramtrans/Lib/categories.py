@@ -498,11 +498,39 @@ class _CustomFieldRecord:
     contract -- carries a `guid` synthesized from the (owner_class, name)
     tuple so the existing _guid_str_from / _target_has_guid helpers work
     without modification.
+
+    Attributes
+    ----------
+    guid / Guid : str
+        Synthetic identity key ``"cf:<owner_class>:<name>"``.  Custom fields
+        have no LCM Guid; this sentinel is recognised by the skip helpers.
+    owner_class : str
+        One of the four values in ``_CUSTOM_FIELD_OWNER_CLASSES``.
+    name : str
+        Field label as returned by ``GetAllFields`` / ``GetFieldName``.
+    field_id : int
+        Flid from the source MDC (0 when unknown).
+    field_type : int
+        ``CellarPropertyType`` integer (e.g. 13 = String, 14 = MultiString).
+        0 when not yet populated.
+    list_root_guid : str | None
+        GUID of the possibility-list root for ReferenceAtomic /
+        ReferenceCollection fields; ``None`` for all other types.
     """
 
-    __slots__ = ("guid", "Guid", "owner_class", "name", "field_id")
+    __slots__ = (
+        "guid", "Guid", "owner_class", "name", "field_id",
+        "field_type", "list_root_guid",
+    )
 
-    def __init__(self, owner_class: str, name: str, field_id: int = 0):
+    def __init__(
+        self,
+        owner_class: str,
+        name: str,
+        field_id: int = 0,
+        field_type: int = 0,
+        list_root_guid: str = "",
+    ):
         # Synthetic identity: custom fields have no LCM Guid.  Use
         # "cf:<owner>:<name>" as the canonical key.
         self.guid = f"cf:{owner_class}:{name}"
@@ -510,6 +538,8 @@ class _CustomFieldRecord:
         self.owner_class = owner_class
         self.name = name
         self.field_id = field_id
+        self.field_type = field_type
+        self.list_root_guid = list_root_guid
 
     @property
     def concrete(self):
@@ -520,18 +550,73 @@ class _CustomFieldRecord:
         return ""  # custom fields are by definition not GOLD
 
 
+# CellarPropertyType integer -> human-readable label.
+# Values: Boolean=1, Integer=2, GenDate=8, String=13, MultiString=14,
+# MultiUnicode=16, OwningAtomic=23, ReferenceAtomic=24, ReferenceCollection=26.
+# ReferenceAtomic and ReferenceCollection both render as "List item" because
+# from the user's perspective both point to a possibility-list entry.
+# Labels align to research.md section 1 (FLEx UI display names).
+_CELLAR_TYPE_LABELS = {
+    1:  "Boolean",
+    2:  "Integer",
+    8:  "Date",
+    13: "Text",
+    14: "Multi-string",
+    16: "Multi-Unicode",
+    23: "Item (owned)",
+    24: "List item",
+    26: "List item",
+}
+
+
+def custom_field_type_label(field_type: int) -> str:
+    """Return a human-readable label for a CellarPropertyType integer.
+
+    Parameters
+    ----------
+    field_type:
+        Integer CellarPropertyType value (e.g. 13 for String).
+
+    Returns
+    -------
+    str
+        Display label such as ``"String"``, ``"MultiString"``, or
+        ``"List item"``.  Unknown values fall back to
+        ``"Type <N>"`` to remain non-empty and debuggable.
+    """
+    return _CELLAR_TYPE_LABELS.get(field_type, f"Type {field_type}")
+
+
 def _enumerate_custom_fields(project):
     """Yield _CustomFieldRecord for every custom field on the supported
     owner classes.  Read-only -- safe inside the Phase-1 UoW envelope
     (no _EnsureWriteEnabled guard on CustomFieldOperations.GetAllFields).
+
+    ``GetAllFields(cls)`` must yield 4-tuples
+    ``(field_id, name, field_type, list_root_guid)`` per the T001 fake
+    contract.  The legacy 2-tuple shape ``(field_id, name)`` is handled
+    defensively for backward compatibility.
     """
     cf_ops = getattr(project, "CustomFields", None)
     if cf_ops is None:
         return
     for cls in _CUSTOM_FIELD_OWNER_CLASSES:
         try:
-            for field_id, label in cf_ops.GetAllFields(cls):
-                yield _CustomFieldRecord(cls, label, field_id)
+            for row in cf_ops.GetAllFields(cls):
+                if len(row) >= 4:
+                    field_id, label, field_type, list_root_guid = (
+                        row[0], row[1], row[2], row[3]
+                    )
+                else:
+                    # Legacy 2-tuple path (existing fakes / older flexicon).
+                    field_id, label = row[0], row[1]
+                    field_type = 0
+                    list_root_guid = None
+                yield _CustomFieldRecord(
+                    cls, label, field_id,
+                    field_type=field_type,
+                    list_root_guid=list_root_guid,
+                )
         except Exception:
             # Class missing or read error -- continue with other classes.
             continue
@@ -540,6 +625,88 @@ def _enumerate_custom_fields(project):
 def custom_fields_enumerate_source(context, selection):
     """Walk source.CustomFields.GetAllFields per supported owner class."""
     return list(_enumerate_custom_fields(context.source_handle))
+
+
+# ---------------------------------------------------------------------------
+# Classification helper (T007)
+# ---------------------------------------------------------------------------
+
+# Status tokens returned by classify_custom_field.
+#   NEW       -- field absent from target; a create action will be required.
+#   IN_TARGET -- field present in target by (owner_class, name) match.
+#   ""        -- no target bound; classification unavailable (degrade to NEW).
+_CF_STATUS_NEW = "NEW"
+_CF_STATUS_IN_TARGET = "IN_TARGET"
+_CF_STATUS_UNKNOWN = ""
+
+
+def classify_custom_field(record: "_CustomFieldRecord", target) -> tuple:
+    """Classify *record* against *target* by ``(owner_class, name)`` match.
+
+    Parameters
+    ----------
+    record:
+        A ``_CustomFieldRecord`` from the source enumeration.
+    target:
+        The target project handle (duck-typed; needs
+        ``CustomFields.FindField(cls, name)`` and optionally
+        ``Cache.MetaDataCacheAccessor.GetFieldType(flid)``).
+        May be ``None`` or any object lacking ``CustomFields``.
+
+    Returns
+    -------
+    (status, type_diff_note) : tuple[str, str | None]
+        *status* is one of ``_CF_STATUS_NEW``, ``_CF_STATUS_IN_TARGET``,
+        or ``_CF_STATUS_UNKNOWN`` (empty string when no target is bound).
+
+        *type_diff_note* is a non-empty string when the target has a
+        same-class/same-name field of a **different** CellarPropertyType,
+        otherwise ``None``.
+
+        A type difference is **informational only** -- it never triggers a
+        collision and never produces ``IDENTITY_COLLISION`` (FR-008).
+
+    Notes
+    -----
+    When no target is bound (``None``, or target lacks ``CustomFields``),
+    returns ``("", None)`` so the UI can degrade to treat-as-NEW for
+    preview safety without raising.
+    """
+    if target is None:
+        return (_CF_STATUS_NEW, None)
+
+    cf_ops = getattr(target, "CustomFields", None)
+    if cf_ops is None:
+        return (_CF_STATUS_NEW, None)
+
+    # (owner_class, name) match -- the canonical identity for custom fields.
+    try:
+        tgt_flid = cf_ops.FindField(record.owner_class, record.name)
+    except Exception:
+        return (_CF_STATUS_NEW, None)
+
+    if not tgt_flid:
+        return (_CF_STATUS_NEW, None)
+
+    # Field exists in target.  Check for a type difference (informational).
+    type_diff_note = None
+    if record.field_type:
+        try:
+            mdc = target.Cache.MetaDataCacheAccessor
+            tgt_type = mdc.GetFieldType(tgt_flid)
+            if tgt_type != record.field_type:
+                src_label = custom_field_type_label(record.field_type)
+                tgt_label = custom_field_type_label(tgt_type)
+                type_diff_note = (
+                    f"Source type is {src_label} ({record.field_type}), "
+                    f"target type is {tgt_label} ({tgt_type}). "
+                    f"Values will not be transferred into a mismatched field."
+                )
+        except Exception:
+            # MDC accessor unavailable -- treat as no type info, not an error.
+            pass
+
+    return (_CF_STATUS_IN_TARGET, type_diff_note)
 
 
 def custom_fields_dependencies(piece):
