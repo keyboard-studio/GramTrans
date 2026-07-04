@@ -3,7 +3,7 @@
 The GramTrans wizard shows *source*-project data: phoneme graphemes and lexeme
 forms in the vernacular WS, glosses / feature names in the analysis WS, IPA
 symbols in the phonology (fonipa) WS.  FLEx stores a font per writing system;
-this module reads those fonts once from a flexlibs2 FLExProject and exposes them
+this module reads those fonts once from a flexicon FLExProject and exposes them
 by *role* so the UI can render each run of a label in the font FLEx defines for
 that WS.
 
@@ -62,7 +62,7 @@ class WsFontRegistry:
     """Maps ``WsRole`` -> ``WsFont`` for one project.
 
     Construct via :meth:`from_project` (tolerant of a missing / partial
-    flexlibs2 surface -- any failure degrades to an empty registry, and the UI
+    flexicon surface -- any failure degrades to an empty registry, and the UI
     then renders in its default font).  :meth:`empty` yields a registry that
     resolves every role to ``None``.
     """
@@ -97,7 +97,7 @@ class WsFontRegistry:
         """Read default-vernacular, default-analysis and IPA fonts from a project.
 
         Every accessor is guarded: a project that lacks ``WritingSystems`` (or a
-        fork whose accessors raise) yields an empty registry rather than crashing
+        accessors that raise) yields an empty registry rather than crashing
         the wizard.  Mirrors the defensive posture of ``ws_mapping._enumerate_ws``.
         """
         if project is None:
@@ -127,7 +127,7 @@ class WsFontRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers -- all tolerant of the flexlibs2 fork surface being absent.
+# Internal helpers -- all tolerant of the flexicon surface being absent.
 # ---------------------------------------------------------------------------
 
 def _call(obj, method: str, *args):
@@ -137,7 +137,7 @@ def _call(obj, method: str, *args):
         return None
     try:
         return fn(*args)
-    except Exception:  # noqa: BLE001 -- fork accessor / LCM cast may raise
+    except Exception:  # noqa: BLE001 -- flexicon accessor / LCM cast may raise
         return None
 
 

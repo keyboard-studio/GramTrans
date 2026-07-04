@@ -58,7 +58,7 @@ def build_run_plan(
 ) -> RunPlan:
     """Compute a complete RunPlan for the current selection.
 
-    Source and target are flexlibs2 FLExProject handles (or duck-typed
+    Source and target are flexicon FLExProject handles (or duck-typed
     equivalents for unit tests). This function:
 
     1. Walks the selection's closure across the source.
@@ -903,7 +903,7 @@ def _match_msas_by_fingerprint(target, tgt_entry, msa_actions, entry_guid: str):
 
 def _msa_fingerprint(msa, owner_entry_guid: str):
     """Inline fingerprint for MSA matching — avoids the matcher.py
-    indirection so the planner can operate on flexlibs2 wrappers
+    indirection so the planner can operate on flexicon wrappers
     transparently."""
     from SIL.LCModel import IMoInflAffMsa, ICmObject
     ia = IMoInflAffMsa(_unwrap(msa))
@@ -1071,7 +1071,7 @@ def _guid_str(obj) -> str:
 
 
 def _unwrap(obj):
-    """Strip a flexlibs2 wrapper to the concrete LCM object if present."""
+    """Strip a flexicon wrapper to the concrete LCM object if present."""
     return obj.concrete if hasattr(obj, "concrete") else obj
 
 

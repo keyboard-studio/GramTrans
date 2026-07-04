@@ -11,12 +11,11 @@ requires-python = ">=3.8"
 authors = [{ name = "GramTrans contributors" }]
 license = { text = "MIT" }
 dependencies = [
-    # flexlibs2 (direct runtime dep per constitution v5.0.0 Principle II).
-    # CLAUDE.md documents that this is consumed from the patched MattGyverLee
-    # fork; pip install -e D:/Github/_Projects/_LEX/flexlibs2 before installing
-    # this package. The LibLCM-direct implementation lives in a separate
-    # post-Phase-2 sibling repository (constitution Principle IV) — not here.
-    "flexlibs2>=2.0",
+    # flexicon (direct runtime dep per constitution v5.1.0 Principle II).
+    # CLAUDE.md documents the install path; pip install -e D:/Github/_Projects/_LEX/flexicon
+    # before installing this package. The LibLCM-direct implementation lives in a
+    # separate post-Phase-2 sibling repository (constitution Principle IV) — not here.
+    "pyflexicon>=4.1",
     "PyQt6>=6.4",
 ]
 

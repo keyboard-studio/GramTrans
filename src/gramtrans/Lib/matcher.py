@@ -1,6 +1,6 @@
 """Phase 1 match-by-GUID-first / fingerprint-fallback lookup.
 
-Pure-Python module. No LCM / flexlibs2 imports at module level; all LCM
+Pure-Python module. No LCM / flexicon imports at module level; all LCM
 surface is injected by the caller (target project handle, source object,
 fingerprint functions) so this module is fully testable without an LCM host.
 

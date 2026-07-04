@@ -4,26 +4,17 @@ shell commands, and other important information, read the current plan
 at specs/012-merge-preview-diff-engine/plan.md
 <!-- SPECKIT END -->
 
-## flexlibs2 fork dependency
+## flexicon dependency
 
-GramTrans runtime depends on the **MattGyverLee/flexlibs2 fork**, not stock flexlibs2.
-The fork lives locally at `D:/Github/_Projects/_LEX/flexlibs2` and carries two patches
-that the module relies on:
+GramTrans runtime depends on **flexicon** (dist name `pyflexicon`), a standalone
+independent package — it is NOT a fork or patch of stock flexlibs2. flexicon natively
+provides both the `GetSyncableProperties` writing-system enumeration (via
+`project.WritingSystems.GetAll()`) and the `ApplySyncableProperties(item, props,
+ws_map=None)` method on `BaseOperations`.
 
-1. **`GetSyncableProperties` writing-system enumeration fix.** Stock flexlibs2 reads
-   `ws_factory.WritingSystems`, which does not exist on `ILgWritingSystemFactory` in
-   the LCM 9.x runtime — every `GetSyncableProperties` call crashes. The fork enumerates
-   via `self.project.WritingSystems.GetAll()`, which returns `CoreWritingSystemDefinition`
-   objects with `.Id` and `.Handle`.
-2. **New `ApplySyncableProperties(item, props, ws_map=None)` method on `BaseOperations`.**
-   Symmetric inverse of `GetSyncableProperties`; generic dict → multistring / string apply,
-   handles bool fields via the setattr branch, accepts an optional WS map (currently
-   identity-only in GramTrans; FR-011 will populate it).
+The 8 Grammar Operations subclasses each declare an override of `ApplySyncableProperties`
+for MCP-indexer visibility (the indexer's static analysis doesn't follow inheritance):
 
-**Patched files (9 total)** — all syntactic, no behaviour change beyond
-`ApplySyncableProperties`:
-
-- `BaseOperations.py`
 - `Grammar/POSOperations.py`
 - `Grammar/MorphRuleOperations.py`
 - `Grammar/GramCatOperations.py`
@@ -33,24 +24,21 @@ that the module relies on:
 - `Grammar/PhonologicalRuleOperations.py`
 - `Grammar/PhonemeOperations.py`
 
-The 8 Grammar Operations subclasses each declare an override of `ApplySyncableProperties`
-for MCP-indexer visibility (the indexer's static analysis doesn't follow inheritance).
-
 ### Install
 
-`pyproject.toml` declares `flexlibs2>=2.0`. The fork is installed manually:
+`pyproject.toml` declares `pyflexicon>=4.1`. Install from the local directory:
 
 ```powershell
 pip install -e D:/Github/_Projects/_LEX/flexlibs2
 ```
 
-Or — once the patches are published on a fork remote — pin to a git URL in
-`pyproject.toml`. Upstreaming to `cdfarrow/flexlibs2` is tracked separately.
+> **Editor note:** The disk directory is literally named `flexlibs2` and MUST NOT be
+> renamed to `flexicon` — the install command above references it by that exact path.
 
 ### Constitution authority
 
-Per [constitution v5.0.0 Principle II](.specify/memory/constitution.md), module code
-imports flexlibs2 modules **directly**. There is no `flavors/` adapter contract in this
+Per [constitution v5.1.0 Principle II](.specify/memory/constitution.md), module code
+imports flexicon modules **directly**. There is no `flavors/` adapter contract in this
 repo. The LibLCM-direct implementation is a separate post-Phase-2 sibling repository,
 not an in-tree deliverable. See the constitution Sync Impact Report for the v4.0.0 →
 v5.0.0 rationale.
@@ -62,5 +50,5 @@ done against the Ejagham Mini → Ejagham Full GT-Test pair) and the pickup chec
 The next session's blocking task is **T-Spike** in
 [specs/001-phase0-additive-transfer/tasks.md](specs/001-phase0-additive-transfer/tasks.md):
 refactor `gramtrans.py.transfer_verb_vertical()` into the `Lib/preview.py` +
-`Lib/transfer.py` Preview/Move split required by constitution v5.0.0 Principle III
+`Lib/transfer.py` Preview/Move split required by constitution v5.1.0 Principle III
 closing clause before Layer 3 begins.

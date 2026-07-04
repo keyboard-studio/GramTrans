@@ -7,7 +7,7 @@ Run with FLExTools' interpreter (the `py` launcher = Python 3.13), NOT Anaconda:
     py run_gui_harness.py --move                # enable writes (modifyAllowed=True)
 
 It reproduces what FLExTools hands MainFunction:
-  * flexlibs2.FLExInitialize()  -> boots the LCM/.NET runtime
+  * flexicon.FLExInitialize()  -> boots the LCM/.NET runtime
   * opens the SOURCE project read-only (the GUI treats the host's open project
     as the source; you pick the target inside the dialog)
   * a console report sink (.Info/.Warning/.Error/.Blank)
@@ -15,7 +15,7 @@ It reproduces what FLExTools hands MainFunction:
 NOTE: api.bind_target opens the TARGET you pick with writeEnabled=True even for
 a preview, so the target must NOT be open in FieldWorks/FLEx at the same time.
 
-Requires FLExTools' interpreter (Python 3.13 via `py`) with flexlibs2 + PyQt6
+Requires FLExTools' interpreter (Python 3.13 via `py`) with flexicon + PyQt6
 installed. This is a dev convenience for driving the GUI against live LCM
 without deploying into the FLExTools Modules directory.
 """
@@ -30,7 +30,7 @@ import traceback
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "src"))
 
-from flexlibs2 import (  # noqa: E402
+from flexicon import (  # noqa: E402
     AllProjectNames,
     FLExCleanup,
     FLExInitialize,
@@ -76,7 +76,7 @@ def main() -> int:
     print("[WARN] make sure it is NOT open in FieldWorks/FLEx before you proceed.")
     print()
 
-    print("[INFO] Booting LCM runtime (flexlibs2.FLExInitialize)...")
+    print("[INFO] Booting LCM runtime (flexicon.FLExInitialize)...")
     FLExInitialize()
     try:
         available = list(AllProjectNames())

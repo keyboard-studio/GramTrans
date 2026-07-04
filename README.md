@@ -11,7 +11,7 @@ for the spec / plan / tasks.
 
 ## Documentation
 
-- **[Constitution v5.0.0](.specify/memory/constitution.md)** — governing principles
+- **[Constitution v5.1.0](.specify/memory/constitution.md)** — governing principles
 - **[Spec](specs/001-phase0-additive-transfer/spec.md)** — Phase 0 functional requirements
 - **[Plan](specs/001-phase0-additive-transfer/plan.md)** — implementation plan
 - **[Tasks](specs/001-phase0-additive-transfer/tasks.md)** — task list
@@ -19,27 +19,24 @@ for the spec / plan / tasks.
 - **[Data Model](specs/001-phase0-additive-transfer/data-model.md)** — in-module data shapes
 - **[Contracts](specs/001-phase0-additive-transfer/contracts/)** — UI/engine boundary
 - **[Quickstart](specs/001-phase0-additive-transfer/quickstart.md)** — end-to-end validation scenarios
-- **[CLAUDE.md](CLAUDE.md)** — agent context + flexlibs2 fork install instructions
+- **[CLAUDE.md](CLAUDE.md)** — agent context + flexicon install instructions
 
-## flexlibs2 fork dependency
+## flexicon dependency
 
-GramTrans runtime depends on the **MattGyverLee/flexlibs2 fork**, not stock flexlibs2.
-The fork carries two patches required by GramTrans:
-
-1. A fix to `GetSyncableProperties` so it enumerates writing systems via
-   `project.WritingSystems.GetAll()` instead of the nonexistent
-   `ws_factory.WritingSystems` attribute (stock flexlibs2 crashes on every call).
-2. A new `ApplySyncableProperties(item, props, ws_map=None)` method on
-   `BaseOperations` plus the 8 Grammar Operations subclasses — symmetric inverse of
-   `GetSyncableProperties`, generic dict → multistring / string apply.
+GramTrans runtime depends on **flexicon** (dist name `pyflexicon`), a standalone
+independent package — it is NOT a fork or patch of stock flexlibs2. flexicon natively
+provides the `GetSyncableProperties` writing-system enumeration and the
+`ApplySyncableProperties(item, props, ws_map=None)` method. The 8 Grammar Operations
+subclasses declare `ApplySyncableProperties` overrides for MCP-indexer visibility.
 
 ### Install (developer workflow)
 
 ```powershell
-# 1. Clone / locate the patched fork (already present at this path locally):
+# 1. Locate flexicon (present locally at this path — directory is named flexlibs2
+#    and MUST NOT be renamed):
 #    D:\Github\_Projects\_LEX\flexlibs2
 
-# 2. Install GramTrans's own deps + the fork:
+# 2. Install GramTrans's own deps + flexicon:
 pip install -e D:/Github/_Projects/_LEX/flexlibs2
 pip install -e .
 
@@ -47,18 +44,17 @@ pip install -e .
 #    (the path depends on your FlexTools install).
 ```
 
-`pyproject.toml` declares `flexlibs2>=2.0`; the fork is installed manually until the
-patches are upstreamed.
+`pyproject.toml` declares `pyflexicon>=4.1`.
 
-See [CLAUDE.md](CLAUDE.md#flexlibs2-fork-dependency) for the full patch inventory
-(9 files modified in the fork) and the per-file change summary.
+See [CLAUDE.md](CLAUDE.md#flexicon-dependency) for the full install details and
+MCP-indexer override inventory.
 
 ## Architecture
 
-Per constitution v5.0.0 Principle II:
+Per constitution v5.1.0 Principle II:
 
 - **No `flavors/` adapter contract.** Module files (`gramtrans.py` entry + `Lib/*.py`
-  helpers) import flexlibs2 directly.
+  helpers) import flexicon directly.
 - **LibLCM-direct implementation lives in a separate sibling repository**, not in this
   tree. The two repos share spec artifacts (spec.md, data-model.md, contracts/), not
   source.

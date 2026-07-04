@@ -30,7 +30,7 @@ LCM API notes (discovered during implementation):
     parent.SubPossibilitiesOS and use ICmPossibilityFactory.Create(Guid).
   - `IFsClosedFeatureFactory.Create(Guid, featureSystem)` (2-arg) is
     attempted first for inflection_features; Path B falls back to
-    `Create(Guid)` + `FeaturesOC.Add()` per fork pattern in
+    `Create(Guid)` + `FeaturesOC.Add()` per the pattern in
     InflectionFeatureOperations._factory_create_attached.
   - `IMoInflClassFactory` and `IMoStemNameFactory` both support
     `Create(Guid)` — confirmed by transfer.py slot/template precedent.
@@ -129,7 +129,7 @@ def _target_has_guid(target_iter, src_guid: str) -> bool:
 #
 # Per ordering-memo step 6: "Parts of Speech (= 'Gram Categories')" maps
 # to IPartOfSpeech objects in LangProject.PartsOfSpeechOA.PossibilitiesOS
-# (top-level + .SubPossibilitiesOS recursively). The flexlibs2 accessor
+# (top-level + .SubPossibilitiesOS recursively). The flexicon accessor
 # is `project.POS` -> POSOperations (NOT `project.GramCat`, which is
 # legacy naming pointing at IFsFeatStrucType in MsFeatureSystemOA.TypesOC;
 # that is a separate LCM subsystem deferred to Phase 3b close sweep as
@@ -471,12 +471,12 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
 # ----- custom_fields (Phase 3b US2: detect-and-report, no creation) --------
 #
-# Custom-field SCHEMA creation is blocked at the flexlibs2 layer:
+# Custom-field SCHEMA creation is blocked at the flexicon layer:
 # CustomFieldOperations.CreateField raises FP_TransactionError inside the
 # Phase-1 UoW envelope that wraps the entire transfer.execute().  Raw
 # IFwMetaDataCacheManaged.AddCustomField bypass corrupts records on next
-# FLEx UI open (flexlibs2 issue #21, 1,392 stranded senses cited in
-# flexlibs2/docs/CUSTOM_FIELDS.md).
+# FLEx UI open (flexicon issue #21, 1,392 stranded senses cited in
+# flexicon/docs/CUSTOM_FIELDS.md).
 #
 # Shipping posture (FR-325, US2 in spec.md): detect target's existing
 # custom fields and Skip(NEEDS_MANUAL) for any source field that's
@@ -486,7 +486,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 #
 # See specs/006-inflection-prep-block/us2-blocker-memo.md.
 
-# FLEx supports custom fields on these classes (per flexlibs2
+# FLEx supports custom fields on these classes (per flexicon
 # CustomFieldOperations._GetClassID at line ~1341):
 _CUSTOM_FIELD_OWNER_CLASSES = ("LexEntry", "LexSense", "LexExampleSentence", "MoForm")
 
@@ -590,20 +590,20 @@ def custom_fields_plan_action(piece, context, ws_mapping):
             f"Pre-create custom field {piece.owner_class}.{piece.name!r} "
             f"in FLEx > Tools > Configure > Custom Fields before re-running "
             f"GramTrans. Names are case-sensitive. Schema creation is "
-            f"blocked at the flexlibs2 layer per "
-            f"flexlibs2/docs/CUSTOM_FIELDS.md."
+            f"blocked at the flexicon layer per "
+            f"flexicon/docs/CUSTOM_FIELDS.md."
         ),
     )
 
 
 def custom_fields_execute_action(action, context, ws_mapping, tag):
-    """No-op stub.  Schema creation is blocked at the flexlibs2 layer
+    """No-op stub.  Schema creation is blocked at the flexicon layer
     (see custom_fields_plan_action docstring).  plan_action emits Skip
     directly so this path is never reached during normal operation;
     the stub is registered (rather than absent) so the leaf-dispatch
     loop doesn't silently warn on a missing callback.
 
-    Upgrade path: when flexlibs2 Phase 2 transaction mode lands and
+    Upgrade path: when flexicon Phase 2 transaction mode lands and
     CustomFieldOperations.CreateField becomes safe, replace this body
     with the actual creation call. plan_action's logic flips from
     "always Skip" to "PlannedAction for absent fields" simultaneously.
@@ -849,7 +849,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     new_sn = IMoStemName(new_sn)
 
     # Copy Name multistring directly (IMoStemName has Name but may not
-    # be covered by a GetSyncableProperties wrapper in flexlibs2).
+    # be covered by a GetSyncableProperties wrapper in flexicon).
     from SIL.LCModel.Core.KernelInterfaces import ITsString
     from SIL.LCModel.Core.Text import TsStringUtils
     all_ws = {ws_obj.Id: ws_obj.Handle for ws_obj in source.WritingSystems.GetAll()}
@@ -1209,7 +1209,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
             "ILexEntryInflTypeFactory", src_guid,
         )
 
-    # ApplySyncableProperties via flexlibs2 BaseOperations if available.
+    # ApplySyncableProperties via flexicon's BaseOperations if available.
     apply_carrier_b(new_vt, ws, tag)
     return new_vt
 

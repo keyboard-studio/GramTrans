@@ -1,8 +1,8 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 4.0.0 → 5.0.0
-Bump rationale: MAJOR — Principle II redefined again. v4.0.0's mandatory
+Version change: 4.0.0 → 5.1.0
+Bump rationale: MAJOR (5.0.0) — Principle II redefined again. v4.0.0's mandatory
 flavor-adapter contract (`flavors/base.py` + per-flavor adapters as the only
 allowed import point for LCM operations) is REMOVED. v5.0.0 says: every
 Phase 0/1/2 module file imports `flexlibs2` directly. The LibLCM-direct port
@@ -10,6 +10,13 @@ is now a **separate fork project** (a sibling repo built on the same spec/plan
 artifacts), not a same-contract in-tree re-implementation. This redefinition
 codifies the actual shape on disk (the FLExTrans-style entry file plus a `Lib/`
 sibling directory of helpers) and the chosen flexlibs2-fork dependency model.
+
+MINOR (5.1.0) — Principle II updated: flexicon (dist pyflexicon) is now the
+runtime dependency in place of the MattGyverLee/flexlibs2 fork. flexicon is a
+standalone independent project — NOT a fork of stock flexlibs2. The flexlibs2
+package name resolves via a deprecation shim (removal targeted flexicon v5.0.0);
+new code MUST use flexicon imports. pyproject.toml declares `pyflexicon>=4.1`.
+Last Amended date set to 2026-07-04.
 
 Additionally, Principle III (Preview-Before-Mutate) is preserved unchanged in
 spirit but gains an explicit, one-time validation-spike clause acknowledging
@@ -19,19 +26,23 @@ work is gated on the Preview engine.
 
 Principles defined:
   I.   FLEx Domain Fidelity (NON-NEGOTIABLE)
-  II.  FlexTools-Compatible Output, flexlibs2-Direct                   (REDEFINED)
+  II.  FlexTools-Compatible Output, flexicon-Direct                    (REDEFINED)
   III. Preview-Before-Mutate (NON-NEGOTIABLE)                          (clarified)
   IV.  Phased Merge Discipline                                         (clarified)
   V.   Referential Completeness
 
 Modified principles:
   II. v4.0.0 "flexlibs2-Primary with LibLCM Backport (adapter pattern mandatory)"
-      → v5.0.0 "flexlibs2-Direct (no adapter pattern in this repo)". Module
-      code imports flexlibs2 directly. There is no `flavors/base.py`, no
-      `flavors/flexlibs2_adapter.py`, no `flavors/liblcm_adapter.py` in this
-      tree. The LibLCM-direct port lives in a separate sibling repository
-      authored after all merge phases ship in flexlibs2, sharing only the spec
-      artifacts (spec.md, data-model.md, contracts/) — not source files.
+      → v5.0.0 "flexlibs2-Direct (no adapter pattern in this repo)"
+      → v5.1.0 "flexicon-Direct". Module code imports flexicon directly. There
+      is no `flavors/base.py`, no `flavors/flexlibs2_adapter.py`, no
+      `flavors/liblcm_adapter.py` in this tree. flexicon (dist pyflexicon) is
+      a standalone independent project — NOT a fork of stock flexlibs2. The
+      flexlibs2 package name resolves via a deprecation shim (removal targeted
+      flexicon v5.0.0); new code MUST use flexicon imports. The LibLCM-direct
+      port lives in a separate sibling repository authored after all merge phases
+      ship, sharing only the spec artifacts (spec.md, data-model.md, contracts/)
+      — not source files.
 
   III. Preview-Before-Mutate (NON-NEGOTIABLE) is unchanged in normative force.
       Added: a one-time, recorded validation spike (STATUS.md Layer 1 + Layer 2)
@@ -46,7 +57,7 @@ Kept from v4.0.0:
   - The shipped artifact is a FlexTools-compatible module.
   - The FLExToolsMCP is a non-normative author-side assistant, not a runtime
     dependency.
-  - flexlibs2 is the runtime flavor for Phase 0/1/2.
+  - flexicon (pyflexicon) is the runtime flavor for Phase 0/1/2.
   - flexlibs1 is NOT used.
   - GOLD inviolability, GUID-first identity, dual-carrier residue.
 
@@ -58,13 +69,14 @@ Removed framing:
     flexlibs2 imports directly" (reversed — modules import flexlibs2 directly).
 
 Added framing:
-  - flexlibs2 is consumed as a **forked, patched dependency** (the
-    MattGyverLee/flexlibs2 fork carrying the `WritingSystems` enumeration fix
-    and the new `ApplySyncableProperties` method on `BaseOperations` + 8
-    Grammar Operations subclasses). The fork relationship is documented in
-    [CLAUDE.md](../../CLAUDE.md) and in the repo README; pyproject.toml leaves
-    the requirement as `flexlibs2>=2.0` and users / developers install the
-    fork manually.
+  - flexicon (dist pyflexicon) is a standalone independent project — NOT a fork
+    of stock flexlibs2. It natively provides the `WritingSystems` enumeration
+    fix and the `ApplySyncableProperties` method on `BaseOperations` + 8
+    Grammar Operations subclasses. The flexlibs2 package name resolves via a
+    deprecation shim (removal targeted flexicon v5.0.0). pyproject.toml declares
+    `pyflexicon>=4.1`; the install path is documented in [CLAUDE.md](../../CLAUDE.md)
+    and the repo README. The disk directory is literally named `flexlibs2` and
+    MUST NOT be renamed.
   - File layout follows the **FLExTrans module convention**: a flat entry
     file (`src/gramtrans/gramtrans.py` with `docs = {...}` + `def MainFunction(
     project, report, modifyAllowed)`) plus a sibling `Lib/` subdirectory of
@@ -135,43 +147,40 @@ Culture Model (LCM) and the user's mental model in FLEx. Specifically:
 Rationale: A transfer that corrupts LCM invariants or breaks FLEx's UI assumptions is worse
 than no transfer at all — users will lose trust and revert.
 
-### II. FlexTools-Compatible Output, flexlibs2-Direct
+### II. FlexTools-Compatible Output, flexicon-Direct
 
 The module's shipped artifact MUST be a **FlexTools-compatible module** that runs inside a
-standard FlexTools host. At runtime it imports **flexlibs2 directly**. There is no
+standard FlexTools host. At runtime it imports **flexicon directly**. There is no
 flavor-adapter contract in this repository — the v4.0.0 `flavors/base.py` requirement is
 removed.
 
-- **flexlibs2 (Python) is the direct runtime dependency.** Every Phase 0/1/2 file imports
-  flexlibs2 modules at the top (`from flexlibs2.BaseOperations import ApplySyncableProperties`,
-  `from flexlibs2.Grammar.POSOperations import POSOperations`, etc.). The Operations-class
+- **flexicon (dist pyflexicon) is the direct runtime dependency.** flexicon is a standalone
+  independent project — NOT a fork of stock flexlibs2. Every Phase 0/1/2 file imports
+  flexicon modules at the top (`from flexicon.BaseOperations import ApplySyncableProperties`,
+  `from flexicon.Grammar.POSOperations import POSOperations`, etc.). The Operations-class
   API is the canonical surface (`project.POS`, `project.MorphRule`,
   `project.InflectionFeature`, `project.MSA`, `project.Phonemes`, `project.PhonRules`,
   `project.WritingSystem`, `project.LexEntry`, `project.LexSense`, `project.Allomorph`,
   `project.Variant`, `project.CustomField`, etc.); `project.GetService(IFooFactory)` is the
   fallback when no Operations wrapper covers a specific LCM surface;
   `CastingOperations.cast_to_concrete(obj)` is used when polymorphic property access
-  requires casting (per MCP polymorphic-casting validator).
-- **flexlibs2 is consumed as a forked, patched dependency.** The runtime depends on the
-  MattGyverLee/flexlibs2 fork at `D:/Github/_Projects/_LEX/flexlibs2`, which carries:
-  (a) a fix to `GetSyncableProperties` so it enumerates writing systems via
-  `project.WritingSystems.GetAll()` instead of the nonexistent
-  `ws_factory.WritingSystems` attribute, and (b) a new `ApplySyncableProperties(item, props,
-  ws_map=None)` method on `BaseOperations` plus the 8 Grammar Operations subclasses that
-  expose it for MCP-indexer visibility. `pyproject.toml` declares `flexlibs2>=2.0`;
-  developers install the fork manually and the fork relationship is documented in the
-  repo README and [CLAUDE.md](../../CLAUDE.md).
+  requires casting (per MCP polymorphic-casting validator). `pyproject.toml` declares
+  `pyflexicon>=4.1`. The flexlibs2 package name resolves via a deprecation shim (removal
+  targeted flexicon v5.0.0); new code MUST use flexicon imports. The install path is at
+  `D:/Github/_Projects/_LEX/flexlibs2` (the disk directory is literally named `flexlibs2`
+  and MUST NOT be renamed); install and override inventory are documented in the repo README
+  and [CLAUDE.md](../../CLAUDE.md).
 - **LibLCM (.NET) is NOT consumed in this repository.** The LibLCM-direct implementation
   is a **separate fork project** — a sibling repo authored after all three merge phases
-  ship in flexlibs2. It shares only the spec artifacts (spec.md, data-model.md,
-  contracts/*) and re-implements the same module against raw LCM. No `flavors/`,
-  `liblcm_adapter.py`, or "deferred port" stub lives in this tree.
-- **flexlibs1 is NOT used.** v4.0.0 already retired flexlibs1; v5.0.0 carries that
+  ship. It shares only the spec artifacts (spec.md, data-model.md, contracts/*) and
+  re-implements the same module against raw LCM. No `flavors/`, `liblcm_adapter.py`, or
+  "deferred port" stub lives in this tree.
+- **flexlibs1 is NOT used.** v4.0.0 already retired flexlibs1; v5.1.0 carries that
   forward. Historical mentions in spec artifacts and `Transfer FLEx Grammar Module.md` are
   read as historical context, not normative direction.
 - **The FlexTools host MUST NOT be assumed to have any optional dependencies beyond
-  flexlibs2 (forked) and PyQt.** The module MUST degrade gracefully (skip + report) if
-  flexlibs2 is unexpectedly unavailable.
+  flexicon (pyflexicon) and PyQt.** The module MUST degrade gracefully (skip + report) if
+  flexicon is unexpectedly unavailable.
 
 **Note on the FLExToolsMCP.** The FLExToolsMCP is an *author-side* assistant used to
 generate, scaffold, and discover patterns for the code in this repo. It is **not** a
@@ -261,10 +270,11 @@ default is the only safe semantics; opt-out lets advanced users override.
   `FLExTrans/FlexTools_2.3.2/FlexTools/Modules/Chinese/Update_Pinyin_Fields.py`). Helper
   modules live under `src/gramtrans/Lib/` and are loaded via `site.addsitedir(r"Lib")`.
 - **Runtime API flavor:**
-  - **flexlibs2** — the Pythonic Operations-class API, consumed as a **forked dependency**
-    from MattGyverLee/flexlibs2 (carrying the `WritingSystems` enumeration fix and the new
-    `ApplySyncableProperties` method). Imported directly by module files. No adapter
-    indirection.
+  - **flexicon (pyflexicon)** — the Pythonic Operations-class API, a standalone independent
+    package providing `GetSyncableProperties` and `ApplySyncableProperties` natively.
+    Imported directly by module files (`pyflexicon>=4.1`). No adapter indirection. The
+    flexlibs2 package name resolves via a deprecation shim; new code MUST use flexicon
+    imports.
   - **LibLCM** — NOT consumed in this repo. The LibLCM-direct port is a separate
     post-Phase-2 sibling repository that re-implements the same spec.
   - **flexlibs1** — NOT used.
@@ -273,7 +283,7 @@ default is the only safe semantics; opt-out lets advanced users override.
   mode, (d) overwrite policy, (e) writing-system mapping step, (f) post-run statistics
   panel.
 - **No optional runtime dependencies:** the module MUST run with only what a stock
-  FlexTools install plus the patched flexlibs2 and PyQt provide. Anything else is a hard
+  FlexTools install plus flexicon (pyflexicon) and PyQt provide. Anything else is a hard
   "no" without a constitutional amendment.
 
 ### Author-Side Tooling (Non-Normative)
@@ -305,7 +315,7 @@ subject to every other principle in this constitution.
 - **Constitution Check:** every plan MUST include an explicit Constitution Check section
   citing Principles I–V. Any violation MUST be justified or the plan rejected.
 - **Domain review:** non-trivial LCM operations SHOULD be reviewed against upstream
-  flexlibs2 conventions before merge.
+  flexicon conventions before merge.
 - **Verification:** every shipped phase MUST include a verification run on a known toy
   project → target project pair, with pre/post Import Residue artifacts attached.
 - **No silent skips:** any item the module decides not to transfer (missing dependency,
@@ -335,4 +345,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 5.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-06-19
+**Version**: 5.1.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-04

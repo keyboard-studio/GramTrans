@@ -7,7 +7,7 @@ the mapping is complete and 1:1.
 Mapping materialization into the target (creating WSs flagged
 `create_in_target=True`) is implemented at runtime in `Lib/transfer.py`'s
 pre-step; this module is the read-only validator and stays import-safe
-without flexlibs2 / pythonnet.
+without flexicon / pythonnet.
 """
 from __future__ import annotations
 
@@ -135,8 +135,8 @@ class WSResolver(Protocol):
 
 def _enumerate_ws(project):
     """Return tuple of WS descriptor dicts {id, kind, handle} for a
-    flexlibs2 project.  Tolerates several accessor shapes used in the
-    MattGyverLee fork (which exposes WritingSystems.GetAll())."""
+    flexicon project.  Tolerates several accessor shapes; uses
+    WritingSystems.GetAll() per the flexicon API."""
     if project is None:
         return ()
     out = []
@@ -153,7 +153,7 @@ def _enumerate_ws(project):
             handle = wd.Handle
         except AttributeError:
             handle = getattr(wd, "handle", None)
-        # WS kind: best-effort.  Fork descriptors carry IsVernacular;
+        # WS kind: best-effort.  flexicon descriptors carry IsVernacular;
         # default to VERNACULAR when unavailable.
         kind = WSKind.VERNACULAR
         try:
@@ -193,8 +193,8 @@ def detect_ws_mismatches(source, target):
     target project's WS list, returning similarity-sorted candidates.
 
     Args:
-        source: flexlibs2 FLExProject (read-only).
-        target: flexlibs2 FLExProject (read-only here).
+        source: flexicon FLExProject (read-only).
+        target: flexicon FLExProject (read-only here).
 
     Returns:
         tuple[WSMismatch, ...] sorted by source_ws_id.  Empty when

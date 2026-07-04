@@ -195,7 +195,7 @@ class ImportResidueTag:
 # ============================================================================
 # Carrier dispatchers — these import the LCM cast helpers lazily so the module
 # remains import-safe outside FlexTools (unit tests can exercise serialize/parse
-# without flexlibs2 / pythonnet on the path).
+# without flexicon / pythonnet on the path).
 # ============================================================================
 
 def class_uses_carrier_a(class_name: str) -> bool:

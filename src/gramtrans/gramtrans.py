@@ -35,14 +35,14 @@ site.addsitedir(os.path.join(_THIS_DIR, "Lib"))
 site.addsitedir(os.path.join(_THIS_DIR, "Lib", "ui"))
 
 # ============================================================================
-# CRITICAL: explicit flexlibs2 imports (template-mandatory)
+# CRITICAL: explicit flexicon imports (template-mandatory)
 #
-# FlexTools loads stable flexlibs by default; without explicit flexlibs2
+# FlexTools loads stable flexlibs by default; without explicit flexicon
 # imports, FieldWorks silently uses the wrong (stable) wrappers and grammar
-# coverage falls off. Requires the patched MattGyverLee/flexlibs2 fork — see
-# CLAUDE.md "flexlibs2 fork dependency".
+# coverage falls off. flexicon natively provides the grammar wrappers
+# GramTrans needs (GetSyncableProperties + ApplySyncableProperties).
 # ============================================================================
-from flexlibs2 import (  # noqa: F401 — pinned for the patched fork
+from flexicon import (  # noqa: F401 — flexicon provides the grammar wrappers
     FLExProject,
     POSOperations,
     MorphRuleOperations,
@@ -100,7 +100,7 @@ object's Description ([GT-Tag]: line) to find this run's additions.
 Phase 0 is additive only: duplicates are permitted (FR-009). FLEx's Ctrl+Z
 undoes the entire run.
 
-See CLAUDE.md for the flexlibs2 fork install instructions and STATUS.md for
+See CLAUDE.md for the flexicon install instructions and STATUS.md for
 the latest session's validated work.
 """,
 }
@@ -479,7 +479,7 @@ def _make_run_id() -> "tuple[str, str]":
 
 
 def _safe_project_path(flex_project) -> str:
-    """Best-effort retrieval of a FLExProject's on-disk path. flexlibs2 doesn't
+    """Best-effort retrieval of a FLExProject's on-disk path. flexicon doesn't
     expose this directly; fall back to an empty string so RunContext construction
     doesn't blow up when introspection isn't available."""
     for attr in ("ProjectPath", "ProjectFilename", "ProjectFolder"):

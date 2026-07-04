@@ -14,7 +14,7 @@ The single entry point the PyQt UI calls into. Five functions:
 - `execute_move(context, plan)` → executes the plan; returns a `RunReport`.
 
 The UI layer (`Lib/ui/`) MUST go through THIS module only (per
-contracts/module-ui.md) — no raw flexlibs2 imports in UI code.
+contracts/module-ui.md) — no raw flexicon imports in UI code.
 """
 from __future__ import annotations
 
@@ -179,10 +179,10 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
         )
 
     try:
-        from flexlibs2 import FLExProject  # lazy
+        from flexicon import FLExProject  # lazy
     except ImportError:
         raise TargetUnavailable(
-            "flexlibs2 is not installed; cannot open the target project."
+            "flexicon is not installed; cannot open the target project."
         )
 
     target = FLExProject()

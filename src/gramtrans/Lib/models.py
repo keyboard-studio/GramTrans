@@ -1,14 +1,14 @@
 """GramTrans in-module data model (data-model.md E1-E6).
 
-Pure-Python dataclasses + enums. No flexlibs2 / LCM imports — these types
-are flavor-agnostic and survive into the LibLCM-fork sibling repo unchanged.
+Pure-Python dataclasses + enums. No flexicon / LCM imports — these types
+are flavor-agnostic and survive into the LibLCM-direct sibling repo unchanged.
 
 Module name is `models.py` (not `types.py`) to avoid shadowing the Python
 stdlib `types` module when `site.addsitedir(Lib)` puts these files on
 sys.path as top-level imports per the FLExTrans convention.
 
 Per constitution v5.0.0 Principle II there is no Flavor enum; every action
-in this repo is flexlibs2 by construction.
+in this repo is flexicon by construction.
 """
 from __future__ import annotations
 
@@ -182,7 +182,7 @@ class SkipReason(enum.Enum):
     UNMAPPED_WS_USER_CHOSE_SKIP = "unmapped_ws_user_chose_skip"  # Phase 2 (FR-211)
     # Phase 3b US2: emitted when a category requires a manual user step
     # that GramTrans cannot perform automatically (e.g. custom-field
-    # schema creation, blocked by LCM at the flexlibs2 layer). Detail
+    # schema creation, blocked by LCM at the flexicon layer). Detail
     # string MUST cite the specific user action required.
     NEEDS_MANUAL = "needs_manual"
     # Phase 3b US2: identity-tuple match for entities lacking a real
@@ -224,8 +224,8 @@ class RunContext:
     project plus the user's target picker choice.
 
     The handles are kept opaque (Any) at the type level because they are
-    flexlibs2 FLExProject instances at runtime; this module avoids importing
-    flexlibs2 to stay testable without an LCM host.
+    flexicon FLExProject instances at runtime; this module avoids importing
+    flexicon to stay testable without an LCM host.
     """
     source_handle: object
     source_project_name: str

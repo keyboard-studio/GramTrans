@@ -239,7 +239,7 @@ _OW_OPS = {
 
 
 def _unwrap(obj):
-    """flexlibs2 sometimes returns wrapper objects with a .concrete attr
+    """flexicon sometimes returns wrapper objects with a .concrete attr
     holding the underlying LCM interface; unwrap before any ICmObject cast.
     Mirrors transfer.py._unwrap."""
     return obj.concrete if hasattr(obj, "concrete") else obj

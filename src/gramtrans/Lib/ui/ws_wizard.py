@@ -6,7 +6,7 @@ Per [contracts/ws-wizard.md], the wizard:
 - Returns `tuple[WSMappingChoice, ...]` of the same length and order.
 - Raises `UserCancelled` on dismiss.
 - Per FR-212, CREATE choices create the new WS in the target BEFORE
-  returning.  The caller passes a `target` flexlibs2 project handle so
+  returning.  The caller passes a `target` flexicon project handle so
   the wizard can do this in its Finish step.
 
 Layout (single window for simplicity; one row per mismatch):
@@ -44,7 +44,7 @@ class WSWizard(QtWidgets.QDialog):
 
     Args:
         mismatches: tuple[WSMismatch, ...].
-        target_project: optional flexlibs2 project handle.  When CREATE
+        target_project: optional flexicon project handle.  When CREATE
             is chosen, the wizard creates the new WS in target on Apply
             (FR-212).  Pass None in unit tests; production callers MUST
             supply it.

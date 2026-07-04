@@ -5,7 +5,7 @@ exposing a `docs = {...}` metadata dict and a `MainFunction(project, report,
 modifyAllowed)` callable. Helpers live under sibling `Lib/`, loaded at runtime
 via `site.addsitedir(r"Lib")` from `gramtrans.py`.
 
-Per constitution v5.0.0 Principle II this repo imports flexlibs2 directly
+Per constitution v5.1.0 Principle II this repo imports flexicon directly
 (no flavor-adapter contract). The LibLCM-direct implementation is a separate
 post-Phase-2 sibling repository per Principle IV.
 
@@ -15,8 +15,8 @@ performs the `site.addsitedir(r"Lib")` call); re-importing through here would
 risk loading the helpers before `Lib/` is on `sys.path`.
 
 See:
-- README.md — fork install steps + repo overview
-- CLAUDE.md — flexlibs2 fork patches + agent context
+- README.md — flexicon install steps + repo overview
+- CLAUDE.md — flexicon install path + agent context
 - STATUS.md — most recent session's validated work
 - specs/001-phase0-additive-transfer/ — spec / plan / tasks
 """

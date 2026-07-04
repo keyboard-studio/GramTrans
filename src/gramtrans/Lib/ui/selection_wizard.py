@@ -2507,8 +2507,8 @@ def _enumerate_active_ws_ids(project) -> list:
     """
     ws_ids = []
     try:
-        # Attempt 1: flexlibs2 fork's GetSyncableProperties-compatible path.
-        # The fork exposes WritingSystems.GetAll() per CLAUDE.md.
+        # Attempt 1: flexicon's GetSyncableProperties-compatible path.
+        # flexicon exposes WritingSystems.GetAll().
         all_wss = project.WritingSystems.GetAll()
         for ws in all_wss:
             ws_id = getattr(ws, "Id", None)
@@ -2554,7 +2554,7 @@ def _enumerate_ws_by_kind(project) -> "tuple[list, list]":
         A dual-role WS (both vernacular + analysis) appears in BOTH lists.
         Falls back to treating all active WSes as both kinds on total failure.
 
-    Primary access path (LCM 9.x via flexlibs2 FLExProject.Cache):
+    Primary access path (LCM 9.x via flexicon FLExProject.Cache):
         project.Cache.LangProject.CurrentVernacularWritingSystems
         project.Cache.LangProject.CurrentAnalysisWritingSystems
     Each entry exposes .Id (full BCP-47 tag, e.g. 'etu', 'etu-fonipa').
@@ -2562,7 +2562,7 @@ def _enumerate_ws_by_kind(project) -> "tuple[list, list]":
     (e.g. 'etu' vs 'etu-fonipa') is a separate entry and maps 1:1 by default.
 
     NOTE: project.VernacularWritingSystems and project.AnalysisWritingSystems
-    are NOT exposed by the flexlibs2 FLExProject wrapper and return None --
+    are NOT exposed by the flexicon FLExProject wrapper and return None --
     the Cache.LangProject.Current* path is the correct primary path.
     """
     vern_ids: list = []

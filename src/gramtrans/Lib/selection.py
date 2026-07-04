@@ -2026,7 +2026,7 @@ def _phon_is_empty(obj, *, phoneme: bool) -> bool:
 
 
 # The five user-facing phonology categories, in page display order, paired with
-# the flexlibs2 Operations accessor attribute each enumerates.
+# the flexicon Operations accessor attribute each enumerates.
 _PHON_CATEGORY_ACCESSORS = (
     (GrammarCategory.PHONOLOGICAL_FEATURES, "PhonFeatures", "Phonological Features"),
     (GrammarCategory.PHONEMES, "Phonemes", "Phonemes"),

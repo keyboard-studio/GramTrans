@@ -8,7 +8,7 @@ The FlexTools runner already wraps `MainFunction` in an UndoableUnitOfWork
 
 The verb-vertical per-layer creators (POS, Template, Slot) preserve source
 GUIDs via the LCM factories' `Create(Guid, owner)` overloads, then apply the
-source's syncable properties via the patched fork's `ApplySyncableProperties`
+source's syncable properties via flexicon's `ApplySyncableProperties`
 (see CLAUDE.md). Residue tagging routes through `Lib/residue.py.apply_residue`.
 """
 from __future__ import annotations
@@ -577,7 +577,7 @@ def _dedupe_custom_fields(src_props, tgt_pre_props):
     `tgt_pre_props` but not in `src_props` are preserved by virtue of
     ApplySyncableProperties only touching keys it receives.
 
-    Custom fields are identified by name prefix "Custom" (flexlibs2 emits
+    Custom fields are identified by name prefix "Custom" (flexicon emits
     them as "Custom_<FieldName>" in the syncable props dict).  Non-custom
     properties pass through unchanged so FR-109 (source wins) still applies.
 
@@ -622,7 +622,7 @@ def _find_source_pos_by_guid(source, guid_str: str):
 
 
 def _find_source_template_by_guid(source, guid_str: str, owner_pos_guid: str = None):
-    """Returns the flexlibs2 template *wrapper* (we need its prefix_slots etc.),
+    """Returns the flexicon template *wrapper* (we need its prefix_slots etc.),
     not the bare LCM object. If `owner_pos_guid` is given, only searches
     that POS's templates; otherwise scans every POS."""
     candidate_poses = []
@@ -642,7 +642,7 @@ def _find_source_template_by_guid(source, guid_str: str, owner_pos_guid: str = N
 
 
 def _find_source_first_template_for_pos(source, owner_pos_guid: str):
-    """First template under the given source POS, as flexlibs2 wrapper."""
+    """First template under the given source POS, as flexicon wrapper."""
     src_pos = _find_source_pos_by_guid(source, owner_pos_guid)
     if src_pos is None:
         return None
@@ -961,7 +961,7 @@ def _create_lexsense_with_guid(target, new_entry, src_guid: str, src_sense, sour
 def _create_inflaff_msa_null_tolerant(target, new_sense, target_verb, slot_objs, report_sink):
     """Null-tolerant IMoInflAffMsa creation.
 
-    flexlibs2 MSAOperations.CreateInflAff calls _ValidateParam(pos, "pos") and
+    flexicon's MSAOperations.CreateInflAff calls _ValidateParam(pos, "pos") and
     REJECTS a None POS at the Python wrapper layer.  When `target_verb` is None
     (EXCLUDED-LOSSY: user deliberately dropped the POS dependency), we must
     bypass the wrapper and call the raw LCM factory directly, then clear
@@ -1013,7 +1013,7 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
                                     target_verb, target_slot_by_guid,
                                     tag: ImportResidueTag, report_sink,
                                     identity_remap: dict):
-    """Create IMoInflAffMsa via flexlibs2's MSAOperations.CreateInflAff (which
+    """Create IMoInflAffMsa via flexicon's MSAOperations.CreateInflAff (which
     handles the LibLCM SandboxGenericMSA dance internally).
 
     LCM's IMoInflAffMsaFactory only exposes `Create(ILexEntry, SandboxGenericMSA)`
@@ -1022,7 +1022,7 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
 
     NULL-TOLERANT PATH (EXCLUDED-LOSSY): when `target_verb` is None (user
     deliberately dropped the POS dependency), `_create_inflaff_msa_null_tolerant`
-    is called instead of the normal flexlibs2 wrapper.  The resulting MSA has a
+    is called instead of the normal flexicon wrapper.  The resulting MSA has a
     null PartOfSpeechRA, as the user was warned about at Preview time.
     """
     from SIL.LCModel import IMoInflAffMsa, ICmObject
@@ -1036,7 +1036,7 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
             src_slot_objs.append(tgt_slot)
 
     if target_verb is None:
-        # EXCLUDED-LOSSY path: null-tolerant creation bypasses the flexlibs2
+        # EXCLUDED-LOSSY path: null-tolerant creation bypasses the flexicon
         # wrapper that validates pos != None.
         new_msa = _create_inflaff_msa_null_tolerant(
             target, new_sense, target_verb=None,
@@ -1066,15 +1066,15 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
                                   env_guid_to_target,
                                   tag: ImportResidueTag, report_sink,
                                   identity_remap: dict):
-    """Create IMoAffixAllomorph via flexlibs2's LexiconAddAllomorph wrapper
+    """Create IMoAffixAllomorph via flexicon's LexiconAddAllomorph wrapper
     (which handles the LibLCM Create signature internally).
 
     GUID preservation: LCM allomorph factories don't accept a Guid; new GUID
     is recorded in `identity_remap` per FR-012.
 
     Phase 0 Layer 3 is structural-only — lexeme Form text content is NOT
-    transferred (fork's ApplySyncableProperties has ITsString conversion
-    gaps); a future Phase 0.5 task fixes the fork and re-enables string
+    transferred (flexicon's ApplySyncableProperties had ITsString conversion
+    gaps in early builds); a future Phase 0.5 task re-enables string
     content preservation.
     """
     from SIL.LCModel import IMoAffixAllomorphFactory, IMoAffixAllomorph, ILexEntry, ICmObject
@@ -1101,8 +1101,8 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
         identity_remap[src_guid] = new_guid
 
     # Apply syncable properties (Form multistring + scalar bools, etc.).
-    # Fork's BaseOperations.ApplySyncableProperties now handles ITsString
-    # wrapping for raw-str scalars via the patch landed 2026-06-19.
+    # flexicon's BaseOperations.ApplySyncableProperties now handles ITsString
+    # wrapping for raw-str scalars (landed 2026-06-19).
     src_props = source.Allomorphs.GetSyncableProperties(src_allo)
     target.Allomorphs.ApplySyncableProperties(new_allo, src_props)
 
@@ -1205,7 +1205,7 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
 def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
                        interactive_session=None):
     """Apply a single PlannedOverwrite: look up the target object by GUID,
-    pull source's syncable properties, and apply them via the patched fork's
+    pull source's syncable properties, and apply them via flexicon's
     `ApplySyncableProperties`.
 
     Pre-overwrite snapshot in residue (FR-106) is currently NOT recorded —
@@ -1286,7 +1286,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if tgt_slot is None:
             report_sink.Warning(f"  [OW] Slot {tgt_guid[:8]} not in target")
             return
-        # Slot has no flexlibs2 SyncableProperties wrapper exposed for it
+        # Slot has no flexicon SyncableProperties wrapper exposed for it
         # via the MorphRules accessor on slots specifically; Phase 1.0 only
         # re-applies the residue tag here. Phase 1.1 will copy the slot
         # name + description via direct property access (Name multistring).

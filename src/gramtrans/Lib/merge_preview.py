@@ -10,7 +10,7 @@ Three layers, one Qt-free module:
 2. **LCM props fetch + category registry** -- ``props_for`` / ``ws_role_map``.
    Pulls a comparable ``{field: value}`` dict per transfer category via
    ``GetSyncableProperties``, with direct-read fallbacks for the three
-   fork-gap categories (Slots, Phonological Features, Stem Names).  flexlibs2
+   gap categories (Slots, Phonological Features, Stem Names).  flexicon
    imports are lazy/guarded inside these functions so the pure core stays
    importable without LCM.
 
@@ -631,7 +631,7 @@ def _safe_ws_id(ws: Any) -> str:
 
 
 def _unwrap(obj: Any) -> Any:
-    """Unwrap flexlibs2 wrapper objects (mirrors conflict.py._unwrap)."""
+    """Unwrap flexicon wrapper objects (mirrors conflict.py._unwrap)."""
     return obj.concrete if hasattr(obj, "concrete") else obj
 
 
@@ -866,7 +866,7 @@ def _direct_read_gap(obj: Any, include_optional_bool: bool = False) -> dict[str,
 # ---- Per-category ops table (T022, module-level injectable) -----------------
 
 # Each entry: (ops_attr, finder_fn, needs_owner, is_gap)
-# ops_attr: attribute name on the project handle (flexlibs2 project accessor).
+# ops_attr: attribute name on the project handle (flexicon project accessor).
 # finder_fn: callable(target, guid[, owner_guid]) -> obj | None
 # needs_owner: True for template (two-level finder).
 # is_gap: True for Slots / PhonologicalFeatures / StemNames (direct-read fallback).
@@ -922,7 +922,7 @@ def props_for(
 ) -> dict[str, Any] | None:
     """Return a comparable ``{field: value}`` dict for an object of any category.
 
-    ``handle`` is the flexlibs2 project handle for the project containing the
+    ``handle`` is the flexicon project handle for the project containing the
     object.  ``category`` is the category key string (mirrors
     ``GrammarCategory.value`` style, e.g. ``"pos"``, ``"entry"``, ``"slot"``).
 
