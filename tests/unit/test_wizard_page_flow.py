@@ -1,4 +1,4 @@
-"""Tests for the 5-page SelectionWizard (Phase 3c, Refinement 3).
+"""Tests for the 6-page SelectionWizard (Phase 3c, Refinement 3).
 
 Strategy: install MagicMock stubs for PyQt6 at module level (same pattern as
 test_ui_gating.py) then bypass __init__ via __new__() to test page helpers

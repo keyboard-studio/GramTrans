@@ -24,6 +24,7 @@ Constitution alignment:
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Optional, Set
 
 from PyQt6 import QtCore, QtWidgets
@@ -67,6 +68,7 @@ if __package__:
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
     from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
     from ..models import SimilarResolution
+    from ..report import RunReport
 else:
     import api as gt_api  # type: ignore
     from models import (  # type: ignore
@@ -106,6 +108,7 @@ else:
     from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore
     from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
+    from report import RunReport  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +245,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
 
-        self.setTitle("Step 1 of 7: Project + Writing Systems")
+        self.setTitle("Step 1 of 6: Project + Writing Systems")
         self.setSubTitle(
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
@@ -631,7 +634,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 7: Item Picker")
+        self.setTitle("Step 3 of 6: Item Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
@@ -1190,7 +1193,6 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         dataclasses.replace.  Returns a shallow copy of the store so callers
         cannot mutate the live store.
         """
-        import dataclasses
         if self._inventory is None:
             dummy = SourceAffixInventory()
             base = build_selection(PickerState(), dummy)
@@ -1367,7 +1369,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 7: Morphology Skeleton")
+        self.setTitle("Step 4 of 6: Morphology Skeleton")
         self.setSubTitle(
             "Review the parts of speech, slots, and templates the picked affixes require. "
             "Pre-checked items are derived from your affix selection. "
@@ -1864,7 +1866,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 5 of 7: Grammatical Dependencies")
+        self.setTitle("Step 5 of 6: Grammatical Dependencies")
         self.setSubTitle(
             "Review the inflection features, classes, and stem names "
             "that the picked affixes' parts of speech require. All are preselected. "
@@ -2169,7 +2171,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 7: Phonology")
+        self.setTitle("Step 2 of 6: Phonology")
         self.setSubTitle(
             "Review the source's phonology. The whole block is preselected. "
             "Untick the block to skip phonology, untick a category to trim it, "
@@ -2624,91 +2626,24 @@ class _PagePreview(QtWidgets.QWizardPage):
         layout.addWidget(self._stats, 1)
 
     def _on_preview(self) -> None:
+        """Thin wrapper delegating to _compute_wizard_plan (DR-5, FR-005)."""
         wizard = self.wizard()
         if wizard is None:
             return
-        context = wizard.page_project_ws().context()
-        if context is None:
-            QtWidgets.QMessageBox.warning(
-                self, "GramTrans", "No target project bound. Go back to page 1."
-            )
-            return
-        # Cross-page lookups via named accessors (spec 010 P-1) — never by
-        # literal index. _PageScopeConflict is no longer in the flow
-        # (FR-012/FR-013); Layer-1 defaults are applied automatically.
-        page_items = wizard.page_items()
-        affix_selection = page_items.collect_selection()
-
-        # Apply Layer-1 conflict-mode defaults automatically (T020, FR-012).
-        # Build a selection using affix picks only; no scope/conflict UI on these pages.
-        if __package__:
-            from ..models import _DEFAULT_CONFLICT_MODES
-        else:
-            from models import _DEFAULT_CONFLICT_MODES  # type: ignore
-        selection = build_selection(
-            PickerState(
-                checked_affixes=affix_selection.affix_picks,
-                checked_templates=affix_selection.template_picks,
-            ),
-            SourceAffixInventory(
-                unbound_affixes=affix_selection.affix_picks,
-                template_to_slots={t: () for t in affix_selection.template_picks},
-            ),
-            category_scopes={},
-        )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
-
-        # T015: Preserve similar_resolutions from the item-picker page across
-        # reconstruction.  build_selection + _replace_conflict_modes do not
-        # forward the field; copy it here before any compute_preview call (FR-009).
-        # MUST NOT touch planner/executor (FR-012) — UI/selection layer only.
-        import dataclasses as _dataclasses
-        _page_items_sel = page_items.collect_selection()
-        selection = _dataclasses.replace(
-            selection,
-            similar_resolutions=_page_items_sel.similar_resolutions,
-        )
-
-        # Merge the Phonology block (spec 010 T015). The phonology page is an
-        # independent Model-B selector: collapse its checked rows into category
-        # on-flags + per-category leaf_item_picks (trimmed categories only;
-        # fully-checked categories omit the key ⇒ transfer-all) + rule-gated
-        # STRATA. Phonology categories use the Layer-1 default conflict mode
-        # (no per-category UI); PHONOLOGICAL_FEATURES stays MERGE via
-        # _DEFAULT_CONFLICT_MODES / conflict_mode_for.
-        phon_page = wizard.page_phonology()
-        if phon_page is not None and phon_page.inventory() is not None:
-            collapsed = collapse_phonology(
-                phon_page.inventory(), phon_page.collect_phonology_picks()
-            )
-            if collapsed["categories"]:
-                import dataclasses
-                merged_categories = dict(selection.categories)
-                merged_categories.update(collapsed["categories"])
-                merged_leaf = dict(selection.leaf_item_picks)
-                merged_leaf.update(collapsed["leaf_item_picks"])
-                selection = dataclasses.replace(
-                    selection,
-                    categories=merged_categories,
-                    leaf_item_picks=merged_leaf,
+        plan, report = _compute_wizard_plan(wizard)
+        if plan is None:
+            # DR-5: wrapper owns QMessageBox dialogs.
+            context = wizard.page_project_ws().context()
+            if context is None:
+                QtWidgets.QMessageBox.warning(
+                    self, "GramTrans", "No target project bound. Go back to page 1."
                 )
-
-        # WS mapping from page 0 (three-way MAP/CREATE/SKIP control).
-        page0 = wizard.page_project_ws()
-        ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
-        state, payload = gt_api.compute_preview(context, selection, ws_mapping)
-        # Phase 3c: compute_preview always returns PREVIEW_READY
-        self._cached_plan = payload
-        if __package__:
-            from ..report import RunReport
-        else:
-            from report import RunReport  # type: ignore
-        # Surface intra-phonology missing-reference warnings alongside the
-        # plan's own EXCLUDED-LOSSY entries (spec 010 T025). Same channel the
-        # Move gate counts, so Preview and Move agree.
-        phon_warnings = _phonology_excluded_lossy_for(wizard)
-        report = RunReport.build_from_plan(
-            payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings
-        )
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self, "GramTrans", "Plan assembly failed. Check project state."
+                )
+            return
+        self._cached_plan = plan
         self._stats.set_report(report)
         self.completeChanged.emit()
 
@@ -2717,6 +2652,89 @@ class _PagePreview(QtWidgets.QWizardPage):
 
     def isComplete(self) -> bool:
         return self._cached_plan is not None
+
+
+# ---------------------------------------------------------------------------
+# Module-level plan assembler (DR-4, FR-004)
+# ---------------------------------------------------------------------------
+
+def _compute_wizard_plan(wizard) -> tuple:
+    """Assemble the transfer plan from all wizard page selections.
+
+    Returns (plan, report) on success, (None, None) on any failure.
+    Does not display QMessageBox -- callers own all UI dialogs (DR-5).
+
+    DR-4 step order:
+    1. Context None-guard.
+    2. affix_selection = page_items.collect_selection().
+    3. build_selection + _replace_conflict_modes.
+    4. dataclasses.replace stamp with similar_resolutions (single call -- SC-005).
+    5. similar_resolutions stamp BEFORE phonology merge block (P1 ordering).
+    6. ws_mapping from page0.
+    7. gt_api.compute_preview; return (None, None) on payload-None or failure.
+    8. RunReport.build_from_plan; return (payload, report).
+    """
+    # Step 1: context None-guard (no QMessageBox here -- caller owns dialogs).
+    context = wizard.page_project_ws().context()
+    if context is None:
+        return (None, None)
+
+    # Step 2: affix selection (single collect_selection call -- SC-005).
+    page_items = wizard.page_items()
+    affix_selection = page_items.collect_selection()
+
+    # Step 3: build selection + apply Layer-1 conflict-mode defaults.
+    selection = build_selection(
+        PickerState(
+            checked_affixes=affix_selection.affix_picks,
+            checked_templates=affix_selection.template_picks,
+        ),
+        SourceAffixInventory(
+            unbound_affixes=affix_selection.affix_picks,
+            template_to_slots={t: () for t in affix_selection.template_picks},
+        ),
+        category_scopes={},
+    )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
+
+    # Step 4: stamp similar_resolutions BEFORE phonology merge (DR-4 step 5, P1).
+    # Uses the already-collected affix_selection -- no second collect_selection call.
+    selection = dataclasses.replace(
+        selection,
+        similar_resolutions=affix_selection.similar_resolutions,
+    )
+
+    # Step 5: phonology collapse-merge (applied AFTER resolution stamp per DR-4/P1).
+    phon_page = wizard.page_phonology()
+    if phon_page is not None and phon_page.inventory() is not None:
+        collapsed = collapse_phonology(
+            phon_page.inventory(), phon_page.collect_phonology_picks()
+        )
+        if collapsed["categories"]:
+            merged_categories = dict(selection.categories)
+            merged_categories.update(collapsed["categories"])
+            merged_leaf = dict(selection.leaf_item_picks)
+            merged_leaf.update(collapsed["leaf_item_picks"])
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                leaf_item_picks=merged_leaf,
+            )
+
+    # Step 6: WS mapping from page 0.
+    page0 = wizard.page_project_ws()
+    ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
+
+    # Step 7: compute preview; return (None, None) on failure or None payload.
+    state, payload = gt_api.compute_preview(context, selection, ws_mapping)
+    if payload is None:
+        return (None, None)
+
+    # Step 8: build run report and return.
+    phon_warnings = _phonology_excluded_lossy_for(wizard)
+    report = RunReport.build_from_plan(
+        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings
+    )
+    return (payload, report)
 
 
 # ---------------------------------------------------------------------------
@@ -2739,12 +2757,21 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._report_sink = report_sink
         self._modify_allowed = modify_allowed
         self._move_done = False
-        self.setTitle("Step 7 of 7: Finish / Move")
+        # DR-1: cached plan is the sole freshness gate for the dry-run flow.
+        self._cached_plan = None
+        self.setTitle("Step 6 of 6: Finish / Move")
         self.setSubTitle(
             "Click 'Execute Move' to write all planned actions to the target project. "
             "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
         )
         self._build_ui()
+        # DR-1: Move starts disabled unconditionally; enabled only after dry run.
+        self._move_btn.setEnabled(False)
+
+    def initializePage(self) -> None:
+        """DR-2a: clear cached plan and disable Move on every Finish page entry."""
+        self._cached_plan = None
+        self._move_btn.setEnabled(False)
 
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
@@ -2756,23 +2783,50 @@ class _PageFinish(QtWidgets.QWizardPage):
             )
             warn.setWordWrap(True)
             layout.addWidget(warn)
+        self._dry_run_btn = QtWidgets.QPushButton("Dry run (preview plan)", self)
+        self._dry_run_btn.clicked.connect(self._on_dry_run)
+        layout.addWidget(self._dry_run_btn)
         self._move_btn = QtWidgets.QPushButton("Execute Move", self)
-        self._move_btn.setEnabled(self._modify_allowed)
+        self._move_btn.setEnabled(False)
         self._move_btn.clicked.connect(self._on_move)
         layout.addWidget(self._move_btn)
         self._stats = StatsPanel(self)
         layout.addWidget(self._stats, 1)
 
+    def _on_dry_run(self) -> None:
+        """DR-5, G1, FR-006: compute the plan and show report; enable Move on success."""
+        wizard = self.wizard()
+        if wizard is None:
+            return
+        plan, report = _compute_wizard_plan(wizard)
+        if plan is None:
+            # DR-5: caller owns QMessageBox.
+            context = wizard.page_project_ws().context()
+            if context is None:
+                QtWidgets.QMessageBox.warning(
+                    self, "GramTrans", "No target project bound. Go back to page 1."
+                )
+            else:
+                # G1: assembly failure -- Move stays disabled, no partial state.
+                QtWidgets.QMessageBox.warning(
+                    self, "GramTrans", "Plan assembly failed. Check project state."
+                )
+            return
+        self._cached_plan = plan
+        self._stats.set_report(report)
+        if self._modify_allowed:
+            self._move_btn.setEnabled(True)
+
     def _on_move(self) -> None:
         wizard = self.wizard()
         if wizard is None:
             return
-        # Named accessors only (spec 010 P-1) — never literal page indices.
-        preview_page = wizard.page_preview()
-        plan = preview_page.cached_plan() if preview_page is not None else None
+        # DR-6: read cached plan from self (set by dry run), not preview page.
+        plan = self._cached_plan
         if plan is None:
             QtWidgets.QMessageBox.warning(
-                self, "GramTrans", "No preview plan available. Go back to page 5."
+                self, "GramTrans",
+                "No plan available. Run a dry run on the Finish page first."
             )
             return
         context = wizard.page_project_ws().context()
@@ -2840,11 +2894,11 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._stats.set_report(report)
         self._move_btn.setEnabled(False)
         self._move_done = True
-        # Move non-repeatability (P0): invalidate the preview page's cached plan
-        # so a double-click or re-entry cannot re-execute the same plan and
-        # create duplicate LCM objects.
-        if hasattr(preview_page, "_cached_plan"):
-            preview_page._cached_plan = None
+        # DR-2b, G3: invalidate Finish page's own cached plan (post-move).
+        # Move non-repeatability: a double-click or re-entry cannot re-execute
+        # the same plan and create duplicate LCM objects. initializePage also
+        # clears on re-entry (DR-2a), so this provides belt-and-suspenders safety.
+        self._cached_plan = None
         self.completeChanged.emit()
 
 
@@ -2853,7 +2907,7 @@ class _PageFinish(QtWidgets.QWizardPage):
 # ---------------------------------------------------------------------------
 
 class SelectionWizard(QtWidgets.QWizard):
-    """5-page GramTrans selection wizard (Phase 3c, Refinement 3).
+    """6-page GramTrans selection wizard (Phase 3c, Refinement 3).
 
     Replaces `main_window.MainWindow`.  All existing widgets are re-hosted
     verbatim; no widget logic is rewritten.
@@ -2905,8 +2959,8 @@ class SelectionWizard(QtWidgets.QWizard):
         #   2 = Affixes (item picker)
         #   3 = Skeleton
         #   4 = Grammatical deps
-        #   5 = Preview
-        #   6 = Finish / Move
+        #   5 = Finish / Move
+        # _PagePreview retained (not added) for back-compat via page_preview().
         # Cross-page lookups go through named accessors (P-1) so this insertion
         # does not silently mis-resolve any literal page index.
         # _PageScopeConflict is retained for back-compat but removed from the flow.
@@ -2925,8 +2979,7 @@ class SelectionWizard(QtWidgets.QWizard):
         self.addPage(self._page_items)         # index 2
         self.addPage(self._page_skeleton)      # index 3
         self.addPage(self._page_gram_deps)     # index 4
-        self.addPage(self._page_preview)       # index 5
-        self.addPage(self._page_finish)        # index 6
+        self.addPage(self._page_finish)        # index 5
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 

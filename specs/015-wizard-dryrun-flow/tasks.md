@@ -16,7 +16,7 @@ Test edits: `tests/unit/test_p0_idempotency_ws.py` and
 
 ---
 
-## T-001 [P] — Page-count reduction: renumber titles and remove addPage
+## T-001 [X] — Page-count reduction: renumber titles and remove addPage
 
 **Covers**: DR-7, FR-001, FR-003
 
@@ -46,14 +46,14 @@ the title is moot (page not added) but kept consistent per DR-7.
 `SelectionWizard.page_preview()` at line 2956 is NOT changed (FR-003 back-compat).
 
 **Checklist**:
-- [ ] All five "of 7" occurrences in live page classes updated.
-- [ ] `addPage` for `_page_preview` removed; `_page_preview` still instantiated.
-- [ ] Class docstring updated to "6-page".
-- [ ] `test_no_literal_page_index_calls_in_wizard_source` passes.
+- [X] All five "of 7" occurrences in live page classes updated.
+- [X] `addPage` for `_page_preview` removed; `_page_preview` still instantiated.
+- [X] Class docstring updated to "6-page".
+- [X] `test_no_literal_page_index_calls_in_wizard_source` passes.
 
 ---
 
-## T-002 [P] — Extract `_compute_wizard_plan` module-level helper
+## T-002 [X] — Extract `_compute_wizard_plan` module-level helper
 
 **Covers**: DR-4, DR-4 step 4 (P0 SC-005), DR-4 step 5, FR-004
 
@@ -87,15 +87,15 @@ def _compute_wizard_plan(wizard) -> tuple:
 ```
 
 **Checklist**:
-- [ ] No `QMessageBox` call inside this function.
-- [ ] Redundant `collect_selection()` at line 2665 is dropped (one call total).
-- [ ] `dataclasses.replace` stamp precedes phonology merge block.
-- [ ] Returns `(None, None)` on context-None, compute failure, and payload-None.
-- [ ] `from __future__ import annotations` already present; use `typing` generics only.
+- [X] No `QMessageBox` call inside this function.
+- [X] Redundant `collect_selection()` at line 2665 is dropped (one call total).
+- [X] `dataclasses.replace` stamp precedes phonology merge block.
+- [X] Returns `(None, None)` on context-None, compute failure, and payload-None.
+- [X] `from __future__ import annotations` already present; use `typing` generics only.
 
 ---
 
-## T-003 — Rewrite `_PagePreview._on_preview` as thin wrapper
+## T-003 [X] — Rewrite `_PagePreview._on_preview` as thin wrapper
 
 **Depends on**: T-002 | **Covers**: DR-5, FR-005
 
@@ -108,14 +108,14 @@ The original body (lines 2626-2713) is removed and replaced by the thin wrapper.
 `_PagePreview.cached_plan()` (line 2715) are retained unchanged (FR-003, R3).
 
 **Checklist**:
-- [ ] `_PagePreview._on_preview` is a thin wrapper only; no plan assembly inline.
-- [ ] QMessageBox for None-context case shown here (not in helper).
-- [ ] QMessageBox for assembly-failure case shown here (not in helper).
-- [ ] `_PagePreview.isComplete()` and `cached_plan()` untouched.
+- [X] `_PagePreview._on_preview` is a thin wrapper only; no plan assembly inline.
+- [X] QMessageBox for None-context case shown here (not in helper).
+- [X] QMessageBox for assembly-failure case shown here (not in helper).
+- [X] `_PagePreview.isComplete()` and `cached_plan()` untouched.
 
 ---
 
-## T-004 — `_PageFinish.__init__`: add `_cached_plan` field and initial gate state
+## T-004 [X] — `_PageFinish.__init__`: add `_cached_plan` field and initial gate state
 
 **Depends on**: T-002 | **Covers**: DR-1, FR-007
 
@@ -126,13 +126,13 @@ In `_PageFinish.__init__` (lines 2737-2747):
   (regardless of `_modify_allowed`).
 
 **Checklist**:
-- [ ] `_cached_plan` initialized to `None` in `__init__`.
-- [ ] `_move_btn` disabled unconditionally at construction.
-- [ ] No flush of the 012 diff cache (DR-3 -- orthogonal caches).
+- [X] `_cached_plan` initialized to `None` in `__init__`.
+- [X] `_move_btn` disabled unconditionally at construction.
+- [X] No flush of the 012 diff cache (DR-3 -- orthogonal caches).
 
 ---
 
-## T-005 — Add `_PageFinish.initializePage` override
+## T-005 [X] — Add `_PageFinish.initializePage` override
 
 **Depends on**: T-004 | **Covers**: DR-2a, DR-3, FR-008a, R1
 
@@ -149,14 +149,14 @@ Note: disabling an already-disabled button is a no-op in Qt; safe in read-only m
 (R1). Do NOT flush the 012 per-item diff cache here (DR-3).
 
 **Checklist**:
-- [ ] Method exists as an override on `_PageFinish`.
-- [ ] Both `_cached_plan = None` and `_move_btn.setEnabled(False)` present.
-- [ ] No reference to `_PagePreview._cached_plan`.
-- [ ] No 012 diff-cache flush.
+- [X] Method exists as an override on `_PageFinish`.
+- [X] Both `_cached_plan = None` and `_move_btn.setEnabled(False)` present.
+- [X] No reference to `_PagePreview._cached_plan`.
+- [X] No 012 diff-cache flush.
 
 ---
 
-## T-006 — Add "Dry run" button to `_PageFinish._build_ui` and `_on_dry_run` handler
+## T-006 [X] — Add "Dry run" button to `_PageFinish._build_ui` and `_on_dry_run` handler
 
 **Depends on**: T-004, T-005 | **Covers**: DR-5, G1, FR-006
 
@@ -173,14 +173,14 @@ New method `_PageFinish._on_dry_run(self) -> None`:
    `self._move_btn.setEnabled(True)`.
 
 **Checklist**:
-- [ ] Button inserted above `_move_btn` in the UI layout.
-- [ ] `_on_dry_run` calls `_compute_wizard_plan` (not inline assembly).
-- [ ] Both QMessageBox paths handled (G1 contract).
-- [ ] Move enabled only after non-None plan returned.
+- [X] Button inserted above `_move_btn` in the UI layout.
+- [X] `_on_dry_run` calls `_compute_wizard_plan` (not inline assembly).
+- [X] Both QMessageBox paths handled (G1 contract).
+- [X] Move enabled only after non-None plan returned.
 
 ---
 
-## T-007 — Migrate `_PageFinish._on_move` cache read from preview page to self
+## T-007 [X] — Migrate `_PageFinish._on_move` cache read from preview page to self
 
 **Depends on**: T-004 | **Covers**: DR-6, G2
 
@@ -199,14 +199,14 @@ Update the stale-plan fallback message at line 2775 from "Go back to page 5" to
 "Run a dry run on the Finish page" (or similar -- no standalone preview page exists).
 
 **Checklist**:
-- [ ] No reference to `preview_page.cached_plan()` remains in `_on_move`.
-- [ ] `self._cached_plan` is the sole plan source.
-- [ ] Stale-plan message updated.
-- [ ] `except gt_api.PreviewStale` at line 2837 left unchanged (DR-2 keep).
+- [X] No reference to `preview_page.cached_plan()` remains in `_on_move`.
+- [X] `self._cached_plan` is the sole plan source.
+- [X] Stale-plan message updated.
+- [X] `except gt_api.PreviewStale` at line 2837 left unchanged (DR-2 keep).
 
 ---
 
-## T-008 — Migrate post-move cache invalidation from preview page to self
+## T-008 [X] — Migrate post-move cache invalidation from preview page to self
 
 **Depends on**: T-007 | **Covers**: DR-2b, G3, FR-008b
 
@@ -224,15 +224,15 @@ self._cached_plan = None
 This is the second DR-2 invalidation point.
 
 **Checklist**:
-- [ ] `self._cached_plan = None` written after successful `execute_move`.
-- [ ] No reference to `preview_page._cached_plan` in this block.
-- [ ] `_move_btn` disabled after post-move invalidation (consider
+- [X] `self._cached_plan = None` written after successful `execute_move`.
+- [X] No reference to `preview_page._cached_plan` in this block.
+- [X] `_move_btn` disabled after post-move invalidation (consider
       `self._move_btn.setEnabled(False)` here for consistency; not strictly required
       since `initializePage` fires on re-entry, but explicit is cleaner).
 
 ---
 
-## T-009 — Update `test_p0_idempotency_ws.py` (~line 198)
+## T-009 [X] — Update `test_p0_idempotency_ws.py` (~line 198)
 
 **Depends on**: T-004, T-005, T-008 | **Covers**: DR-8
 
@@ -246,13 +246,13 @@ In `tests/unit/test_p0_idempotency_ws.py` at approximately line 198:
   `finish_page._cached_plan is None` and `move_btn.isEnabled() == False`.
 
 **Checklist**:
-- [ ] No assertion remains on `_PagePreview._cached_plan` as the Move gate.
-- [ ] Invalidation via `initializePage` tested explicitly.
-- [ ] Test passes with no new imports.
+- [X] No assertion remains on `_PagePreview._cached_plan` as the Move gate.
+- [X] Invalidation via `initializePage` tested explicitly.
+- [X] Test passes with no new imports.
 
 ---
 
-## T-010 — Update `test_wizard_page_flow.py`
+## T-010 [X] — Update `test_wizard_page_flow.py`
 
 **Depends on**: T-001 | **Covers**: DR-8
 
@@ -264,10 +264,10 @@ In `tests/unit/test_wizard_page_flow.py`:
   update expected page sequence accordingly.
 
 **Checklist**:
-- [ ] Docstring updated.
-- [ ] No in-body `"7"` page count references remain.
-- [ ] Expected page order reflects six-page flow.
-- [ ] Test passes.
+- [X] Docstring updated.
+- [X] No in-body `"7"` page count references remain.
+- [X] Expected page order reflects six-page flow.
+- [X] Test passes.
 
 ---
 

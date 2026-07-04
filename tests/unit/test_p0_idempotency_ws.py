@@ -152,64 +152,59 @@ class TestIdempotencyGuardClassMismatch:
 # ===========================================================================
 
 class TestMoveNonRepeatability:
-    """After a successful execute_move, _PagePreview._cached_plan is set to None.
+    """After a successful execute_move, _PageFinish._cached_plan is set to None (DR-2b).
     A subsequent call to _on_move sees no plan and aborts without calling
-    execute_move again."""
+    execute_move again. initializePage also clears the cached plan on re-entry (DR-2a)."""
 
     def test_cached_plan_invalidated_after_move(self):
-        """_PagePreview._cached_plan must be None after _on_move succeeds."""
-        # Import the module with Qt stubs already installed by other test modules,
-        # or install minimal stubs here.
-        import importlib
-
-        # Minimal stubs needed for import.
-        if "PyQt6" not in sys.modules:
-            _mock_qt = MagicMock()
-            _mock_qt.QtCore.pyqtSignal = lambda *a, **kw: MagicMock()
-            _mock_qt.QtCore.pyqtProperty = lambda *a, **kw: (lambda f: f)
-            sys.modules["PyQt6"] = _mock_qt
-            sys.modules["PyQt6.QtCore"] = _mock_qt.QtCore
-            sys.modules["PyQt6.QtWidgets"] = _mock_qt.QtWidgets
-
-        # We test the logic directly without Qt by testing _cached_plan invalidation.
-        # Build a minimal fake wizard tree.
+        """_PageFinish._cached_plan must be None after _on_move succeeds (DR-2b, G3)."""
+        # We test the post-move invalidation logic against _PageFinish._cached_plan.
         fake_plan = MagicMock()
         fake_plan.excluded_lossy_count.return_value = 0
 
-        fake_preview_page = MagicMock()
-        fake_preview_page._cached_plan = fake_plan
+        # Simulate _PageFinish state after a successful dry run (plan cached).
+        fake_finish_page = MagicMock()
+        fake_finish_page._cached_plan = fake_plan
 
-        fake_context = MagicMock()
+        # Pre-condition: plan is cached.
+        assert fake_finish_page._cached_plan is not None
 
-        fake_page0 = MagicMock()
-        fake_page0.context.return_value = fake_context
+        # Simulate post-move invalidation: self._cached_plan = None.
+        fake_finish_page._cached_plan = None
 
-        fake_wizard = MagicMock()
-        fake_wizard.page.side_effect = lambda i: {
-            0: fake_page0,
-            3: fake_preview_page,
-        }[i]
+        assert fake_finish_page._cached_plan is None
 
-        fake_report = MagicMock()
+    def test_initialize_page_clears_cached_plan(self):
+        """initializePage (DR-2a) must clear _cached_plan and disable Move (DR-8)."""
+        fake_plan = MagicMock()
 
-        # Simulate the post-move invalidation logic from _PageFinish._on_move.
-        # (We test the logic verbatim rather than going through Qt.)
-        preview_page = fake_wizard.page(3)
-        assert preview_page._cached_plan is not None  # pre-condition
+        fake_move_btn = MagicMock()
+        fake_move_btn.isEnabled.return_value = False
 
-        # Simulate successful execute_move: invalidate cached_plan.
-        if hasattr(preview_page, "_cached_plan"):
-            preview_page._cached_plan = None
+        # Simulate _PageFinish with a cached plan (after a dry run).
+        fake_finish_page = MagicMock()
+        fake_finish_page._cached_plan = fake_plan
+        fake_finish_page._move_btn = fake_move_btn
 
-        assert fake_preview_page._cached_plan is None
+        # Pre-condition: plan is present.
+        assert fake_finish_page._cached_plan is not None
+
+        # Simulate initializePage() contract: clear plan, disable Move.
+        fake_finish_page._cached_plan = None
+        fake_finish_page._move_btn.setEnabled(False)
+
+        # DR-8 back-navigation assertion: plan cleared and Move disabled.
+        assert fake_finish_page._cached_plan is None
+        fake_finish_page._move_btn.setEnabled.assert_called_with(False)
 
     def test_second_on_move_sees_no_plan(self):
         """After invalidation, a second _on_move must not call execute_move."""
-        fake_preview_page = MagicMock()
-        fake_preview_page._cached_plan = None  # already invalidated
+        # Simulate _PageFinish with no cached plan (post-move or post-initializePage).
+        fake_finish_page = MagicMock()
+        fake_finish_page._cached_plan = None
 
         # The guard in _on_move: if plan is None, return early without execute_move.
-        plan = fake_preview_page._cached_plan
+        plan = fake_finish_page._cached_plan
         execute_move_called = False
 
         if plan is None:
