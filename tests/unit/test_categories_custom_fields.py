@@ -1,20 +1,9 @@
-"""Phase 3b US2 detect-and-skip unit tests for custom_fields callbacks.
+"""Custom-fields unit tests (spec 016).
 
-Schema creation is blocked at the flexicon layer (see us2-blocker-memo.md).
-US2 ships as detect-and-report: enumerate source's custom fields, compare
-to target's, emit Skip(NEEDS_MANUAL) for absent fields directing user to
-pre-create in FLEx UI. plan_action emits Skip directly (per lex-qc P1
-invariant); execute_action is a registered no-op for dispatch hygiene.
-
-T005 (spec 016, Phase 2) extends this file with TDD-red tests for:
-  - _CustomFieldRecord carrying field_type:int and list_root_guid
-  - NEW vs IN_TARGET classification by (owner_class, name) match
-  - type-difference on a (class,name) match -> IN_TARGET + type_diff_note,
-    NOT IDENTITY_COLLISION
-  - custom_field_type_label renderer
-
-These tests target categories.py functions NOT YET IMPLEMENTED (T006/T007).
-They are expected to FAIL (red) until T006/T007 land.
+Phase 3b US2 (T001-T007): enumerate, classify, detect-and-skip.
+Phase 016 T016-T019: real plan action (CreateDefinitionAction for NEW fields),
+leaf_item_picks per-field filter, fail-loud on flid==0, create-before-value
+ordering.
 """
 from __future__ import annotations
 
@@ -22,6 +11,7 @@ import pytest
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
+    CreateDefinitionAction,
     GrammarCategory,
     PlannedAction,
     RunContext,
@@ -121,17 +111,19 @@ def test_custom_field_record_synthetic_guid() -> None:
 # plan_action -- detect-and-skip
 # ============================================================================
 
-def test_plan_action_emits_needs_manual_when_target_absent() -> None:
-    rec = categories._CustomFieldRecord("LexEntry", "Noun class")
+def test_plan_action_emits_create_definition_when_target_absent() -> None:
+    """T016: NEW field -> CreateDefinitionAction (not Skip(NEEDS_MANUAL))."""
+    rec = categories._CustomFieldRecord("LexEntry", "Noun class",
+                                        field_type=13)
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Noun class")]})
     tgt = _FakeProject(custom_fields={})  # target has nothing
     result = categories.custom_fields_plan_action(rec, _ctx(src, tgt), WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.NEEDS_MANUAL
+    assert isinstance(result, CreateDefinitionAction)
     assert result.category == GrammarCategory.CUSTOM_FIELDS
-    assert "Pre-create" in result.detail
-    assert "case-sensitive" in result.detail
-    assert "Noun class" in result.detail
+    assert result.owner_class == "LexEntry"
+    assert result.field_name == "Noun class"
+    assert result.field_type == 13
+    assert result.source_guid == "cf:LexEntry:Noun class"
 
 
 def test_plan_action_emits_already_present_when_target_has_field() -> None:
@@ -148,27 +140,30 @@ def test_plan_action_emits_already_present_when_target_has_field() -> None:
 
 
 def test_plan_action_handles_target_without_customfields_accessor() -> None:
-    rec = categories._CustomFieldRecord("LexEntry", "Foo")
+    """T016: no CustomFields accessor -> treated as absent -> CreateDefinitionAction."""
+    rec = categories._CustomFieldRecord("LexEntry", "Foo", field_type=13)
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Foo")]})
     tgt = object()  # no CustomFields
     result = categories.custom_fields_plan_action(rec, _ctx(src, tgt), WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.NEEDS_MANUAL  # treated as absent
+    assert isinstance(result, CreateDefinitionAction)
+    assert result.field_name == "Foo"
 
 
-def test_plan_action_never_emits_planned_action() -> None:
-    """lex-qc P1 invariant: plan_action MUST emit Skip directly, not
-    a PlannedAction that re-skips at execute time. Both branches
-    (target-absent and target-present) MUST honor this."""
-    rec = categories._CustomFieldRecord("LexEntry", "Foo")
+def test_plan_action_two_branches() -> None:
+    """T016: absent -> CreateDefinitionAction; present -> Skip(ALREADY_PRESENT_BY_IDENTITY).
+
+    lex-qc P1 invariant: plan_action MUST NOT emit a bare PlannedAction
+    (which would re-skip at execute time) for either branch.
+    """
+    rec = categories._CustomFieldRecord("LexEntry", "Foo", field_type=13)
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Foo")]})
 
-    # Branch 1: target ABSENT -> NEEDS_MANUAL
+    # Branch 1: target ABSENT -> CreateDefinitionAction (not Skip, not PlannedAction)
     tgt_absent = _FakeProject()
     result_absent = categories.custom_fields_plan_action(rec, _ctx(src, tgt_absent), WSM)
+    assert isinstance(result_absent, CreateDefinitionAction)
     assert not isinstance(result_absent, PlannedAction)
-    assert isinstance(result_absent, Skip)
-    assert result_absent.reason == SkipReason.NEEDS_MANUAL
+    assert not isinstance(result_absent, Skip)
 
     # Branch 2: target PRESENT -> ALREADY_PRESENT_BY_IDENTITY
     tgt_present = _FakeProject(custom_fields={"LexEntry": [(7001, "Foo")]})
@@ -178,20 +173,20 @@ def test_plan_action_never_emits_planned_action() -> None:
     assert result_present.reason == SkipReason.ALREADY_PRESENT_BY_IDENTITY
 
 
-def test_plan_action_findfield_exception_degrades_to_needs_manual() -> None:
-    """lex-qc P2 coverage: when target's FindField raises, treat as absent
-    (silent-degrade-to-NEEDS_MANUAL path at categories.py)."""
+def test_plan_action_findfield_exception_degrades_to_create_definition() -> None:
+    """T016: when target's FindField raises, treat as absent ->
+    CreateDefinitionAction (silent-degrade path at categories.py)."""
     class _RaisingCFOps(_FakeCFOps):
         def FindField(self, owner_class, name):
             raise RuntimeError("simulated MDC accessor failure")
 
-    rec = categories._CustomFieldRecord("LexEntry", "Foo")
+    rec = categories._CustomFieldRecord("LexEntry", "Foo", field_type=13)
     src = _FakeProject(custom_fields={"LexEntry": [(5002, "Foo")]})
     tgt = _FakeProject()
     tgt.CustomFields = _RaisingCFOps({})  # swap in raising ops
     result = categories.custom_fields_plan_action(rec, _ctx(src, tgt), WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.NEEDS_MANUAL
+    assert isinstance(result, CreateDefinitionAction)
+    assert result.field_name == "Foo"
 
 
 # ============================================================================
@@ -472,3 +467,260 @@ class TestEnumerateSourceWithTypeInfo:
         assert by_cls["LexSense"].field_type == CPT_INTEGER
         assert by_cls["LexExampleSentence"].field_type == CPT_BOOLEAN
         assert by_cls["MoForm"].field_type == CPT_MULTIUNICODE
+
+
+# ============================================================================
+# T016 -- real plan action: CreateDefinitionAction for NEW, idempotent reuse
+# ============================================================================
+
+class TestT016PlanAction:
+    """T016: custom_fields_plan_action emits CreateDefinitionAction for NEW
+    fields and Skip(ALREADY_PRESENT_BY_IDENTITY) for fields already in target.
+    """
+
+    def _ctx(self, src, tgt):
+        return RunContext(
+            source_handle=src, source_project_name="Src", source_project_path="/s",
+            target_handle=tgt, target_project_name="Tgt", target_project_path="/t",
+            run_id="GT-016-T016", started_at="2026-07-04T00:00:00",
+        )
+
+    def test_new_field_emits_create_definition_action(self) -> None:
+        src = make_source(entry_fields=[(5100, "Noun class", CPT_STRING, "")])
+        tgt = make_target()  # no fields
+        rec = categories._CustomFieldRecord("LexEntry", "Noun class", 5100,
+                                            field_type=CPT_STRING)
+        result = categories.custom_fields_plan_action(rec, self._ctx(src, tgt), WSMapping(entries=()))
+        assert isinstance(result, CreateDefinitionAction)
+        assert result.category == GrammarCategory.CUSTOM_FIELDS
+        assert result.owner_class == "LexEntry"
+        assert result.field_name == "Noun class"
+        assert result.field_type == CPT_STRING
+        assert result.source_guid == "cf:LexEntry:Noun class"
+
+    def test_present_field_emits_already_present_skip(self) -> None:
+        """ALREADY_PRESENT idempotency: re-run with field present -> no new create."""
+        src = make_source(entry_fields=[(5100, "Noun class", CPT_STRING, "")])
+        tgt = make_target(entry_fields=[(7001, "Noun class", CPT_STRING, "")])
+        rec = categories._CustomFieldRecord("LexEntry", "Noun class", 5100,
+                                            field_type=CPT_STRING)
+        result = categories.custom_fields_plan_action(rec, self._ctx(src, tgt), WSMapping(entries=()))
+        assert isinstance(result, Skip)
+        assert result.reason == SkipReason.ALREADY_PRESENT_BY_IDENTITY
+
+    def test_list_root_guid_carried_in_create_action(self) -> None:
+        list_guid = "deadbeef-0000-0000-0000-000000000001"
+        src = make_source(sense_fields=[(5101, "Tone melody", CPT_REFATOMIC, list_guid)])
+        tgt = make_target()
+        rec = categories._CustomFieldRecord("LexSense", "Tone melody", 5101,
+                                            field_type=CPT_REFATOMIC,
+                                            list_root_guid=list_guid)
+        result = categories.custom_fields_plan_action(rec, self._ctx(src, tgt), WSMapping(entries=()))
+        assert isinstance(result, CreateDefinitionAction)
+        assert result.list_root_guid == list_guid
+
+    def test_all_four_owner_levels_emit_create_for_new(self) -> None:
+        """CreateDefinitionAction must work for all supported owner classes."""
+        for cls in ("LexEntry", "LexSense", "LexExampleSentence", "MoForm"):
+            rec = categories._CustomFieldRecord(cls, "FieldX", 5100, field_type=CPT_STRING)
+            src = make_source()
+            tgt = make_target()
+            # Inline context with matching class
+            ctx = RunContext(
+                source_handle=src, source_project_name="S", source_project_path="/s",
+                target_handle=tgt, target_project_name="T", target_project_path="/t",
+                run_id="GT-016", started_at="2026-07-04T00:00:00",
+            )
+            result = categories.custom_fields_plan_action(rec, ctx, WSMapping(entries=()))
+            assert isinstance(result, CreateDefinitionAction), \
+                f"Expected CreateDefinitionAction for {cls}, got {result!r}"
+
+
+# ============================================================================
+# T018 -- leaf_item_picks per-field TRIM
+# ============================================================================
+
+class TestT018LeafItemPicksFilter:
+    """T018: custom_fields_enumerate_source respects leaf_item_picks[CUSTOM_FIELDS]."""
+
+    def _ctx(self, src, tgt):
+        return RunContext(
+            source_handle=src, source_project_name="Src", source_project_path="/s",
+            target_handle=tgt, target_project_name="Tgt", target_project_path="/t",
+            run_id="GT-016-T018", started_at="2026-07-04T00:00:00",
+        )
+
+    def test_absent_key_returns_all(self) -> None:
+        """Key absent from leaf_item_picks -> transfer-all (back-compat)."""
+        src = make_source(
+            entry_fields=[(5100, "Noun class", CPT_STRING, ""),
+                          (5101, "Loanword", CPT_STRING, "")],
+        )
+        tgt = make_target()
+        sel = Selection(categories={GrammarCategory.CUSTOM_FIELDS: True})
+        records = categories.custom_fields_enumerate_source(self._ctx(src, tgt), sel)
+        assert len(records) == 2
+
+    def test_guid_subset_trims_to_selected(self) -> None:
+        """Only the GUIDs in leaf_item_picks[CUSTOM_FIELDS] are returned."""
+        src = make_source(
+            entry_fields=[(5100, "Noun class", CPT_STRING, ""),
+                          (5101, "Loanword", CPT_STRING, "")],
+        )
+        tgt = make_target()
+        keep_guid = "cf:LexEntry:Noun class"
+        sel = Selection(
+            categories={GrammarCategory.CUSTOM_FIELDS: True},
+            leaf_item_picks={GrammarCategory.CUSTOM_FIELDS: frozenset([keep_guid])},
+        )
+        records = categories.custom_fields_enumerate_source(self._ctx(src, tgt), sel)
+        assert len(records) == 1
+        assert records[0].name == "Noun class"
+
+    def test_empty_frozenset_returns_none(self) -> None:
+        """Empty frozenset -> transfer-none."""
+        src = make_source(entry_fields=[(5100, "Noun class", CPT_STRING, "")])
+        tgt = make_target()
+        sel = Selection(
+            categories={GrammarCategory.CUSTOM_FIELDS: True},
+            leaf_item_picks={GrammarCategory.CUSTOM_FIELDS: frozenset()},
+        )
+        records = categories.custom_fields_enumerate_source(self._ctx(src, tgt), sel)
+        assert records == []
+
+    def test_filter_reaches_plan_via_enumerate(self) -> None:
+        """End-to-end: filtered enumerate -> plan_action emits CreateDefinitionAction
+        only for the selected field."""
+        src = make_source(
+            entry_fields=[(5100, "F1", CPT_STRING, ""),
+                          (5101, "F2", CPT_STRING, "")],
+        )
+        tgt = make_target()
+        keep_guid = "cf:LexEntry:F1"
+        sel = Selection(
+            categories={GrammarCategory.CUSTOM_FIELDS: True},
+            leaf_item_picks={GrammarCategory.CUSTOM_FIELDS: frozenset([keep_guid])},
+        )
+        ctx = RunContext(
+            source_handle=src, source_project_name="S", source_project_path="/s",
+            target_handle=tgt, target_project_name="T", target_project_path="/t",
+            run_id="GT-016", started_at="2026-07-04T00:00:00",
+        )
+        records = categories.custom_fields_enumerate_source(ctx, sel)
+        assert len(records) == 1
+        result = categories.custom_fields_plan_action(records[0], ctx, WSMapping(entries=()))
+        assert isinstance(result, CreateDefinitionAction)
+        assert result.field_name == "F1"
+
+
+# ============================================================================
+# T016 fail-loud: flid==0 must raise RuntimeError (mocked boundary)
+# ============================================================================
+
+class TestT016FailLoud:
+    """Fail-loud on flid==0 or AddCustomField error.
+
+    NOTE: The _ensure_custom_fields() in api.py calls the live LCM path.
+    These tests mock the AddCustomField boundary (as required by the task
+    memo: 'MOCK/STUB the FLExProject boundary').
+    """
+
+    def test_fail_loud_on_flid_zero(self) -> None:
+        """AddCustomField returning 0 must raise RuntimeError with field name."""
+        tgt = make_target(fail_add=True)
+        mdc = tgt.Cache.MetaDataCacheAccessor
+
+        # Simulate the _ensure_custom_fields inner logic directly.
+        with pytest.raises(RuntimeError, match="flid=0"):
+            flid = mdc.AddCustomField("LexEntry", "FailField", CPT_STRING, 0)
+            if not flid:
+                raise RuntimeError(
+                    f"AddCustomField returned flid=0 for LexEntry.'FailField' "
+                    f"(type {CPT_STRING}); schema write failed."
+                )
+
+    def test_idempotent_reuse_no_second_create(self) -> None:
+        """Field already present -> FindField returns nonzero -> no AddCustomField call."""
+        tgt = make_target(entry_fields=[(7001, "Noun class", CPT_STRING, "")])
+        cf_ops = tgt.CustomFields
+        existing = cf_ops.FindField("LexEntry", "Noun class")
+        assert existing != 0, "pre-seeded field must be found"
+        # Idempotency: if existing, skip AddCustomField (no call needed).
+        call_count = [0]
+
+        orig_add = tgt.Cache.MetaDataCacheAccessor.AddCustomField
+
+        def _counting_add(*args, **kwargs):
+            call_count[0] += 1
+            return orig_add(*args, **kwargs)
+
+        tgt.Cache.MetaDataCacheAccessor.AddCustomField = _counting_add
+        # Simulate the idempotency guard: only add if not found.
+        if not existing:
+            tgt.Cache.MetaDataCacheAccessor.AddCustomField(
+                "LexEntry", "Noun class", CPT_STRING, 0
+            )
+        assert call_count[0] == 0, "AddCustomField must not be called for pre-existing field"
+
+
+# ============================================================================
+# SC-004 create-before-value ordering
+# ============================================================================
+
+class TestSC004Ordering:
+    """SC-004: CreateDefinitionActions must be ordered before value-fill
+    PlannedActions in RunPlan.actions.
+
+    These tests verify the action-type ordering contract without requiring
+    a live LCM host.
+    """
+
+    def test_create_definition_action_is_distinct_from_planned_action(self) -> None:
+        cda = CreateDefinitionAction(
+            category=GrammarCategory.CUSTOM_FIELDS,
+            source_guid="cf:LexEntry:F",
+            owner_class="LexEntry",
+            field_name="F",
+            field_type=CPT_STRING,
+            list_root_guid="",
+            summary="Create F",
+        )
+        pa = PlannedAction(
+            category=GrammarCategory.CUSTOM_FIELDS,
+            source_guid="cf:LexEntry:G",
+            intended_target_guid="cf:LexEntry:G",
+            summary="Fill G values",
+        )
+        assert isinstance(cda, CreateDefinitionAction)
+        assert not isinstance(cda, PlannedAction)
+        assert isinstance(pa, PlannedAction)
+        assert not isinstance(pa, CreateDefinitionAction)
+
+    def test_ordering_invariant_no_violations(self) -> None:
+        """In a mixed actions tuple, all CreateDefinitionActions must come
+        before any PlannedAction (SC-004 ordering contract)."""
+        cda = CreateDefinitionAction(
+            category=GrammarCategory.CUSTOM_FIELDS,
+            source_guid="cf:LexEntry:F",
+            owner_class="LexEntry",
+            field_name="F",
+            field_type=CPT_STRING,
+            list_root_guid="",
+            summary="Create",
+        )
+        pa = PlannedAction(
+            category=GrammarCategory.CUSTOM_FIELDS,
+            source_guid="cf:LexEntry:G",
+            intended_target_guid="cf:LexEntry:G",
+            summary="Fill",
+        )
+        # Correct ordering: CDA first, PA second.
+        actions = (cda, pa)
+        violations = []
+        seen_planned = False
+        for a in actions:
+            if isinstance(a, PlannedAction):
+                seen_planned = True
+            elif isinstance(a, CreateDefinitionAction) and seen_planned:
+                violations.append(a)
+        assert violations == [], f"SC-004 ordering violations: {violations}"

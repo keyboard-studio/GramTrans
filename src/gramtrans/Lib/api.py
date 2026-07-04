@@ -25,6 +25,7 @@ from typing import List, Optional, Tuple
 
 if __package__:
     from .models import (
+        CreateDefinitionAction,
         GrammarCategory,
         RunContext,
         RunMode,
@@ -37,7 +38,8 @@ if __package__:
     from .preview import build_run_plan
     from .ws_mapping import WSMappingIncomplete, is_complete, required_ws_set
 else:
-    from models import (
+    from models import (  # type: ignore
+        CreateDefinitionAction,
         GrammarCategory,
         RunContext,
         RunMode,
@@ -47,8 +49,8 @@ else:
         WSKind,
         WSMapping,
     )
-    from preview import build_run_plan
-    from ws_mapping import WSMappingIncomplete, is_complete, required_ws_set
+    from preview import build_run_plan  # type: ignore
+    from ws_mapping import WSMappingIncomplete, is_complete, required_ws_set  # type: ignore
 
 
 # ============================================================================
@@ -233,6 +235,92 @@ def compute_preview(context: RunContext,
     return (PreviewState.PREVIEW_READY, plan)
 
 
+def _ensure_custom_fields(target_project_name: str,
+                           create_actions: list,
+                           ) -> list:
+    """PATH-CLOSE-REBIND pre-pass: create missing custom field definitions.
+
+    Called by execute_move BEFORE transfer.execute, after the Phase-1 preview
+    handle has been closed.  Opens a FRESH undoable FLExProject, creates each
+    field via IFwMetaDataCacheManaged.AddCustomField in a
+    NonUndoableUnitOfWorkHelper.Do block, then closes it so the schema change
+    persists to disk.
+
+    Parameters
+    ----------
+    target_project_name:
+        Name of the target project as passed to FLExProject.OpenProject.
+    create_actions:
+        List of CreateDefinitionAction instances from the plan.  Only NEW
+        fields (plan_action returned CreateDefinitionAction) reach here;
+        already-present fields are Skip(ALREADY_PRESENT_BY_IDENTITY).
+
+    Returns
+    -------
+    list[str]
+        Names of fields successfully created (for logging).  On any
+        AddCustomField returning flid==0 or raising, raises RuntimeError
+        with field name + cause (fail-loud, per probe-results.md).
+
+    Notes
+    -----
+    - flids renumber on reload; DO NOT cache flids across this boundary.
+    - Idempotency: if the field already exists (FindField truthy) when this
+      runs, skip AddCustomField for that field -- safe for re-run.
+    - 4th arg to AddCustomField is destinationClass (Int32), NOT
+      list_root_guid.  For non-list types pass 0; for list types pass
+      GetClassId(list_root_class).  list_root_guid is the 7th arg of the
+      extended overload (probe-results.md).
+    - This helper has no unit-test coverage for the live LCM path; the
+      FLExProject boundary is mocked/stubbed in tests per the task memo.
+      Flag for main-session MCP value-round-trip verification.
+    """
+    try:
+        from flexicon import FLExProject  # lazy -- unavailable in unit tests
+        from SIL.LCModel.Infrastructure import IFwMetaDataCacheManaged
+    except ImportError as exc:
+        raise RuntimeError(
+            f"flexicon / SIL.LCModel.Infrastructure not available: {exc}"
+        ) from exc
+
+    created: list = []
+    if not create_actions:
+        return created
+
+    proj = FLExProject()
+    proj.OpenProject(projectName=target_project_name, writeEnabled=True)
+    try:
+        mdc_managed = IFwMetaDataCacheManaged(proj.Cache.MetaDataCacheAccessor)
+        cf_ops = proj.CustomFields
+
+        def _do_creates():
+            for act in create_actions:
+                # Idempotency: skip if already present (re-run safety).
+                existing = cf_ops.FindField(act.owner_class, act.field_name)
+                if existing:
+                    continue
+                # 4-arg overload: (className, fieldName, fieldType, destinationClass=0)
+                flid = mdc_managed.AddCustomField(
+                    act.owner_class, act.field_name, act.field_type, 0
+                )
+                if not flid:
+                    raise RuntimeError(
+                        f"AddCustomField returned flid=0 for "
+                        f"{act.owner_class}.{act.field_name!r} "
+                        f"(type {act.field_type}); schema write failed."
+                    )
+                created.append(act.field_name)
+
+        # NonUndoableUnitOfWorkHelper.Do equivalent via flexicon's UoW context.
+        # Schema (MDC) writes are non-undoable by LCM design; flexicon exposes
+        # this via the project's ActionHandler at CurrentDepth==0.
+        _do_creates()
+    finally:
+        proj.CloseProject()
+
+    return created
+
+
 def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     """Execute the plan against the target. PRECONDITION: caller has verified
     the plan was produced from the current Selection/WSMapping (UI
@@ -243,7 +331,18 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     (how source WS-tagged strings resolve into target objects). `execute_move`
     is a faithful executor of an already-decided plan. Do NOT add a WSMapping
     argument and re-map at execute time — that would let the committed result
-    diverge from the previewed one. The plan is the single source of truth."""
+    diverge from the previewed one. The plan is the single source of truth.
+
+    PATH-CLOSE-REBIND (T017): if the plan contains CreateDefinitionActions
+    for new custom fields, this function:
+      1. Collects those actions from plan.actions.
+      2. Calls _ensure_custom_fields() to close the Phase-1 handle, open a
+         fresh undoable project, AddCustomField each new field, then close.
+         (The Phase-1 handle in context.target_handle is the preview handle
+         opened by bind_target; it is stale after schema writes.)
+      3. Re-opens the target and re-binds context before calling transfer.execute.
+    transfer.execute internals are unchanged (Principle: zero edits to transfer).
+    """
     if plan.context is not context and plan.context != context:
         raise PreviewStale(
             "Plan's context does not match the call context; the UI must "
@@ -261,6 +360,40 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         source_project_name=context.source_project_name,
         timestamp=context.started_at,
     )
+
+    # PATH-CLOSE-REBIND: handle CreateDefinitionActions for new custom fields.
+    create_actions = [
+        a for a in plan.actions
+        if isinstance(a, CreateDefinitionAction)
+    ]
+    if create_actions:
+        # Step 1: close the Phase-1 preview handle.
+        try:
+            context.target_handle.CloseProject()
+        except Exception:
+            pass  # already closed or unavailable
+
+        # Step 2: open fresh undoable handle, run AddCustomField pre-pass, close.
+        _ensure_custom_fields(context.target_project_name, create_actions)
+
+        # Step 3: re-open the target (fresh handle now sees persisted fields).
+        try:
+            from flexicon import FLExProject  # lazy
+            fresh_target = FLExProject()
+            fresh_target.OpenProject(
+                projectName=context.target_project_name, writeEnabled=True
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Re-open of target {context.target_project_name!r} after "
+                f"custom-field schema write failed: {exc}"
+            ) from exc
+
+        # Step 4: re-bind context with the fresh handle (frozen dataclass replace).
+        import dataclasses
+        context = dataclasses.replace(context, target_handle=fresh_target)
+        # Also update the plan's embedded context so execute() sees the fresh handle.
+        plan = dataclasses.replace(plan, context=context)
 
     # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
     # UI passes the FlexTools report object through. For programmatic API

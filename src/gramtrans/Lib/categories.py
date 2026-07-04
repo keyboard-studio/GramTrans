@@ -47,6 +47,7 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
+        CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
         RunContext,
@@ -59,6 +60,7 @@ if __package__:
     from .residue import ImportResidueTag
 else:
     from models import (  # type: ignore
+        CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
         RunContext,
@@ -623,8 +625,18 @@ def _enumerate_custom_fields(project):
 
 
 def custom_fields_enumerate_source(context, selection):
-    """Walk source.CustomFields.GetAllFields per supported owner class."""
-    return list(_enumerate_custom_fields(context.source_handle))
+    """Walk source.CustomFields.GetAllFields per supported owner class.
+
+    T018 per-field filter: if ``selection.leaf_item_picks`` contains an entry
+    for ``GrammarCategory.CUSTOM_FIELDS``, only fields whose synthetic guid
+    (``"cf:<owner>:<name>"``) is in that frozenset are returned.  An absent key
+    means transfer-all (back-compat); an empty frozenset means transfer-none.
+    """
+    records = list(_enumerate_custom_fields(context.source_handle))
+    picks = selection.leaf_item_picks.get(GrammarCategory.CUSTOM_FIELDS)
+    if picks is not None:
+        records = [r for r in records if r.guid in picks]
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -718,15 +730,22 @@ def custom_fields_required_writing_systems(piece):
 
 
 def custom_fields_plan_action(piece, context, ws_mapping):
-    """Detect-and-skip per FR-325 / US2.
+    """T016 — real plan action for custom-field schema definitions.
 
-    - If target has the same (owner_class, name): Skip(ALREADY_PRESENT_BY_GUID)
-      (reuses the existing GUID-match skip; custom-field synthetic GUID
-      is "cf:<owner>:<name>" so identity match == sync match)
-    - Otherwise: Skip(NEEDS_MANUAL) directing the user to pre-create
-      the field in FLEx UI.  No PlannedAction emitted -- the execute
-      path stays cold (per lex-qc P1 invariant: skip at plan time, not
-      execute time).
+    Decision table:
+    - Field ALREADY PRESENT in target by (owner_class, name) identity:
+        -> Skip(ALREADY_PRESENT_BY_IDENTITY, reuse existing flid at Move time)
+    - Field ABSENT from target (or target has no CustomFields accessor):
+        -> CreateDefinitionAction carrying (owner_class, field_name, field_type,
+           list_root_guid) for the PATH-CLOSE-REBIND executor.
+
+    FR-008: type difference on a (class, name) match is NOT an
+    IDENTITY_COLLISION -- the field is treated as IN_TARGET and reused.
+    No CreateDefinitionAction is emitted for type-diff matches.
+
+    SC-004 ordering: CreateDefinitionActions must precede value-fill
+    PlannedActions in RunPlan.actions; the preview builder enforces this
+    by processing CUSTOM_FIELDS before entry/sense categories.
     """
     src_guid = piece.guid  # "cf:<owner>:<name>"
     target = context.target_handle
@@ -749,31 +768,40 @@ def custom_fields_plan_action(piece, context, ws_mapping):
                 f"custom fields have no LCM Guid)."
             ),
         )
-    return Skip(
+    # Field is NEW in target -- emit a create-definition action.
+    list_root = piece.list_root_guid or ""
+    return CreateDefinitionAction(
         category=GrammarCategory.CUSTOM_FIELDS,
         source_guid=src_guid,
-        reason=SkipReason.NEEDS_MANUAL,
-        detail=(
-            f"Pre-create custom field {piece.owner_class}.{piece.name!r} "
-            f"in FLEx > Tools > Configure > Custom Fields before re-running "
-            f"GramTrans. Names are case-sensitive. Schema creation is "
-            f"blocked at the flexicon layer per "
-            f"flexicon/docs/CUSTOM_FIELDS.md."
+        owner_class=piece.owner_class,
+        field_name=piece.name,
+        field_type=piece.field_type,
+        list_root_guid=list_root,
+        summary=(
+            f"Create custom field {piece.owner_class}.{piece.name!r} "
+            f"(type {piece.field_type}) in target via MDC AddCustomField."
         ),
     )
 
 
 def custom_fields_execute_action(action, context, ws_mapping, tag):
-    """No-op stub.  Schema creation is blocked at the flexicon layer
-    (see custom_fields_plan_action docstring).  plan_action emits Skip
-    directly so this path is never reached during normal operation;
-    the stub is registered (rather than absent) so the leaf-dispatch
-    loop doesn't silently warn on a missing callback.
+    """T019 — value-fill executor for custom fields.
 
-    Upgrade path: when flexicon Phase 2 transaction mode lands and
-    CustomFieldOperations.CreateField becomes safe, replace this body
-    with the actual creation call. plan_action's logic flips from
-    "always Skip" to "PlannedAction for absent fields" simultaneously.
+    This path is reached for REUSE actions (field already in target by
+    identity match, surfaced as PlannedAction by the preview builder's
+    post-definition pass).  Schema creation (CreateDefinitionAction) is
+    handled by api._ensure_custom_fields via PATH-CLOSE-REBIND BEFORE
+    transfer.execute is invoked; by the time this callback fires, every
+    field is guaranteed to exist.
+
+    Value-fill:
+    - Look up the target flid by name at the CURRENT open (flids renumber
+      on reload -- probe-results.md; never cache flids across schema boundary).
+    - Write the source custom-field value onto the already-transferred entry.
+
+    For MVP (T019): no-op -- value population is handled by transfer.execute
+    internals on the matched LCM objects.  This stub remains registered so the
+    leaf-dispatch loop does not warn on a missing callback.
     """
     return None
 

@@ -550,6 +550,37 @@ class PlannedAction:
 
 
 @dataclass(frozen=True)
+class CreateDefinitionAction:
+    """CREATE_DEFINITION — schema-level action for a custom field that does not
+    yet exist in the target.
+
+    This is a non-ICmObject MDC write (IFwMetaDataCacheManaged.AddCustomField)
+    that must run in a NonUndoableUnitOfWorkHelper.Do block BEFORE the normal
+    value-fill pass.  Ordering contract (SC-004): CreateDefinitionActions are
+    ordered before value-fill PlannedActions in RunPlan.actions.
+
+    Fields
+    ------
+    category    : always GrammarCategory.CUSTOM_FIELDS
+    source_guid : synthetic ``"cf:<owner_class>:<field_name>"`` (same key used
+                  by _CustomFieldRecord.guid).
+    owner_class : one of "LexEntry", "LexSense", "LexExampleSentence", "MoForm"
+    field_name  : field label as reported by source GetAllFields
+    field_type  : CellarPropertyType integer (13=String, 14=MultiString, …)
+    list_root_guid : GUID string of the possibility-list root for list-typed
+                  fields; empty string for all other types.
+    summary     : human-readable one-liner for the preview pane / report log.
+    """
+    category: GrammarCategory
+    source_guid: str
+    owner_class: str
+    field_name: str
+    field_type: int
+    list_root_guid: str
+    summary: str
+
+
+@dataclass(frozen=True)
 class PlannedOverwrite:
     """OVERWRITE — target already has an object matching the source; update
     its syncable properties from source.  Phase 1 (FR-101 onward).

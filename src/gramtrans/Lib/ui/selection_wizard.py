@@ -245,7 +245,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
 
-        self.setTitle("Step 1 of 8: Project + Writing Systems")
+        self.setTitle("Step 1 of 7: Project + Writing Systems")
         self.setSubTitle(
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
@@ -634,7 +634,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 8: Item Picker")
+        self.setTitle("Step 4 of 7: Item Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
@@ -1369,7 +1369,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 5 of 8: Morphology Skeleton")
+        self.setTitle("Step 5 of 7: Morphology Skeleton")
         self.setSubTitle(
             "Review the parts of speech, slots, and templates the picked affixes require. "
             "Pre-checked items are derived from your affix selection. "
@@ -1866,7 +1866,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 6 of 8: Grammatical Dependencies")
+        self.setTitle("Step 6 of 7: Grammatical Dependencies")
         self.setSubTitle(
             "Review the inflection features, classes, and stem names "
             "that the picked affixes' parts of speech require. All are preselected. "
@@ -2170,7 +2170,7 @@ class _PageCustomFields(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 8: Custom Fields")
+        self.setTitle("Step 2 of 7: Custom Fields")
         self.setSubTitle(
             "Review the source project's custom fields. All fields are preselected. "
             "Untick the block to skip custom fields, or deselect individual fields. "
@@ -2482,7 +2482,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 8: Phonology")
+        self.setTitle("Step 3 of 7: Phonology")
         self.setSubTitle(
             "Review the source's phonology. The whole block is preselected. "
             "Untick the block to skip phonology, untick a category to trim it, "
@@ -3090,7 +3090,7 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._move_done = False
         # DR-1: cached plan is the sole freshness gate for the dry-run flow.
         self._cached_plan = None
-        self.setTitle("Step 8 of 8: Finish / Move")
+        self.setTitle("Step 7 of 7: Finish / Move")
         self.setSubTitle(
             "Click 'Execute Move' to write all planned actions to the target project. "
             "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
