@@ -217,6 +217,18 @@ def _segments_for_value(
 
     For NEW mode, tgt_val is None; callers pass ``None`` and we return all-added.
     For LINK_ONLY, callers short-circuit before reaching here.
+
+    Two intentional preview-vs-merge divergences (display-only; documented per
+    the cycle-2 domain review):
+    - **Sequences (shape 3)** collapse every member to a flat ``DiffSegment``
+      list; the real merge preserves the original collection type
+      (tuple/set/frozenset).  The type distinction is not user-visible in the
+      rendered diff, so the preview does not carry it.
+    - **Other objects (shape 5)** are ``repr()``-ed on each side and rendered as
+      a removed+added *replacement*; the real ``_deterministic_merge`` would
+      concat the two reprs with its run-id separator.  The preview correctly
+      shows "source wins" without leaking the run-id marker -- it does not
+      reproduce the concatenated string.  Low-risk given real FLEx value shapes.
     """
     # -- NEW: tgt is None, everything is added ---------------------------------
     if tgt_val is None and mode == NEW:
@@ -456,7 +468,7 @@ def _value_to_unchanged(val: Any, ws_role_of: Callable[[str], WsRole | None]) ->
 # HTML rendering  (FR-010, SC-004)
 # ============================================================================
 
-_KIND_STYLE: dict[str, str] = {
+_KIND_STYLE: dict[SegmentKind, str] = {
     SegmentKind.ADDED: "color:#1a7f1a;",
     SegmentKind.UNCHANGED: "",
     SegmentKind.REMOVED: "color:#cc0000;text-decoration:line-through;",
@@ -572,11 +584,12 @@ def ws_role_map(project: Any) -> dict[str, WsRole]:
                     result[wid] = WsRole.VERNACULAR
                 else:
                     result[wid] = WsRole.ANALYSIS
-            except Exception:
+            except Exception as _exc:
+                logging.debug("ws_role_map: skipping unreadable ws %r: %s", ws, _exc)
                 continue
 
-    except Exception:
-        pass
+    except Exception as _exc:
+        logging.debug("ws_role_map: no writing-system surface on project: %s", _exc)
 
     return result
 
