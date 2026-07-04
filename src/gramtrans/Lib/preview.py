@@ -80,7 +80,7 @@ def build_run_plan(
     # → Allomorphs → PhEnvironments.
     for src_pos in _select_source_poses(source, selection):
         _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy)
+        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
 
     # Phase 3c binding accumulators — written by AFFIXES/STEMS plan_action;
     # consumed by AFFIX_TEMPLATES (17.1 sub-pass, US2) and STEMS (post-pass A, US3).
@@ -292,12 +292,14 @@ def _plan_layer3_for_pos(
     skips: List[Skip],
     overwrites: List[PlannedOverwrite],
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
+    identity_remap: dict = None,
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
     _plan_layer3_verb_affixes_inner(
         source, target, src_pos, selection, actions, skips, overwrites,
         excluded_lossy=excluded_lossy,
+        identity_remap=identity_remap if identity_remap is not None else {},
     )
 
 
@@ -472,6 +474,7 @@ def _plan_layer3_verb_affixes_inner(
     skips: List[Skip],
     overwrites: Optional[List[PlannedOverwrite]] = None,
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
+    identity_remap: dict = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -489,6 +492,9 @@ def _plan_layer3_verb_affixes_inner(
     src_verb = src_pos  # name retained for in-function brevity
     if src_verb is None:
         return
+
+    if identity_remap is None:
+        identity_remap = {}
 
     # Per-scope closure for Layer 3 categories.
     # NONE -> closure off for that category; AS_NEEDED or ALL -> closure on.
@@ -585,6 +591,39 @@ def _plan_layer3_verb_affixes_inner(
             and overwrites is not None
             and _target_has_entry_guid(target, entry_guid)
         )
+
+        # T-FR001: Phase-1.5 similar-resolution hook.
+        # Entry-is-overwrite (same GUID in target) takes priority — checked first.
+        # Only read resolution when the entry is NOT already a same-GUID overwrite.
+        if not entry_is_overwrite and overwrites is not None:
+            resolution = selection.similar_resolution_for(entry_guid)
+            if resolution is not None and resolution.action in ("overwrite", "merge"):
+                # Identity-remap path: plan ENTRY action against the resolved target GUID.
+                tgt_entry_for_remap = None
+                if target_entry_index is None:
+                    # Force-build the index now.
+                    _target_has_entry_guid(target, resolution.target_guid)
+                tgt_entry_for_remap = (target_entry_index or {}).get(resolution.target_guid)
+                overwrites.append(PlannedOverwrite(
+                    category=GrammarCategory.ENTRY,
+                    source_guid=entry_guid,
+                    target_guid=resolution.target_guid,
+                    summary=f"LexEntry {entry_hw!r} -> identity remap",
+                    match_via="identity_remap",
+                    write_mode=resolution.action,
+                    pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY)
+                                 else (src_verb_guid,),
+                    owner_guid="",
+                ))
+                identity_remap[entry_guid] = resolution.target_guid
+                if tgt_entry_for_remap is not None:
+                    _plan_identity_remap_children(
+                        entry, entry_guid, entry_hw, resolution.target_guid,
+                        tgt_entry_for_remap, src_verb_guid, src_slot_guids,
+                        source, target, selection,
+                        actions, skips, overwrites, seen_env_guids,
+                    )
+                continue  # skip Phase-0 add path for this entry
 
         if entry_is_overwrite:
             overwrites.append(PlannedOverwrite(
@@ -978,6 +1017,138 @@ def _allomorph_fingerprint(allo, owner_entry_guid: str, ws_handle):
         except (AttributeError, TypeError):
             lexeme_form_text = ""
     return (GrammarCategory.ALLOMORPH, owner_entry_guid.lower(), lexeme_form_text, morph_type_guid)
+
+
+def _plan_identity_remap_children(
+    src_entry,
+    src_entry_guid: str,
+    src_entry_hw: str,
+    tgt_entry_guid: str,
+    tgt_entry,
+    src_verb_guid: str,
+    src_slot_guids: set,
+    source,
+    target,
+    selection: "Selection",
+    actions: list,
+    skips: list,
+    overwrites: list,
+    seen_env_guids: set,
+) -> None:
+    """Plan MSA / Allomorph / PhEnvironment children for an identity-remap entry.
+
+    Mirrors the Phase-1 fingerprint block in _plan_layer3_verb_affixes_inner
+    (lines 609-703) but uses tgt_entry_guid (the resolved target GUID) as the
+    owner override so fingerprint comparison is against the resolved target's
+    children rather than the source entry.
+
+    Called from two sites:
+    - T-FR001 identity-remap branch in _plan_layer3_verb_affixes_inner.
+    """
+    # Collect source MSA/sense actions for this entry.
+    sense_actions = []
+    msa_actions = []
+    for sense in source.LexEntry.GetSenses(src_entry):
+        msa = _lex_sense_msa(sense)
+        if msa is None:
+            continue
+        if _classname_of(msa) != "MoInflAffMsa":
+            continue
+        if not _msa_points_at_verb(msa, src_verb_guid):
+            continue
+        sense_guid = _guid_str(sense)
+        msa_guid = _guid_str(msa)
+        sense_actions.append((sense, sense_guid))
+        msa_actions.append((msa, msa_guid, sense_guid))
+
+    # MSA fingerprint matching against the resolved target entry.
+    # Use tgt_entry_guid as the owner override so cross-entry comparison works.
+    msa_match_via, _msa_overwrite_pairs, _msa_add_list = _match_msas_by_fingerprint(
+        target, tgt_entry, msa_actions, tgt_entry_guid,
+    )
+    for src_msa, msa_guid, sense_guid in _msa_overwrite_pairs:
+        tgt_msa_guid = msa_match_via[msa_guid]
+        overwrites.append(PlannedOverwrite(
+            category=GrammarCategory.MSA,
+            source_guid=msa_guid,
+            target_guid=tgt_msa_guid,
+            summary=f"InflAffMsa for {src_entry_hw!r} (identity remap)",
+            match_via="fingerprint",
+            pulled_in_by=(sense_guid,),
+            owner_guid=tgt_entry_guid,
+        ))
+    for _src_msa, msa_guid, sense_guid in _msa_add_list:
+        actions.append(PlannedAction(
+            category=GrammarCategory.MSA,
+            source_guid=msa_guid,
+            intended_target_guid=msa_guid,
+            summary=f"InflAffMsa for {src_entry_hw!r} (identity remap)",
+            pulled_in_by=(sense_guid,),
+        ))
+
+    # Allomorph fingerprint matching against the resolved target entry.
+    allo_match_via, _allo_overwrite_list, _allo_add_list = _match_allomorphs_by_fingerprint(
+        source, target, tgt_entry, src_entry, tgt_entry_guid,
+    )
+    for src_allo, allo_guid in _allo_overwrite_list:
+        tgt_allo_guid = allo_match_via[allo_guid]
+        overwrites.append(PlannedOverwrite(
+            category=GrammarCategory.ALLOMORPH,
+            source_guid=allo_guid,
+            target_guid=tgt_allo_guid,
+            summary=f"Allomorph of {src_entry_hw!r} (identity remap)",
+            match_via="fingerprint",
+            pulled_in_by=(src_entry_guid,),
+            owner_guid=tgt_entry_guid,
+        ))
+    for _src_allo, allo_guid in _allo_add_list:
+        actions.append(PlannedAction(
+            category=GrammarCategory.ALLOMORPH,
+            source_guid=allo_guid,
+            intended_target_guid=allo_guid,
+            summary=f"Allomorph of {src_entry_hw!r} (identity remap)",
+            pulled_in_by=(src_entry_guid,),
+        ))
+
+    # Phone-environments for allomorphs under the resolved entry.
+    for allo in source.Allomorphs.GetAll(src_entry):
+        allo_obj = _unwrap(allo)
+        allo_guid = _guid_str(allo_obj)
+        envs = source.Allomorphs.GetPhoneEnv(allo)
+        if envs is None:
+            continue
+        for env in envs:
+            env_obj = _unwrap(env)
+            env_guid = _guid_str(env_obj)
+            if env_guid in seen_env_guids:
+                continue
+            seen_env_guids.add(env_guid)
+            if _target_has_environment_guid(target, env_guid):
+                if selection.enable_overwrite:
+                    overwrites.append(PlannedOverwrite(
+                        category=GrammarCategory.PH_ENVIRONMENT,
+                        source_guid=env_guid,
+                        target_guid=env_guid,
+                        summary="PhEnvironment overwrite (identity remap allomorph)",
+                        match_via="guid",
+                        pulled_in_by=(allo_guid,),
+                        owner_guid="",
+                    ))
+                else:
+                    skips.append(Skip(
+                        category=GrammarCategory.PH_ENVIRONMENT,
+                        source_guid=env_guid,
+                        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                        detail="PhEnvironment already present in target by GUID",
+                    ))
+            else:
+                actions.append(PlannedAction(
+                    category=GrammarCategory.PH_ENVIRONMENT,
+                    source_guid=env_guid,
+                    intended_target_guid=env_guid,
+                    summary="PhEnvironment referenced by identity-remap allomorph",
+                    pulled_in_by=(allo_guid,),
+                ))
 
 
 def _msa_points_at_verb(msa, verb_guid: str) -> bool:

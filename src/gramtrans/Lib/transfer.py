@@ -96,6 +96,12 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # (FR-106) are TODO for Phase 1.1.
     extra_skips = []
     for ow in getattr(plan, "overwrites", ()):
+        # identity_remap ENTRY overwrites are handled inside _execute_layer3
+        # (where identity_remap, target_verb, target_slot_by_guid, env_guid_to_target
+        # are in scope). Skip them here to avoid double-execution.
+        if (ow.category in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS)
+                and getattr(ow, "match_via", "guid") == "identity_remap"):
+            continue
         extra_skips.extend(
             _execute_overwrite(ow, source, target, report_sink, tag, interactive_session)
             or []
@@ -816,34 +822,131 @@ def _execute_layer3(
         # 1. Create LexEntry.
         new_entry = _create_lexentry_with_guid(target, entry_guid, src_entry, source, tag, report_sink)
 
-        # 2. Create senses + MSAs in source order.
-        src_to_new_msa_by_msa_guid = {}
-        for sense in source.LexEntry.GetSenses(src_entry):
-            sense_guid = _guid_str(sense)
-            new_sense = _create_lexsense_with_guid(target, new_entry, sense_guid, sense, source, tag, report_sink)
-            msa = _lex_sense_msa(sense)
-            if msa is None:
-                continue
-            if _classname_of(msa) != "MoInflAffMsa":
-                continue
-            if not _msa_points_at_verb(msa, src_verb_guid):
-                continue
-            msa_guid = _guid_str(msa)
-            new_msa = _create_inflaff_msa_with_guid(
-                target, new_entry, new_sense, msa_guid, msa, target_verb, target_slot_by_guid,
-                tag, report_sink, identity_remap,
-            )
-            src_to_new_msa_by_msa_guid[msa_guid] = new_msa
+        _populate_entry_children(
+            new_entry, src_entry, identity_remap, source, target,
+            target_verb, target_slot_by_guid, env_guid_to_target, tag, report_sink,
+        )
 
-        # 3. Create allomorphs + wire to environments. Allomorphs.GetAll
-        # may yield wrapper objects; unwrap before LCM casts.
-        for allo in source.Allomorphs.GetAll(src_entry):
-            allo_obj = _unwrap(allo)
-            allo_guid = _guid_str(allo_obj)
-            new_allo = _create_allomorph_with_guid(
-                target, new_entry, allo_guid, allo_obj, source, env_guid_to_target,
-                tag, report_sink, identity_remap,
-            )
+    # T-FR008: process identity-remap ENTRY overwrites here (inside _execute_layer3)
+    # where identity_remap, target_verb, target_slot_by_guid, and env_guid_to_target
+    # are in scope. These must NOT be re-processed by the main execute() loop.
+    for ow in getattr(plan, "overwrites", ()):
+        if not (ow.category in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS)
+                and getattr(ow, "match_via", "guid") == "identity_remap"):
+            continue
+        _execute_overwrite_identity_remap(
+            ow, source, target, report_sink, tag,
+            identity_remap, target_verb, target_slot_by_guid, env_guid_to_target,
+        )
+
+
+def _execute_overwrite_identity_remap(
+    overwrite,
+    source,
+    target,
+    report_sink,
+    tag,
+    identity_remap: dict,
+    target_verb,
+    target_slot_by_guid: dict,
+    env_guid_to_target: dict,
+) -> None:
+    """Execute an identity-remap ENTRY overwrite: apply source fields onto the
+    resolved target entry (fill-gaps or overwrite per write_mode), then
+    populate children under it."""
+    from SIL.LCModel import ICmObject
+    src_guid = (overwrite.source_guid or "").lower()
+    tgt_guid = (overwrite.target_guid or "").lower()
+    fill_gaps = (getattr(overwrite, "write_mode", "overwrite") == "merge")
+
+    # Locate target entry.
+    tgt_entry = None
+    for te in target.LexEntry.GetAll():
+        if str(ICmObject(_unwrap(te)).Guid).lower() == tgt_guid:
+            tgt_entry = _unwrap(te)
+            break
+    if tgt_entry is None:
+        report_sink.Warning(f"  [OW/IR] LexEntry {tgt_guid[:8]} not in target")
+        return
+
+    # Locate source entry.
+    src_entry = None
+    for se in source.LexEntry.GetAll():
+        if str(ICmObject(_unwrap(se)).Guid).lower() == src_guid:
+            src_entry = _unwrap(se)
+            break
+    if src_entry is None:
+        report_sink.Warning(f"  [OW/IR] Source LexEntry {src_guid[:8]} vanished")
+        return
+
+    tgt_pre_props = target.LexEntry.GetSyncableProperties(tgt_entry)
+    src_props = _dedupe_custom_fields(
+        source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
+    )
+    target.LexEntry.ApplySyncableProperties(
+        tgt_entry, src_props,
+        fill_gaps=fill_gaps,
+    )
+    cache = getattr(target, "Cache")
+    apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
+    report_sink.Info(f"  LexEntry identity-remap overwritten  guid={src_guid}")
+
+    # Populate children (senses, MSAs, allomorphs) under the resolved target entry.
+    _populate_entry_children(
+        tgt_entry, src_entry, identity_remap, source, target,
+        target_verb, target_slot_by_guid, env_guid_to_target, tag, report_sink,
+    )
+
+
+def _populate_entry_children(
+    new_entry,
+    src_entry,
+    identity_remap: dict,
+    source,
+    target,
+    target_verb,
+    target_slot_by_guid: dict,
+    env_guid_to_target: dict,
+    tag,
+    report_sink,
+) -> None:
+    """Create senses + MSAs + allomorphs + environment wiring under new_entry
+    from src_entry.
+
+    Called from two sites:
+    - Normal add path in _execute_layer3 (source GUID == target GUID).
+    - Merge-into (identity-remap) path in _execute_overwrite (T-FR008), where
+      new_entry is an existing target entry resolved via similar_resolution.
+    """
+    # Derive verb GUID from the target_verb object (GUID-preserved; same as source).
+    src_verb_guid = _guid_str(target_verb) if target_verb is not None else ""
+
+    # 2. Create senses + MSAs in source order.
+    for sense in source.LexEntry.GetSenses(src_entry):
+        sense_guid = _guid_str(sense)
+        new_sense = _create_lexsense_with_guid(target, new_entry, sense_guid, sense, source, tag, report_sink)
+        msa = _lex_sense_msa(sense)
+        if msa is None:
+            continue
+        if _classname_of(msa) != "MoInflAffMsa":
+            continue
+        if not _msa_points_at_verb(msa, src_verb_guid):
+            continue
+        msa_guid = _guid_str(msa)
+        _create_inflaff_msa_with_guid(
+            target, new_entry, new_sense, msa_guid, msa, target_verb, target_slot_by_guid,
+            tag, report_sink, identity_remap,
+        )
+
+    # 3. Create allomorphs + wire to environments. Allomorphs.GetAll
+    # may yield wrapper objects; unwrap before LCM casts.
+    for allo in source.Allomorphs.GetAll(src_entry):
+        allo_obj = _unwrap(allo)
+        allo_guid = _guid_str(allo_obj)
+        _create_allomorph_with_guid(
+            target, new_entry, allo_guid, allo_obj, source, env_guid_to_target,
+            tag, report_sink, identity_remap,
+        )
 
 
 def _find_target_morph_type_by_guid(target, morph_type_guid: str):
@@ -1328,7 +1431,10 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             src_props, tgt_pre_props, tag, log,
             cat, overwrite.target_guid, tag.run_id,
         )
-        target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
+        target.LexEntry.ApplySyncableProperties(
+            tgt_entry, src_props,
+            fill_gaps=(getattr(overwrite, "write_mode", "overwrite") == "merge"),
+        )
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")

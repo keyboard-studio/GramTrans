@@ -34,8 +34,11 @@ The `target` argument must expose at least one of:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
+
+_log = logging.getLogger(__name__)
 
 if __package__:
     from .models import GrammarCategory
@@ -109,7 +112,21 @@ def fingerprint_for_msa(msa, ws_handle=None) -> Tuple:
     language-independent.
     """
     try:
-        owner_guid = str(msa.Owner.Guid) if msa.Owner is not None else ""
+        if msa.Owner is not None:
+            owner_class = type(msa.Owner).__name__
+            if owner_class not in ("LexEntry", "ILexEntry"):
+                _log.warning(
+                    "fingerprint_for_msa: .Owner is %s (expected LexEntry), "
+                    "msa GUID=%s; fingerprint owner_guid may be wrong. "
+                    "Affix MSA path is unverified -- check ownership.",
+                    owner_class,
+                    getattr(msa, "Guid", "?"),
+                )
+                owner_guid = str(getattr(msa.Owner, "Guid", "") or "")
+            else:
+                owner_guid = str(msa.Owner.Guid)
+        else:
+            owner_guid = ""
     except AttributeError:
         owner_guid = ""
 
@@ -150,7 +167,21 @@ def fingerprint_for_allomorph(allo, ws_handle=None) -> Tuple:
     multiple allomorphs of the same morphtype.
     """
     try:
-        owner_guid = str(allo.Owner.Guid) if allo.Owner is not None else ""
+        if allo.Owner is not None:
+            owner_class = type(allo.Owner).__name__
+            if owner_class not in ("LexEntry", "ILexEntry"):
+                _log.warning(
+                    "fingerprint_for_allomorph: .Owner is %s (expected LexEntry), "
+                    "allo GUID=%s; fingerprint owner_guid may be wrong. "
+                    "Affix allomorph path is unverified -- check ownership.",
+                    owner_class,
+                    getattr(allo, "Guid", "?"),
+                )
+                owner_guid = str(getattr(allo.Owner, "Guid", "") or "")
+            else:
+                owner_guid = str(allo.Owner.Guid)
+        else:
+            owner_guid = ""
     except AttributeError:
         owner_guid = ""
 
@@ -170,6 +201,23 @@ def fingerprint_for_allomorph(allo, ws_handle=None) -> Tuple:
         morph_type_guid = ""
 
     return (GrammarCategory.ALLOMORPH, owner_guid, lexeme_form_text, morph_type_guid)
+
+
+def fingerprint_with_owner(fn, obj, owner_guid_override, ws_handle=None):
+    """Return the fingerprint produced by fn(obj, ws_handle) with tuple
+    index 1 (owner_guid) replaced by owner_guid_override.
+
+    Used by the merge-into planner path to evaluate source fingerprints
+    against a resolved target entry (different GUID than the source entry),
+    so that fingerprint matching correctly identifies already-present
+    children under the resolved target.
+
+    NOTE: If .Owner is not an ILexEntry, fingerprint_for_msa / fingerprint_for_allomorph
+    will return "" for owner_guid. Callers must supply a valid owner_guid_override in
+    that case. Any unexpected ownership will be logged by the caller (S2 residual risk).
+    """
+    fp = fn(obj, ws_handle)
+    return (fp[0], owner_guid_override) + fp[2:]
 
 
 # ---------------------------------------------------------------------------

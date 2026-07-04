@@ -562,6 +562,12 @@ class PlannedOverwrite:
     lookup (e.g. for a Slot overwrite, owner_guid is the template's GUID;
     for a Template overwrite, it's the owning POS's GUID). Empty for
     top-level objects (POS, PhEnvironment).
+
+    `write_mode` controls how the executor applies source properties onto
+    the target object:
+    - ``"overwrite"`` (default) — source fields win unconditionally.
+    - ``"merge"`` — source fields only fill gaps: a target field that is
+      already non-empty is left unchanged (fill-gaps semantics, FR-013).
     """
     category: GrammarCategory
     source_guid: str
@@ -570,6 +576,7 @@ class PlannedOverwrite:
     match_via: str = "guid"  # "guid" | "identity_remap" | "fingerprint"
     pulled_in_by: tuple = ()
     owner_guid: str = ""  # parent reference for the executor's lookup
+    write_mode: str = "overwrite"  # "overwrite" | "merge"
 
 
 @dataclass(frozen=True)
