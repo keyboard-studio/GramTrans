@@ -64,6 +64,9 @@ if __package__:
     from .stats_panel import StatsPanel
     from .target_picker import TargetPickerDialog
     from .ws_font_delegate import attach_ws_font_delegate, set_ws_runs
+    from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
+    from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
+    from ..models import SimilarResolution
 else:
     import api as gt_api  # type: ignore
     from models import (  # type: ignore
@@ -100,6 +103,9 @@ else:
     from stats_panel import StatsPanel  # type: ignore
     from target_picker import TargetPickerDialog  # type: ignore
     from ws_font_delegate import attach_ws_font_delegate, set_ws_runs  # type: ignore
+    from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore
+    from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
+    from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +179,25 @@ def _allowed_modes(cat: GrammarCategory) -> list:
         return [ConflictMode.MERGE]
     # MULTI_INSTANCE or SINGLETON_NONDELETABLE that isn't GOLD -> all three
     return [ConflictMode.ADD_NEW, ConflictMode.MERGE, ConflictMode.OVERWRITE]
+
+
+# ---------------------------------------------------------------------------
+# Shared splitter helper (T004, FR-005, FR-011, R7)
+# ---------------------------------------------------------------------------
+
+def _make_tree_pane_splitter(tree_widget, pane_widget,
+                             tree_stretch=3, pane_stretch=2):
+    """Return a horizontal QSplitter with tree on the left and pane on the right.
+
+    Replaces the direct layout.addWidget(tree, 1) call in each page's _build_ui.
+    Stretch factors default to 3:2 (tree:pane) per plan R7.
+    """
+    splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+    splitter.addWidget(tree_widget)
+    splitter.addWidget(pane_widget)
+    splitter.setStretchFactor(0, tree_stretch)
+    splitter.setStretchFactor(1, pane_stretch)
+    return splitter
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +565,9 @@ _GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1   # entry_guid string
 _KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2   # "affix" | "pos_group" | "subgroup"
 _ROLE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3   # "attaches" | "produces" (leaf rows)
 _IS_PRODUCES = QtCore.Qt.ItemDataRole.UserRole + 4  # bool: True for deriv_produces rows
+# T005 -- Data roles for _PageItemPicker (FR-010, R6)
+_ITEM_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 30  # "new" | "in_target" | "similar"
+_ITEM_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 31  # GrammarCategory
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +641,9 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         self._guid_to_items: dict = {}
         # Re-entrancy guard for itemChanged mirroring
         self._mirroring: bool = False
+        # T009/T010: per-page resolution store (FR-008, R3)
+        self._resolution_store: dict = {}
+        self._preview_service = None
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -638,7 +669,10 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Affix / Group", "Type", "From", "To", "Target"])
         self._tree.header().setStretchLastSection(False)
         self._tree.setAlternatingRowColors(True)
-        affix_tab_layout.addWidget(self._tree, 1)
+        # T009: merge-preview pane docked to the right via a horizontal splitter (FR-005)
+        self._pane = MergePreviewPane(affix_tab)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        affix_tab_layout.addWidget(splitter, 1)
         self._tabs.addTab(affix_tab, "Affixes")
 
         # --- Stems tab (stubbed, disabled) ---
@@ -700,6 +734,197 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         )
         self.populate_pos_tree(inventory)
         self._tree.itemChanged.connect(self._on_item_changed)
+
+        # T009/T010: resolution store seeding (FR-008, R3)
+        self._resolution_store = {}
+        for entry_guid, suggested_target_guid in self._similar_affix_pairs():
+            self._resolution_store[entry_guid] = SimilarResolution(
+                entry_guid=entry_guid,
+                action="overwrite",
+                target_guid=suggested_target_guid,
+            )
+        # Reflect default seed in Target column
+        for entry_guid, resolution in self._resolution_store.items():
+            self._update_target_column(entry_guid, resolution)
+
+        # T009: construct service and set pane context (FR-006)
+        self._preview_service = MergePreviewService(source, target)
+        candidates = self._candidate_list()
+        self._pane.set_context(
+            self._preview_service,
+            WsFontRegistry.from_project(source),
+            candidates,
+        )
+        self._pane.clear()
+        # Connect tree selection handler (with double-connect guard)
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+        # Connect pane resolution_changed signal (T009)
+        self._pane.resolution_changed.connect(self._on_resolution_changed)
+
+    # T009/T010: helper methods
+    def _candidate_list(self):
+        """Return list of (guid, form, gloss) for SIMILAR affix candidates."""
+        # All SIMILAR rows' suggested targets become candidates for the combo
+        candidates = []
+        seen = set()
+        root = self._tree.invisibleRootItem()
+
+        def _walk(node):
+            for i in range(node.childCount()):
+                child = node.child(i)
+                status = child.data(0, _ITEM_STATUS_ROLE)
+                if status == "similar":
+                    # The suggested target guid is in the resolution store
+                    # (seeded from inventory row). Gather from inventory.
+                    pass
+                _walk(child)
+
+        # Build candidates from inventory rows that have similar matches
+        if self._inventory is not None:
+            def _collect_similar_rows(node):
+                for row in node.inflectional + node.deriv_attaches + node.deriv_produces:
+                    if getattr(row, "status", None) == "similar":
+                        tg = getattr(row, "suggested_target_guid", None) or ""
+                        if tg and tg not in seen:
+                            seen.add(tg)
+                            form = getattr(row, "target_form", "") or tg[:8]
+                            gloss = getattr(row, "target_gloss", "") or ""
+                            candidates.append((tg, form, gloss))
+                for child in node.children:
+                    _collect_similar_rows(child)
+
+            for root_node in self._inventory.roots:
+                _collect_similar_rows(root_node)
+        return candidates
+
+    def _similar_affix_pairs(self):
+        """Return list of (source_guid, suggested_target_guid) for SIMILAR affix rows."""
+        pairs = []
+        root = self._tree.invisibleRootItem()
+
+        def _walk(node):
+            for i in range(node.childCount()):
+                child = node.child(i)
+                status = child.data(0, _ITEM_STATUS_ROLE)
+                if status == "similar":
+                    source_guid = child.data(0, _GUID_ROLE)
+                    # Look up suggested target from inventory row
+                    # The row.suggested_target_guid is set by build_pos_grouped_inventory
+                    suggested_tg = self._find_suggested_target(source_guid)
+                    if source_guid and suggested_tg:
+                        pairs.append((source_guid, suggested_tg))
+                _walk(child)
+
+        _walk(self._tree.invisibleRootItem())
+        return pairs
+
+    def _find_suggested_target(self, entry_guid: str) -> str:
+        """Look up the suggested target GUID for a SIMILAR affix from the inventory."""
+        if self._inventory is None:
+            return ""
+
+        def _search_rows(rows):
+            for row in rows:
+                if row.entry_guid == entry_guid:
+                    return getattr(row, "suggested_target_guid", "") or ""
+            return ""
+
+        def _search_node(node):
+            result = _search_rows(node.inflectional)
+            if result:
+                return result
+            result = _search_rows(node.deriv_attaches)
+            if result:
+                return result
+            result = _search_rows(node.deriv_produces)
+            if result:
+                return result
+            for child in node.children:
+                result = _search_node(child)
+                if result:
+                    return result
+            return ""
+
+        for root_node in self._inventory.roots:
+            result = _search_node(root_node)
+            if result:
+                return result
+        # Also check junk
+        if self._inventory.junk:
+            for row in (list(getattr(self._inventory.junk, "no_pos", []))
+                        + list(getattr(self._inventory.junk, "no_analysis", []))):
+                if row.entry_guid == entry_guid:
+                    return getattr(row, "suggested_target_guid", "") or ""
+        return ""
+
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """T009: build PreviewRequest from selected row and call pane.show_item."""
+        if current is None:
+            self._pane.clear()
+            return
+        kind = current.data(0, _KIND_ROLE)
+        if kind != "affix":
+            # Group or subgroup header -> clear pane
+            self._pane.clear()
+            return
+
+        source_guid = current.data(0, _GUID_ROLE) or ""
+        category = current.data(0, _ITEM_CAT_ROLE)
+        status = current.data(0, _ITEM_STATUS_ROLE) or ""
+
+        # Derive target_guid and mode per status (R1)
+        if status == "new":
+            target_guid = ""
+            mode = NEW
+        elif status == "in_target":
+            target_guid = source_guid
+            mode = OVERWRITE
+        elif status == "similar":
+            resolution = self._resolution_store.get(source_guid)
+            if resolution is not None:
+                target_guid = resolution.target_guid or ""
+                mode = _action_to_mode(resolution.action)
+            else:
+                target_guid = ""
+                mode = NEW
+        else:
+            self._pane.clear()
+            return
+
+        # resolvable if status=="similar" (store entry implies candidate was found)
+        resolvable = status == "similar"
+
+        current_resolution = self._resolution_store.get(source_guid)
+        cat_str = category.value if category is not None else GrammarCategory.AFFIXES.value
+
+        request = PreviewRequest(
+            category=cat_str,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=resolvable,
+            current_resolution=current_resolution,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
+
+    def _on_resolution_changed(self, entry_guid: str, resolution) -> None:
+        """T010: update the resolution store and reflect in Target column."""
+        self._resolution_store[entry_guid] = resolution
+        self._update_target_column(entry_guid, resolution)
+
+    def _update_target_column(self, entry_guid: str, resolution) -> None:
+        """T010: set Target column text for the given entry_guid's tree items."""
+        _ACTION_LABELS = {
+            "overwrite": "SIMILAR -> overwrite",
+            "merge": "SIMILAR -> merge",
+            "create_new": "SIMILAR -> new",
+        }
+        label = _ACTION_LABELS.get(getattr(resolution, "action", ""), "")
+        for item in self._guid_to_items.get(entry_guid, []):
+            item.setText(4, label)
 
     def _get_source(self):
         """Return the source project handle from page 0, or None."""
@@ -891,6 +1116,9 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         item.setData(0, _KIND_ROLE, "affix")
         item.setData(0, _ROLE_ROLE, row.role)
         item.setData(0, _IS_PRODUCES, row.role == "produces")
+        # T005: data roles for pane PreviewRequest construction (FR-010, R6)
+        item.setData(0, _ITEM_STATUS_ROLE, row.status or "")
+        item.setData(0, _ITEM_CAT_ROLE, GrammarCategory.AFFIXES)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
         # FR-001 (T009): affixes open fully preselected; deselection is the
         # primary user action (opens checked, not unchecked).
@@ -956,12 +1184,24 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                 self._collect_checked(child, out)
 
     def collect_selection(self) -> Selection:
-        """Build a Selection from the current picker state."""
+        """Build a Selection from the current picker state (T011, FR-009).
+
+        Folds the page's resolution store into the returned Selection via
+        dataclasses.replace.  Returns a shallow copy of the store so callers
+        cannot mutate the live store.
+        """
+        import dataclasses
         if self._inventory is None:
             dummy = SourceAffixInventory()
-            return build_selection(PickerState(), dummy)
+            base = build_selection(PickerState(), dummy)
+            # Empty similar_resolutions (dataclass default) on fallback path
+            return base
         ps = self.picker_state()
-        return collapse_pos_grouped(ps.checked_affixes, self._inventory)
+        base = collapse_pos_grouped(ps.checked_affixes, self._inventory)
+        return dataclasses.replace(
+            base,
+            similar_resolutions=dict(self._resolution_store),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1319,17 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
 _SKEL_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 10   # slot/tpl/pos guid
 _SKEL_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 11   # "pos"|"slot"|"template"|"dep"
 _SKEL_READ_ONLY = QtCore.Qt.ItemDataRole.UserRole + 12   # bool: template slot entry
+# T006 -- Data roles for _PageSkeleton (FR-010, R6)
+_SKEL_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 40  # "new" | "in_target" | "similar"
+_SKEL_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 41  # GrammarCategory (slot / template)
+_SKEL_OWNER_ROLE  = QtCore.Qt.ItemDataRole.UserRole + 42  # owner POS GUID (for template/slot preview)
+# T007 -- Data roles for _PageGramDeps (FR-010, R6)
+# GrammarCategory mapping (research: _populate_deps_tree sections):
+#   "Inflection Features" -> GrammarCategory.INFLECTION_FEATURES
+#   "Inflection Classes"  -> GrammarCategory.INFLECTION_CLASSES
+#   "Stem Names"          -> GrammarCategory.STEM_NAMES
+_DEPS_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 50  # "new" | "in_target" | "similar"
+_DEPS_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 51  # GrammarCategory
 
 # Target-status label map (shared with affix picker).
 _STATUS_LABELS = {
@@ -1124,6 +1375,8 @@ class _PageSkeleton(QtWidgets.QWizardPage):
         )
         self._skeleton: Optional[object] = None  # SkeletonInventory
         self._mirroring: bool = False
+        # T013: preview service (initialized in initializePage)
+        self._preview_service = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1139,7 +1392,10 @@ class _PageSkeleton(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Slot / Template", "Affixes", "Target"])
         self._tree.header().setStretchLastSection(False)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree, 1)
+        # T013: merge-preview pane docked to the right (FR-005)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
 
     def initializePage(self) -> None:
         """Build skeleton from affix picks + bound target when the page is entered."""
@@ -1181,6 +1437,18 @@ class _PageSkeleton(QtWidgets.QWizardPage):
         for col in range(3):
             self._tree.resizeColumnToContents(col)
         self._tree.itemChanged.connect(self._on_item_changed)
+
+        # T013: construct service and set pane context (FR-006)
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service,
+            WsFontRegistry.from_project(source),
+            [],  # no candidates for skeleton
+        )
+        self._pane.clear()
+        # Double-connect guard
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
 
     def _populate_skeleton_tree(self, skeleton) -> None:
         """Build the POS-rooted skeleton tree from a SkeletonInventory."""
@@ -1238,6 +1506,10 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                     slot_cs = (QtCore.Qt.CheckState.Checked if slot_node.preselected
                                else QtCore.Qt.CheckState.Unchecked)
                     slot_item.setCheckState(0, slot_cs)
+                    # T006: data roles for pane PreviewRequest (FR-010, R6)
+                    slot_item.setData(0, _SKEL_STATUS_ROLE, slot_node.status or "")
+                    slot_item.setData(0, _SKEL_CAT_ROLE, GrammarCategory.SLOTS)
+                    slot_item.setData(0, _SKEL_OWNER_ROLE, pos_node.pos_guid)
 
             # Templates subgroup
             if pos_node.templates:
@@ -1267,6 +1539,10 @@ class _PageSkeleton(QtWidgets.QWizardPage):
                     tpl_cs = (QtCore.Qt.CheckState.Checked if tpl_node.preselected
                               else QtCore.Qt.CheckState.Unchecked)
                     tpl_item.setCheckState(0, tpl_cs)
+                    # T006: data roles for pane PreviewRequest (FR-010, R6)
+                    tpl_item.setData(0, _SKEL_STATUS_ROLE, tpl_node.status or "")
+                    tpl_item.setData(0, _SKEL_CAT_ROLE, GrammarCategory.AFFIX_TEMPLATES)
+                    tpl_item.setData(0, _SKEL_OWNER_ROLE, pos_node.pos_guid)
                     # Read-only slot list under the template (FR-006)
                     for ref_sg in tpl_node.referenced_slot_guids:
                         # Find the slot node from the POS to recover its label
@@ -1294,6 +1570,47 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
         # Strike through referenced-slot rows whose slot won't copy over.
         self._refresh_template_strikethroughs()
+
+    # T013: tree selection handler (display-only, resolvable=False for all rows)
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """Build PreviewRequest from selected skeleton row (display-only)."""
+        if current is None:
+            self._pane.clear()
+            return
+        kind = current.data(0, _SKEL_KIND_ROLE)
+        # Group/header rows -> clear
+        if kind not in ("slot", "template"):
+            self._pane.clear()
+            return
+
+        source_guid = current.data(0, _SKEL_GUID_ROLE) or ""
+        category = current.data(0, _SKEL_CAT_ROLE)
+        status = current.data(0, _SKEL_STATUS_ROLE) or ""
+        owner_guid = current.data(0, _SKEL_OWNER_ROLE) or ""
+
+        if status == "new":
+            target_guid = ""
+            mode = NEW
+        elif status == "similar":
+            target_guid = source_guid
+            mode = OVERWRITE
+        else:  # "in_target"
+            target_guid = source_guid
+            mode = OVERWRITE
+
+        cat_str = (category.value if category is not None
+                   else GrammarCategory.SLOTS.value)
+        request = PreviewRequest(
+            category=cat_str,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid=owner_guid,
+        )
+        self._pane.show_item(request)
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         """Handle template check/deselect semantics (T012)."""
@@ -1554,6 +1871,8 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             "Deselect items you do not want to transfer."
         )
         self._deps: Optional[object] = None  # DepsInventory
+        # T014: preview service (initialized in initializePage)
+        self._preview_service = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1563,7 +1882,10 @@ class _PageGramDeps(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Item", "Target"])
         self._tree.header().setStretchLastSection(True)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree, 1)
+        # T014: merge-preview pane docked to the right (FR-005)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
 
     def initializePage(self) -> None:
         """Build deps from affix picks + bound target when the page is entered."""
@@ -1598,8 +1920,65 @@ class _PageGramDeps(QtWidgets.QWizardPage):
         for col in range(2):
             self._tree.resizeColumnToContents(col)
 
+        # T014: construct service and set pane context (FR-006)
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service,
+            WsFontRegistry.from_project(source),
+            [],  # no candidates for deps
+        )
+        self._pane.clear()
+        # Double-connect guard
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """T014: build PreviewRequest from selected deps row (display-only)."""
+        if current is None:
+            self._pane.clear()
+            return
+        kind = current.data(0, _SKEL_KIND_ROLE)
+        # Section-header rows -> clear
+        if kind != "dep":
+            self._pane.clear()
+            return
+
+        source_guid = current.data(0, _SKEL_GUID_ROLE) or ""
+        category = current.data(0, _DEPS_CAT_ROLE)
+        status = current.data(0, _DEPS_STATUS_ROLE) or ""
+
+        if status == "new":
+            target_guid = ""
+            mode = NEW
+        elif status == "similar":
+            target_guid = source_guid
+            mode = OVERWRITE
+        else:  # "in_target"
+            target_guid = source_guid
+            mode = OVERWRITE
+
+        cat_str = (category.value if category is not None
+                   else GrammarCategory.INFLECTION_FEATURES.value)
+        request = PreviewRequest(
+            category=cat_str,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
+
     def _populate_deps_tree(self, deps) -> None:
         """Populate the sections tree from a DepsInventory."""
+        # T007: category mapping (research confirmed from section labels)
+        _SECTION_CAT = {
+            "Inflection Features": GrammarCategory.INFLECTION_FEATURES,
+            "Inflection Classes": GrammarCategory.INFLECTION_CLASSES,
+            "Stem Names": GrammarCategory.STEM_NAMES,
+        }
         sections = [
             ("Inflection Features", deps.infl_features),
             ("Inflection Classes", deps.infl_classes),
@@ -1610,6 +1989,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                 self._tree, [section_label, ""]
             )
             section_item.setData(0, _SKEL_KIND_ROLE, "section")
+            # Section-header rows do NOT receive item-level status roles (T007)
             section_item.setFlags(
                 section_item.flags()
                 | QtCore.Qt.ItemFlag.ItemIsUserCheckable
@@ -1628,6 +2008,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                     empty_child.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled
                 )
             else:
+                grammar_cat = _SECTION_CAT.get(section_label)
                 for row in rows:
                     row_item = QtWidgets.QTreeWidgetItem(
                         section_item,
@@ -1636,6 +2017,10 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                     set_ws_runs(row_item, 0, ((row.label, WsRole.ANALYSIS),))
                     row_item.setData(0, _SKEL_GUID_ROLE, row.guid)
                     row_item.setData(0, _SKEL_KIND_ROLE, "dep")
+                    # T007: data roles for pane PreviewRequest (FR-010, R6)
+                    row_item.setData(0, _DEPS_STATUS_ROLE, row.status or "")
+                    if grammar_cat is not None:
+                        row_item.setData(0, _DEPS_CAT_ROLE, grammar_cat)
                     row_item.setFlags(
                         row_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
                     )
@@ -1756,6 +2141,12 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 _PHON_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 20   # source GUID (item rows)
 _PHON_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 21   # "group" | "item"
 _PHON_CAT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 22    # GrammarCategory (group + item)
+# T008 -- Data role for _PagePhonology (FR-010, R6)
+_PHON_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 23  # "new" | "in_target" | "similar"
+
+# SC-008: module-level aliases used inside _PagePhonology instead of string literals.
+_PHON_MODE_OVERWRITE = OVERWRITE
+_PHON_MODE_NEW = NEW
 
 
 class _PagePhonology(QtWidgets.QWizardPage):
@@ -1787,6 +2178,8 @@ class _PagePhonology(QtWidgets.QWizardPage):
         )
         self._inventory: Optional[object] = None  # PhonologyInventory
         self._mirroring: bool = False
+        # T012: preview service (initialized in initializePage)
+        self._preview_service = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1805,7 +2198,10 @@ class _PagePhonology(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Item", "Target"])
         self._tree.header().setStretchLastSection(True)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree, 1)
+        # T012: merge-preview pane docked to the right (FR-005)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
 
     # ------------------------------------------------------------------
     def initializePage(self) -> None:
@@ -1847,6 +2243,18 @@ class _PagePhonology(QtWidgets.QWizardPage):
         self._tree.itemChanged.connect(self._on_item_changed)
         self._refresh_whole_block()
 
+        # T012: construct service and set pane context (FR-006)
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service,
+            WsFontRegistry.from_project(source),
+            [],  # no candidates for phonology
+        )
+        self._pane.clear()
+        # Double-connect guard (existing pattern preserved)
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+
     def _populate_tree(self, inventory) -> None:
         """One tristate group per category (count on header); item rows checked."""
         from PyQt6 import QtGui  # noqa: F401  (font bolding, mirrors sibling pages)
@@ -1882,12 +2290,66 @@ class _PagePhonology(QtWidgets.QWizardPage):
                 item.setData(0, _PHON_GUID_ROLE, row.guid)
                 item.setData(0, _PHON_KIND_ROLE, "item")
                 item.setData(0, _PHON_CAT_ROLE, row.category)
+                # T008: status role for pane PreviewRequest construction (FR-010, R6)
+                item.setData(0, _PHON_STATUS_ROLE, row.status or "")
                 item.setFlags(
                     item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
                 )
                 cs = (QtCore.Qt.CheckState.Checked if row.preselected
                       else QtCore.Qt.CheckState.Unchecked)
                 item.setCheckState(0, cs)
+
+    # T012: tree selection handler (display-only, R8)
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """Build PreviewRequest from selected phonology row (display-only, R8).
+
+        Phonology rows never show the resolution header (resolvable=False).
+        SIMILAR phonology rows use the overwrite diff mode for compare display.
+        Mode strings come from merge_preview constants imported at module level;
+        the string form is used here to avoid ConflictMode references (SC-008).
+        """
+        if current is None:
+            self._pane.clear()
+            return
+        kind = current.data(0, _PHON_KIND_ROLE)
+        if kind == "group":
+            self._pane.clear()
+            return
+
+        source_guid = current.data(0, _PHON_GUID_ROLE) or ""
+        category = current.data(0, _PHON_CAT_ROLE)
+        status = current.data(0, _PHON_STATUS_ROLE) or ""
+
+        # R8: all phonology rows use resolvable=False.
+        # SIMILAR -> compare diff (overwrite diff mode); NEW -> all-green (new mode).
+        # Use module-level aliases _PHON_MODE_OVERWRITE / _PHON_MODE_NEW (SC-008).
+        if status == "similar":
+            # matched_target_guid: 011 stores the match target in _PHON_GUID_ROLE
+            # for SIMILAR rows when available; fall back to source_guid.
+            matched_target_guid = getattr(
+                self, "_phon_similar_target", {}
+            ).get(source_guid, source_guid)
+            target_guid = matched_target_guid
+            mode = _PHON_MODE_OVERWRITE
+        elif status == "new":
+            target_guid = ""
+            mode = _PHON_MODE_NEW
+        else:  # "in_target"
+            target_guid = source_guid
+            mode = _PHON_MODE_OVERWRITE
+
+        cat_str = category.value if category is not None else GrammarCategory.PHONEMES.value
+        request = PreviewRequest(
+            category=cat_str,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
 
     # -- whole-block toggle (T017) -------------------------------------
     def _on_whole_block_clicked(self, _checked: bool = False) -> None:
@@ -2195,6 +2657,17 @@ class _PagePreview(QtWidgets.QWizardPage):
             category_scopes={},
         )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
 
+        # T015: Preserve similar_resolutions from the item-picker page across
+        # reconstruction.  build_selection + _replace_conflict_modes do not
+        # forward the field; copy it here before any compute_preview call (FR-009).
+        # MUST NOT touch planner/executor (FR-012) — UI/selection layer only.
+        import dataclasses as _dataclasses
+        _page_items_sel = page_items.collect_selection()
+        selection = _dataclasses.replace(
+            selection,
+            similar_resolutions=_page_items_sel.similar_resolutions,
+        )
+
         # Merge the Phonology block (spec 010 T015). The phonology page is an
         # independent Model-B selector: collapse its checked rows into category
         # on-flags + per-category leaf_item_picks (trimmed categories only;
@@ -2408,7 +2881,10 @@ class SelectionWizard(QtWidgets.QWizard):
 
         self.setWindowTitle("GramTrans -- Selection Wizard (Phase 3c)")
         self.setModal(True)
-        self.resize(900, 720)
+        self.resize(1300, 760)
+        # T004/FR-011: widen wizard to accommodate tree + preview pane side by side
+        from PyQt6 import QtCore as _QtCore
+        self.setMinimumSize(_QtCore.QSize(1100, 680))
         # ClassicStyle renders pages using the widget palette instead of forcing
         # a white page (AeroStyle/ModernStyle default on Windows). Under an OS
         # dark theme the forced-white page left every QLabel white-on-white
