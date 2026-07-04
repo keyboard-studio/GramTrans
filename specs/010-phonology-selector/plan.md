@@ -22,7 +22,7 @@ strata-gating are pure wiring. Validated live on Ejagham Mini → Ejagham Full G
 ## Technical Context
 
 **Language/Version**: Python 3 (FlexTools host). **Primary deps**: PyQt6, MattGyverLee/
-flexlibs2 fork, SIL.LCModel via pythonnet. **Testing**: pytest (fake handles) + live
+flexicon fork, SIL.LCModel via pythonnet. **Testing**: pytest (fake handles) + live
 FlexTools MCP. **Project type**: FLExTrans-style flat `Lib/`. **Constraints**: pure builder
 (fake-handle testable); LCM access via the existing cast/`getattr` guards; the engine
 enumerate-filter is guarded so absent-subset preserves all-items behavior. **Scale/Scope**:
@@ -37,7 +37,7 @@ handful of rules — tiny; the builder walks five `GetAll()` collections once.
   (`PhFeatureSystemOA`, `PhonemeSetsOS`, `NaturalClassesOS`, `EnvironmentsOS`, `PhonRulesOS`;
   strata `MorphologicalDataOA.StrataOS` via rule `StratumRA`). Reference chain corrected in
   cycle-1 domain review (rules→NC/phoneme; environments are allomorph-side, excluded).
-- **II. flexlibs2-Direct** — PASS. Direct imports; no adapter; enumerate helpers already call
+- **II. flexicon-Direct** — PASS. Direct imports; no adapter; enumerate helpers already call
   `project.<Ops>.GetAll()`.
 - **III. Preview-Before-Mutate** — PASS. The page builds a `Selection` only; the sole write
   stays in the page-Finish Move handler. The engine enumerate-filter is read-only planning.

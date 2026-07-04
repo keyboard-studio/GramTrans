@@ -2,7 +2,7 @@
 
 **Plan**: [../plan.md](../plan.md)
 **Data Model**: [../data-model.md](../data-model.md)
-**Constitution**: v5.0.0 (no flavor-adapter contract — flexlibs2 imported directly)
+**Constitution**: v5.0.0 (no flavor-adapter contract — flexicon imported directly)
 
 Every category implementation under `src/gramtrans/Lib/` MUST expose the following
 interface — either as module-level functions sharing the same signatures or as a class
@@ -21,9 +21,9 @@ Writing-system materialization is NOT a normal category — it runs as a pre-ste
 
 This contract is **internal** to the module. It is the boundary between the engine
 (`Lib/preview.py`, `Lib/transfer.py`) and per-category semantics. Each category file
-imports flexlibs2 directly (e.g.,
-`from flexlibs2.Grammar.POSOperations import POSOperations`) — there is no adapter
-layer between category code and flexlibs2.
+imports flexicon directly (e.g.,
+`from flexicon.Grammar.POSOperations import POSOperations`) — there is no adapter
+layer between category code and flexicon.
 
 ```python
 # Pseudocode — actual Python signatures land in code.
@@ -107,7 +107,7 @@ class CategoryTransfer(Protocol):
           (`LiftResidue`) where the LCM class exposes it, Carrier B
           (`Description`-append with `[GT-Tag]: ` prefix) otherwise.
         - MUST set GUID-on-create where LCM permits, per R6 / FR-012. Some
-          flexlibs2 factory wrappers DO accept a `Guid` parameter on `Create()`;
+          flexicon factory wrappers DO accept a `Guid` parameter on `Create()`;
           where they don't, the pattern is `factory.Create()` → assign `obj.Guid`.
         - MUST be a no-op if `context` carries Preview mode (defensive — Preview
           should never reach this method).
@@ -119,7 +119,7 @@ class CategoryTransfer(Protocol):
 
 ## Wiring conventions
 
-- Categories call flexlibs2 directly. No adapter indirection. Per constitution v5.0.0
+- Categories call flexicon directly. No adapter indirection. Per constitution v5.0.0
   Principle II there is no `flavors/` directory in this repo.
 - The FlexTools runner already wraps each `MainFunction` invocation in an
   `UndoableUnitOfWork` (per [research.md R10](../research.md) + STATUS.md MCP-validator

@@ -8,14 +8,14 @@
 
 Wire six self-contained categories into the existing `Lib/categories.py` registry — phonological_features, phonemes, natural_classes, ph_environment (relocated), phonological_rules, strata — following the validated 22-step ordering from [specs/004-phase3-pipeline/ordering-memo.md](../004-phase3-pipeline/ordering-memo.md). All six are anchored at `LangProject.PhonologicalDataOA` (5) or `LangProject.MorphologicalDataOA` (1); none reference LexEntry, so Phase 0/1/2 verb-vertical paths stay bit-identical.
 
-Technical approach: extend `GrammarCategory` enum with five new members, add five callbacks per category in `Lib/categories.py` matching the shape of the existing complete categories. For each LCM type, MCP-probe the factory at planning time to determine whether `Create(Guid, ...)` is supported; categories whose factories lack Guid overloads fall back to `identity_remap` per FR-303 (mirrors Phase 1's MSA/Allomorph pattern). Strata use `project.GetService(IMoStratumFactory)` directly since flexlibs2 has no `StratumOperations` class.
+Technical approach: extend `GrammarCategory` enum with five new members, add five callbacks per category in `Lib/categories.py` matching the shape of the existing complete categories. For each LCM type, MCP-probe the factory at planning time to determine whether `Create(Guid, ...)` is supported; categories whose factories lack Guid overloads fall back to `identity_remap` per FR-303 (mirrors Phase 1's MSA/Allomorph pattern). Strata use `project.GetService(IMoStratumFactory)` directly since flexicon has no `StratumOperations` class.
 
 ## Technical Context
 
 **Language/Version**: Python 3.12.
 
 **Primary Dependencies**:
-- `flexlibs2` (MattGyverLee fork) — direct LCM access per constitution Principle II. Exposes `PhonFeatureOperations`, `PhonemeOperations`, `NaturalClassOperations`, `EnvironmentOperations`, `PhonologicalRuleOperations` (all in `flexlibs2/code/Grammar/`). Strata accessed via `project.GetService(IMoStratumFactory)` since no `StratumOperations` class exists.
+- `flexicon` (MattGyverLee fork) — direct LCM access per constitution Principle II. Exposes `PhonFeatureOperations`, `PhonemeOperations`, `NaturalClassOperations`, `EnvironmentOperations`, `PhonologicalRuleOperations` (all in `flexicon/code/Grammar/`). Strata accessed via `project.GetService(IMoStratumFactory)` since no `StratumOperations` class exists.
 - `SIL.LCModel` interfaces (lazy-imported per existing pattern): `IPhPhoneme`, `IPhNaturalClass`, `IPhNCSegments`, `IPhNCFeatures`, `IPhEnvironment`, `IPhPhonologicalRule`, `IMoStratum`, `IFsClosedFeature`, `IFsClosedFeatureFactory`, plus factories per category.
 
 **Storage**: No new storage. State lives in target LCM objects + the existing residue tag (Phase 1's `snap=` and Phase 2's `merge=` segments work unchanged).
@@ -33,7 +33,7 @@ Technical approach: extend `GrammarCategory` enum with five new members, add fiv
 - Per-category enumerate_source < 100ms for inventories under 1000 items each.
 
 **Constraints**:
-- Constitution Principle II: flexlibs2-Direct; no flavor-adapter wrappers.
+- Constitution Principle II: flexicon-Direct; no flavor-adapter wrappers.
 - Principle III: Preview-Before-Mutate — every category's plan_action runs during build_run_plan, no LCM writes.
 - Principle IV: additive over Phases 0/1/2 — no Phase 0/1/2 code path removed.
 - Some factories (TBD via MCP) lack `Create(Guid)`; those fall back to `identity_remap` (FR-303 / Phase 1 FR-012 pattern). MCP probing in Phase 0 of this plan confirms exact behaviour.
@@ -48,7 +48,7 @@ Technical approach: extend `GrammarCategory` enum with five new members, add fiv
 | Principle | Status | Justification |
 |-----------|--------|---------------|
 | I. FLEx Domain Fidelity | PASS | GUID preservation is the default; identity_remap is the documented fallback for factories lacking Guid overloads. GOLD inviolability not directly relevant (no phonology GOLD catalog), but `CatalogBackedMixin` exists for any catalog-backed phonology entities discovered during MCP probing. Cross-references resolve or skip with `DEPENDENCY_UNRESOLVED` per FR-304. |
-| II. flexlibs2-Direct | PASS | Every new callback imports `flexlibs2` directly. No `flavors/`. Strata, lacking a dedicated `StratumOperations`, use `project.GetService(IMoStratumFactory)` which is the documented Direct fallback per the constitution. |
+| II. flexicon-Direct | PASS | Every new callback imports `flexicon` directly. No `flavors/`. Strata, lacking a dedicated `StratumOperations`, use `project.GetService(IMoStratumFactory)` which is the documented Direct fallback per the constitution. |
 | III. Preview-Before-Mutate | PASS | Five callbacks per category match the existing pattern: enumerate_source / dependencies / required_writing_systems / plan_action all read-only; only execute_action writes. |
 | IV. Phased Merge Discipline | PASS | Phase 3a is ordered behind Phases 0-2 (already shipped). FR-309..311 require Phase 1 + Phase 2 semantics to apply unchanged; FR-311 explicitly forbids modifying existing Phase 0/1/2 paths. |
 | V. Referential Completeness | PASS | FR-304 enforces dependency closure for phonological rules → phonemes + natural classes. NaturalClass.SegmentsRC and feature-struct dependencies handled by their respective categories preceding (#3 phonemes, #2 phon features). |
@@ -60,7 +60,7 @@ Technical approach: extend `GrammarCategory` enum with five new members, add fiv
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. | PASS | data-model.md entities map cleanly to LCM types. |
-| II. | PASS | contracts/category-callbacks.md uses flexlibs2 Operations + GetService(IFooFactory) — both Principle-II-sanctioned. |
+| II. | PASS | contracts/category-callbacks.md uses flexicon Operations + GetService(IFooFactory) — both Principle-II-sanctioned. |
 | III. | PASS | quickstart.md exercises Preview (no writes) first, then Move. |
 | IV. | PASS | quickstart.md's Scenario E confirms Phase 0/1/2 unchanged. |
 | V. | PASS | Phonological-rule dependency closure documented in data-model.md. |

@@ -21,7 +21,7 @@ engine. Validated live against Ejagham (inflectional-only) and Esperanto
 
 **Language/Version**: Python 3 (FlexTools host runtime)
 
-**Primary Dependencies**: PyQt6 (wizard UI); MattGyverLee/flexlibs2 fork (runtime LCM
+**Primary Dependencies**: PyQt6 (wizard UI); MattGyverLee/flexicon fork (runtime LCM
 access, imported directly per Constitution II); SIL.LCModel interfaces via pythonnet.
 
 **Storage**: N/A (reads live FLEx projects; writes only at Move, unchanged by this feature)
@@ -36,7 +36,7 @@ Ejagham Full GT-Test and Esperanto (integration).
 **Performance Goals**: Interactive; builder runs once on page-2 entry over the source
 lexicon (Esperanto: 15,318 entries scanned, 68 affixes — sub-second acceptable).
 
-**Constraints**: No optional runtime deps beyond flexlibs2 fork + PyQt; builder must be
+**Constraints**: No optional runtime deps beyond flexicon fork + PyQt; builder must be
 pure-Python-testable without a live LCM (duck-typed fakes); polymorphic property access
 requires pythonnet casts (guarded).
 
@@ -53,8 +53,8 @@ ui/selection_wizard.py page 2); one legacy file assessed (ui/affix_tree_picker.p
   derivational *closure* completeness gap is tracked separately (issue #1) and does not
   regress here — this feature only reads From/To for grouping, it does not change what
   closure pulls.
-- **II. FlexTools-Compatible Output, flexlibs2-Direct** — PASS. Builder imports
-  flexlibs2/SIL.LCModel directly; no adapter layer; casts via the documented pattern.
+- **II. FlexTools-Compatible Output, flexicon-Direct** — PASS. Builder imports
+  flexicon/SIL.LCModel directly; no adapter layer; casts via the documented pattern.
 - **III. Preview-Before-Mutate** — PASS. The picker builds a `Selection` only; nothing
   here writes. The single write remains at Move (page 5), untouched.
 - **IV. Phased Merge Discipline** — PASS. This is Phase-3c selection-UI work on the

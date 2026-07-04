@@ -47,9 +47,9 @@ description: "Phase 3a — Phonology Block tasks"
 - [ ] T007 [P] MCP-probe `IPhRegularRuleFactory` / `IPhSegmentRuleFactory` / `IPhMetathesisRuleFactory`; append to `probe-results.md`
 - [ ] T008 [P] MCP-probe `IMoStratumFactory` constructor signatures + relevant Stratum properties; append to `probe-results.md`
 - [ ] T009 [P] MCP-probe `IFsClosedFeatureFactory` for the phonological-feature subsystem; confirm the same factory serves both the phon and inflection systems or whether a separate one exists; append to `probe-results.md`
-- [ ] T010 Wait/check on flexlibs#196 — if `StratumOperations` lands in flexlibs2 fork before T035, update T035-T038 task descriptions to use `project.Strata.*` instead of the `GetService` workaround
+- [ ] T010 Wait/check on flexlibs#196 — if `StratumOperations` lands in flexicon fork before T035, update T035-T038 task descriptions to use `project.Strata.*` instead of the `GetService` workaround
 
-**Checkpoint**: T004-T009 outputs land in `probe-results.md`. T010 is gated on external flexlibs2 PR.
+**Checkpoint**: T004-T009 outputs land in `probe-results.md`. T010 is gated on external flexicon PR.
 
 ---
 

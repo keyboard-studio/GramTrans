@@ -19,12 +19,12 @@
 **Rationale**: Custom fields are not first-class LCM `ICmObject`s — they're virtual flids registered in the meta-data cache (MDC). There's no factory and no GUID; identity is `(class_id, name)`. The MDC creates a new flid integer on each `AddCustomField` call (no Guid-preservation concept). This is structurally analogous to Phase 3a's Strata, where `StratumOperations` doesn't exist and we fall back to `GetService(IMoStratumFactory)` — except for custom fields the fallback is even more direct (no factory at all).
 
 **Alternatives considered**:
-- *flexlibs2-side `CustomFieldOperations` wrapper* — would need to be added upstream first; not blocking for Phase 3b. The MDC call is one line; wrapping it doesn't simplify.
+- *flexicon-side `CustomFieldOperations` wrapper* — would need to be added upstream first; not blocking for Phase 3b. The MDC call is one line; wrapping it doesn't simplify.
 - *Preserve a "synthetic GUID" per custom field for residue identity* — rejected. The residue tag is per-LCM-object and custom fields aren't ICmObjects. Per-field re-run idempotency is checked by `(class_id, name)` match in `enumerate_source`.
 
 ## Decision: Variant-type and complex-form-type creation uses POSOperations-shaped wrappers
 
-**Decision**: `variant_types_execute_action` and `complex_form_types_execute_action` create `ILexEntryType` via the flexlibs2 wrapper on the LexDb. Probe at planning time to confirm the exact entry point — likely `project.LexEntryTypes` or `project.LexDb` has a typed factory. If no flexlibs2 wrapper exists, fall back to `project.GetService(ILexEntryTypeFactory).Create(Guid)` per the Phase 3a strata pattern.
+**Decision**: `variant_types_execute_action` and `complex_form_types_execute_action` create `ILexEntryType` via the flexicon wrapper on the LexDb. Probe at planning time to confirm the exact entry point — likely `project.LexEntryTypes` or `project.LexDb` has a typed factory. If no flexicon wrapper exists, fall back to `project.GetService(ILexEntryTypeFactory).Create(Guid)` per the Phase 3a strata pattern.
 
 **Rationale**: Variant types and complex form types are both `ILexEntryType` instances with a discriminator (variant vs complex). They own `BackRefsRC` from LexEntries (back-references, not forward refs — Phase 3c LexEntries will reference these). Phase 3b creates the definitions; Phase 3c attaches the references.
 
@@ -62,7 +62,7 @@
 
 **Decision**: Specific factory and accessor names for the three stubs + one new category are PROBED, not researched in this Phase 0 doc. Probes live in `tasks.md` as T002-T010 equivalents and results land in `probe-results.md`.
 
-**Rationale**: Phase 3a established the pattern — `research.md` makes architectural decisions, `probe-results.md` captures the literal flexlibs2 API surface for each factory. Keeps research stable (it doesn't change when flexlibs2 ships a new wrapper) and probe results fresh (they reflect the current installed flexlibs2 fork).
+**Rationale**: Phase 3a established the pattern — `research.md` makes architectural decisions, `probe-results.md` captures the literal flexicon API surface for each factory. Keeps research stable (it doesn't change when flexicon ships a new wrapper) and probe results fresh (they reflect the current installed flexicon fork).
 
 **Alternatives considered**:
 - *Probe everything now during `/speckit-plan`* — rejected. MCP discovery is best done at task start with live FlexTools session warmth; the planner doesn't need the exact API names to commit to the design.

@@ -34,7 +34,7 @@ def apply_residue(target_obj: ICmObject, *, run_ctx: RunContext) -> None: ...
 
 **Corrected per T008/T009/T011 MCP probes — see [../probe-results.md](../probe-results.md).**
 
-**`enumerate_source`**: Use the flexlibs2 wrappers — `project.MorphRules.GetAllCompoundRules()` ∪ `project.MorphRules.GetAllAdhocCoProhibitions()`. The wrappers internally enumerate `MorphologicalDataOA.{CompoundRulesOS, AdhocCoProhibitionsOC}`.
+**`enumerate_source`**: Use the flexicon wrappers — `project.MorphRules.GetAllCompoundRules()` ∪ `project.MorphRules.GetAllAdhocCoProhibitions()`. The wrappers internally enumerate `MorphologicalDataOA.{CompoundRulesOS, AdhocCoProhibitionsOC}`.
 
 **`dependencies`**: Per-subclass:
 - Compound rules: `(STRATA, rule.StratumRA.Guid)` for the rule's stratum scope per FR-336; `(AFFIXES, msa.Guid)` for any owned `OverridingMsaOA`/`ToMsaOA`'s parent entry; `(POS, pos.Guid)` for the MSA's owning POS.
@@ -45,7 +45,7 @@ def apply_residue(target_obj: ICmObject, *, run_ctx: RunContext) -> None: ...
 **`plan_action`**: Subclass dispatch on `ICmObject(src_obj).ClassName`. Returns one `PlannedAction` per rule. Unknown subclass → `Skip(NEEDS_MANUAL)`.
 
 **`execute_action`**: Per-subclass:
-- `MoEndoCompound`: prefer `project.MorphRules.CreateCompoundRule(name, endocentric=True, description=...)` (flexlibs2 wrapper); ServiceLocator fallback if unsuitable. Then write `HeadLast` and (if source has one) clone the owned `OverridingMsaOA` (recursive walk + identity_remap). Write inherited `StratumRA` + `ToProdRestrictRC`.
+- `MoEndoCompound`: prefer `project.MorphRules.CreateCompoundRule(name, endocentric=True, description=...)` (flexicon wrapper); ServiceLocator fallback if unsuitable. Then write `HeadLast` and (if source has one) clone the owned `OverridingMsaOA` (recursive walk + identity_remap). Write inherited `StratumRA` + `ToProdRestrictRC`.
 - `MoExoCompound`: `project.MorphRules.CreateCompoundRule(name, endocentric=False, description=...)`. Then clone the mandatory `ToMsaOA` (recursive walk + identity_remap). Write inherited `StratumRA` + `ToProdRestrictRC`.
 - `MoAdhocProhibGr`: `IMoAdhocProhibGrFactory.Create(Guid)` via ServiceLocator; write `Name`, recursively create `MembersOC` (owned atoms — re-enter the dispatcher for each child atom).
 - `MoAlloAdhocProhib`: `IMoAlloAdhocProhibFactory.Create(Guid)` via ServiceLocator; wire `AllomorphsRS`, `FirstAllomorphRA`, `RestOfAllosRS` via identity_remap against US1-created `IMoForm` allomorphs. Wire inherited `Adjacency`, `Disabled`.
@@ -79,7 +79,7 @@ Owner attach: top-level rules go to `target.LangProject.MorphologicalDataOA.Comp
 
 **`plan_action`**: One `PlannedAction` per template. Collision guard as above.
 
-**`execute_action`**: Prefer `project.MorphRules.CreateAffixTemplate(pos_or_hvo, name, description=None)` (flexlibs2 wrapper); ServiceLocator fallback to `IMoInflAffixTemplateFactory.Create(Guid)` only if Guid preservation requires it. Then wire **5 slot reference sequences** in source order via target-slot GUID lookup: `PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`, `ProcliticSlotsRS`, `SlotsRS` (per T010 probe — spec previously assumed only 2). Write `Final` (bool), `Disabled` (bool); wire `StratumRA` to Phase 3a-transferred Stratum by GUID (per FR-336). Clone owned `RegionOA` if non-null. **Tail block (17.1 sub-pass)**: after all template writes complete, iterate `plan.msa_slot_bindings`; for each `(msa_guid, slot_guids)` pair, write `msa.SlotsRC.Add(slot)` per resolved slot. Unresolved → `Skip(DEPENDENCY_UNRESOLVED)` emitted into the run report (NOT a PlannedAction failure — the template write already succeeded).
+**`execute_action`**: Prefer `project.MorphRules.CreateAffixTemplate(pos_or_hvo, name, description=None)` (flexicon wrapper); ServiceLocator fallback to `IMoInflAffixTemplateFactory.Create(Guid)` only if Guid preservation requires it. Then wire **5 slot reference sequences** in source order via target-slot GUID lookup: `PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`, `ProcliticSlotsRS`, `SlotsRS` (per T010 probe — spec previously assumed only 2). Write `Final` (bool), `Disabled` (bool); wire `StratumRA` to Phase 3a-transferred Stratum by GUID (per FR-336). Clone owned `RegionOA` if non-null. **Tail block (17.1 sub-pass)**: after all template writes complete, iterate `plan.msa_slot_bindings`; for each `(msa_guid, slot_guids)` pair, write `msa.SlotsRC.Add(slot)` per resolved slot. Unresolved → `Skip(DEPENDENCY_UNRESOLVED)` emitted into the run report (NOT a PlannedAction failure — the template write already succeeded).
 
 **`apply_residue`**: Carrier B — `Description` multistring append.
 

@@ -39,7 +39,7 @@ Pure. No I/O.
 
 ## `props_for(handle, category, guid, *, index=None, owner_guid="") -> Optional[dict]`
 
-Runtime (imports flexlibs2). Returns a comparable `{field: value}` dict.
+Runtime (imports flexicon). Returns a comparable `{field: value}` dict.
 
 **Guarantees**
 - Covered category → `GetSyncableProperties(obj)` dict; builds the GUID `index` once, reuses it (FR-007).

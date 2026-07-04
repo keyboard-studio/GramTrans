@@ -7,8 +7,8 @@ D1/D3) so the empirically-proven collision classes are regression-locked.
 
 ## Prerequisites
 
-- Python 3 with the repo installed (dev): `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
-  then `pip install -e .` for GramTrans. (011 itself imports no flexlibs2 in `Lib/models.py`; the
+- Python 3 with the repo installed (dev): `pip install -e D:/Github/_Projects/_LEX/flexicon`
+  then `pip install -e .` for GramTrans. (011 itself imports no flexicon in `Lib/models.py`; the
   unit tests use fake source/target handles — no live FLEx needed to run the suite.)
 - Test runner: `pytest`.
 
@@ -109,7 +109,7 @@ Build an inventory where a SIMILAR affix entry contributes **two MSAs to the sam
 ## Optional — re-run the live probes (author-side, read-only)
 
 The planning probes can be re-run against the live target to refresh the evidence (FLExTools MCP,
-`flexlibs2`, `write_enabled=false`, project `Ejagham Full GT-Test`): affix form-collision scan and
+`flexicon`, `write_enabled=false`, project `Ejagham Full GT-Test`): affix form-collision scan and
 phonology within-category label-collision scan. This is author-side validation only — **not** a
 test dependency (constitution: the MCP is non-normative and not part of the shipped module).
 

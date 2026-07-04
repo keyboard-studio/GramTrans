@@ -14,8 +14,8 @@ Deliver a FlexTools-compatible Python module that copies a user-selected set of 
 pieces (and their full dependency closure) from the currently-open FLEx project (source)
 to a user-picked target FLEx project, additively, with a Preview Mode default and a
 structured per-object residue tag on every newly added object. Implementation imports
-**flexlibs2 directly** (no flavor-adapter contract) per constitution v5.0.0 Principle II.
-The runtime depends on the patched MattGyverLee/flexlibs2 fork (carrying the
+**flexicon directly** (no flavor-adapter contract) per constitution v5.0.0 Principle II.
+The runtime depends on the patched MattGyverLee/flexicon fork (carrying the
 `WritingSystems` enumeration fix and the new `ApplySyncableProperties` method). A
 LibLCM-direct re-implementation is a **separate post-Phase-2 sibling repository**, not a
 deliverable in this tree. The UI is PyQt, hosted inside the FlexTools window, and
@@ -28,14 +28,14 @@ demand) before any transfer writes occur.
 no language-version constraints introduced by this module beyond what FlexTools requires).
 
 **Primary Dependencies**:
-- **flexlibs2 (forked)** — Pythonic Operations-class LCM wrapper. **Direct runtime
-  dependency.** Consumed from the MattGyverLee/flexlibs2 fork at
-  `D:/Github/_Projects/_LEX/flexlibs2` (or its published GitHub fork URL) which carries
+- **flexicon (forked)** — Pythonic Operations-class LCM wrapper. **Direct runtime
+  dependency.** Consumed from the MattGyverLee/flexicon fork at
+  `D:/Github/_Projects/_LEX/flexicon` (or its published GitHub fork URL) which carries
   two patches required by GramTrans: (a) `GetSyncableProperties` enumerates writing
   systems via `project.WritingSystems.GetAll()` instead of the nonexistent
   `ws_factory.WritingSystems` attribute; (b) a new
   `ApplySyncableProperties(item, props, ws_map=None)` method on `BaseOperations` plus the
-  8 Grammar Operations subclasses. `pyproject.toml` declares `flexlibs2>=2.0`; the fork
+  8 Grammar Operations subclasses. `pyproject.toml` declares `flexicon>=2.0`; the fork
   is installed manually and the dependency is documented in
   [../../CLAUDE.md](../../CLAUDE.md) and the repo README.
 - **PyQt** — UI toolkit, hosted inside the FlexTools main window.
@@ -73,9 +73,9 @@ under 5 minutes wall-clock. No throughput target beyond that; this is an interac
 authoring tool, not a bulk pipeline.
 
 **Constraints**:
-- **flexlibs2 imported directly** (no adapter contract). Constitution v5.0.0 Principle II.
-- **flexlibs2 is a forked dependency** — see Primary Dependencies above.
-- No flexlibs1 (dropped in favor of flexlibs2; not used in any version of this plan).
+- **flexicon imported directly** (no adapter contract). Constitution v5.0.0 Principle II.
+- **flexicon is a forked dependency** — see Primary Dependencies above.
+- No flexlibs1 (dropped in favor of flexicon; not used in any version of this plan).
 - No LibLCM in this repo (Phase 3 is a separate sibling repo).
 - Preview is the default mode (Constitution Principle III).
 - GOLD categories / inflection features inviolable (Principle I).
@@ -101,7 +101,7 @@ Evaluated against [.specify/memory/constitution.md](../../.specify/memory/consti
 | # | Principle | Status | Plan compliance |
 |---|-----------|--------|-----------------|
 | I | FLEx Domain Fidelity (NON-NEGOTIABLE) | **PASS** | GUID-first identity (FR-012); GOLD inviolability (FR-022); WS mapping is mandatory and explicit (FR-011); cross-refs must resolve or the item is skipped (FR-021, SC-003). |
-| II | FlexTools-Compatible Output, flexlibs2-Direct | **PASS** | No `flavors/` directory; `gramtrans.py` and `Lib/*.py` files import flexlibs2 modules directly. flexlibs2 is consumed as a patched fork (see Primary Dependencies). LibLCM is not consumed; Phase 3 is a sibling repo. MCP is author-side only, not in the runtime tree. |
+| II | FlexTools-Compatible Output, flexicon-Direct | **PASS** | No `flavors/` directory; `gramtrans.py` and `Lib/*.py` files import flexicon modules directly. flexicon is consumed as a patched fork (see Primary Dependencies). LibLCM is not consumed; Phase 3 is a sibling repo. MCP is author-side only, not in the runtime tree. |
 | III | Preview-Before-Mutate (NON-NEGOTIABLE) | **PASS (with closing-spike clause)** | Preview is the default mode (FR-014); Move Mode requires a current-session preview first (FR-015); preview produces no writes (SC-006). The STATUS.md Layer 1+2 Move-mode validation spike predates the Preview engine; `Lib/preview.py` (plan-builder) and `Lib/transfer.py` (plan-executor) MUST land before Layer 3 — tracked as task T-Spike in tasks.md. |
 | IV | Phased Merge Discipline | **PASS** | This plan ships Phase 0 only. No overwrite, no merge UI, no conflict prompts. The Import Residue tag schema is forward-compatible (Clarification Q5) so Phase 1/2 can adopt it unchanged. Phase 3 LibLCM port lives in a sibling repo per v5.0.0. |
 | V | Referential Completeness | **PASS** | `Lib/closure.py` is a first-class component; closure-by-default toggle in the main window (FR-013); items whose closure cannot be satisfied are skipped entire, not partial (FR-021). |
@@ -196,7 +196,7 @@ pattern. The PyQt widgets are the only nested subpackage (`Lib/ui/`) so the impo
 in the main window stay readable.
 
 There is **no** `flavors/`, `core/`, or `categories/` subpackage. The v4.0.0 layered
-plan was retired by constitution v5.0.0; instead, flexlibs2 is imported directly by each
+plan was retired by constitution v5.0.0; instead, flexicon is imported directly by each
 helper that needs it.
 
 **Per-category split**: only the heavy categories (affixes, templates, MSAs) get their

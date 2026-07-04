@@ -1,12 +1,12 @@
 # US2 Blocker: Custom-Field Schema Mutation vs. UnitOfWork Envelope
 
 **Date**: 2026-06-21
-**Status**: RESOLVED — Option C (detect-and-report) adopted per LEX crew cycle-1 unanimous approval (lex-domain PASS, lex-author 9/10, lex-doc/lex-programmer/lex-qc converged). T014-T020 superseded; see code shipped in commit (this one) and spec.md US2 / FR-323 / FR-325 rewrites. Creation remains blocked at flexlibs2 layer; promotion path documented below.
+**Status**: RESOLVED — Option C (detect-and-report) adopted per LEX crew cycle-1 unanimous approval (lex-domain PASS, lex-author 9/10, lex-doc/lex-programmer/lex-qc converged). T014-T020 superseded; see code shipped in commit (this one) and spec.md US2 / FR-323 / FR-325 rewrites. Creation remains blocked at flexicon layer; promotion path documented below.
 **Discovery vector**: MCP probe of `CustomFieldOperations.CreateField` docstring during T014 implementation prep.
 
 ## The constraint
 
-Per the flexlibs2 docstring on `CustomFieldOperations.CreateField`:
+Per the flexicon docstring on `CustomFieldOperations.CreateField`:
 
 > Custom field creation is a SCHEMA mutation and cannot run inside an
 > open UnitOfWork. In Phase 1 transaction mode (the default),
@@ -44,12 +44,12 @@ Both possible workarounds are unsatisfactory:
    project handle in a separate process / connection that doesn't enter
    the Phase-1 envelope? (Probably no -- FlexTools sandbox is one
    process.)
-2. Does flexlibs2 expose a "schema-mutation pre-pass" hook that runs
+2. Does flexicon expose a "schema-mutation pre-pass" hook that runs
    before `OpenProject` enters Phase-1 mode? Worth searching the fork
    for `before_open`-style hooks.
 3. Does the LCM C# layer offer a way to `Save()` the schema mutation
    without closing the UoW? Need to consult `docs/CUSTOM_FIELDS.md` in
-   the flexlibs2 fork (the docstring references it but it's not surfaced
+   the flexicon fork (the docstring references it but it's not surfaced
    through MCP discovery).
 
 ## Recommended Phase 3b path
@@ -89,7 +89,7 @@ This requires:
 - Splitting the planner: schema mutations vs. object-graph mutations.
 - New `_apply_custom_field_schema` helper that uses a short-lived
   `OpenProject(undoable=False, transaction_mode='direct')` -- need to
-  confirm flexlibs2 exposes a direct-mode flag.
+  confirm flexicon exposes a direct-mode flag.
 - Plumbing the source-side custom-field record extraction so it runs
   before the UoW opens (i.e., on a read-only source handle).
 
@@ -103,7 +103,7 @@ fields by hand").
 
 US2 can resume when ONE of the following is true:
 
-1. flexlibs2 fork exposes a `transaction_mode='direct'` (or equivalent)
+1. flexicon fork exposes a `transaction_mode='direct'` (or equivalent)
    on `OpenProject` that bypasses the Phase-1 envelope.
 2. We adopt the two-phase `MainFunction` shape above, with the
    schema-pre-pass running in a separately-opened, direct-mode project

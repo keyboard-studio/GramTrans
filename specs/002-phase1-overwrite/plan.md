@@ -11,7 +11,7 @@
 | Principle | Row | Status |
 |---|---|---|
 | I. FLEx Domain Fidelity | GUID-first matching; GOLD inviolability carried forward | Reserved |
-| II. flexlibs2-Direct | No flavor adapter; direct flexlibs2 imports; LibLCM port is separate sibling repo | Reserved |
+| II. flexicon-Direct | No flavor adapter; direct flexicon imports; LibLCM port is separate sibling repo | Reserved |
 | III. Preview-Before-Mutate | Overwrite planner is read-only; executor is the only writer | Reserved |
 | **IV. Phased Merge Discipline** | **Row II — Phase 1 Overwrite. Phase 0 MUST be complete before this phase begins.** | Reserved |
 | V. Referential Completeness | Dependency closure applies to overwrites as well as adds | Reserved |

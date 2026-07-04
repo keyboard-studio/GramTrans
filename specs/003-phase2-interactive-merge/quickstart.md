@@ -5,7 +5,7 @@ Runnable validation guide that proves Phase 2 works end-to-end. Implementation d
 ## Prerequisites
 
 - Phase 1 complete and verified (commits e129b72..f4cdd9c on `main`).
-- flexlibs2 fork installed per [CLAUDE.md](../../CLAUDE.md).
+- flexicon fork installed per [CLAUDE.md](../../CLAUDE.md).
 - Ejagham Mini and Ejagham Full GT-Test projects available at `C:\ProgramData\SIL\FieldWorks\Projects\`.
 - A backup of Ejagham Full GT-Test (the scenarios are write-mode).
 - Python 3.12, PyQt5, pytest, all already on the dev environment per Phase 1.

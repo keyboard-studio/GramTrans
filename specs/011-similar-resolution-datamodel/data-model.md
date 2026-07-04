@@ -1,6 +1,6 @@
 # Phase 1 Data Model: Similar-Candidate Capture & Per-Item Resolution (011)
 
-Pure-Python frozen dataclasses. `Lib/models.py` types stay flavor-agnostic (no flexlibs2/LCM
+Pure-Python frozen dataclasses. `Lib/models.py` types stay flavor-agnostic (no flexicon/LCM
 imports); `Lib/selection.py` types are built from `_cast`-guarded LCM access already present in the
 file. Every new field is **tail-appended and defaulted** for back-compat (FR-009 / research D7).
 

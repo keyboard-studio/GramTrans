@@ -1,7 +1,7 @@
 # Phase 3a Research: Phonology Block
 
 Resolves the technical unknowns in [plan.md](plan.md) before data-model
-and contracts begin. Each finding cites its MCP probe or flexlibs2
+and contracts begin. Each finding cites its MCP probe or flexicon
 source location.
 
 ---
@@ -11,19 +11,19 @@ source location.
 **Decision**: Implement strata callbacks directly via
 `project.GetService(IMoStratumFactory)` and
 `LangProject.MorphologicalDataOA.StrataOS.Add(...)`. No new
-`StratumOperations` wrapper added to the flexlibs2 fork in this phase.
+`StratumOperations` wrapper added to the flexicon fork in this phase.
 
 **Rationale**: MCP `search_by_capability("stratum operations")` returns
 only `MorphRuleOperations.GetStratum/SetStratum` and
 `PhonologicalRuleOperations.GetStratum/SetStratum` — both ACCESS
-strata, neither CREATES or enumerates them. flexlibs2 has no
+strata, neither CREATES or enumerates them. flexicon has no
 `Grammar/StratumOperations.py`. Constitution Principle II explicitly
 sanctions `project.GetService(IFooFactory)` as the fallback when no
-Operations class covers the surface (see flexlibs2 worked example
+Operations class covers the surface (see flexicon worked example
 `servicelocator-factory-pattern`).
 
 **Alternatives considered**:
-- *Add a `StratumOperations` class to the flexlibs2 fork.* Rejected
+- *Add a `StratumOperations` class to the flexicon fork.* Rejected
   for this phase — keeps the fork's diff minimal; upstreamable later
   if Phase 3b morphology demonstrates a real need beyond Get/Set.
 
@@ -35,7 +35,7 @@ Operations class covers the surface (see flexlibs2 worked example
 first implementation commit; if no Guid overload exists, fall back to
 `identity_remap` per FR-303. Document the result here once probed.
 
-**Rationale**: The flexlibs2 worked example shows
+**Rationale**: The flexicon worked example shows
 `phoneme_factory.Create()` with no Guid argument. The Phase 1 pattern
 (MSA / Allomorph) already handles this case — `identity_remap` is
 populated by the executor for downstream reference resolution.

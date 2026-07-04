@@ -15,7 +15,7 @@ Technical approach: Per Phase 3a's template, MCP-probe each factory used by the 
 **Language/Version**: Python 3.12.
 
 **Primary Dependencies**:
-- `flexlibs2` (MattGyverLee fork) — direct LCM access per constitution Principle II. Pre-existing Operations classes already used by the five COMPLETE callbacks: `POSOperations`, `InflectionFeatureOperations`, `InflectionClassOperations`, `StemNameOperations`, `ExceptionFeatureOperations` (paths in `flexlibs2/code/Grammar/`). For the three stubs + new category, MCP probe at planning time to confirm exact accessor surface: variant types and complex form types live under `project.LexDb.VariantEntryTypesOA` / `ComplexEntryTypesOA`; custom fields go through `project.Cache.MetaDataCacheAccessor.AddCustomField(class, name, type, ...)`; semantic domains under `project.LangProject.SemanticDomainListOA.PossibilitiesOS`.
+- `flexicon` (MattGyverLee fork) — direct LCM access per constitution Principle II. Pre-existing Operations classes already used by the five COMPLETE callbacks: `POSOperations`, `InflectionFeatureOperations`, `InflectionClassOperations`, `StemNameOperations`, `ExceptionFeatureOperations` (paths in `flexicon/code/Grammar/`). For the three stubs + new category, MCP probe at planning time to confirm exact accessor surface: variant types and complex form types live under `project.LexDb.VariantEntryTypesOA` / `ComplexEntryTypesOA`; custom fields go through `project.Cache.MetaDataCacheAccessor.AddCustomField(class, name, type, ...)`; semantic domains under `project.LangProject.SemanticDomainListOA.PossibilitiesOS`.
 - `SIL.LCModel` interfaces (lazy-imported): `IPartOfSpeech`, `IFsClosedFeature`, `IMoInflClass`, `IMoStemName`, `IFsSymFeatVal`, `ILexEntryType` (variants + complex forms), `ICmSemanticDomain`, plus factories. `MetaDataCacheAccessor` for custom fields.
 
 **Storage**: No new storage. State lives in target LCM objects + the existing residue tag.
@@ -34,7 +34,7 @@ Technical approach: Per Phase 3a's template, MCP-probe each factory used by the 
 - Per-category `enumerate_source` < 100ms for inventories under 1000 items each (semantic domains is the largest realistic inventory — ~1700 standard catalog + custom).
 
 **Constraints**:
-- Constitution Principle II: flexlibs2-Direct.
+- Constitution Principle II: flexicon-Direct.
 - Principle III: Preview-Before-Mutate — every new `plan_action` runs during `build_run_plan`, no LCM writes.
 - Principle IV: additive over Phases 0/1/2/3a — no earlier-phase path removed.
 - Standard FW catalog detection on semantic domains MUST use `CatalogSourceId` non-empty (the existing `_is_gold` heuristic). ~1700 standard FW semantic domains MUST be skipped on every run.
@@ -50,7 +50,7 @@ Technical approach: Per Phase 3a's template, MCP-probe each factory used by the 
 | Principle | Status | Justification |
 |-----------|--------|---------------|
 | I. FLEx Domain Fidelity | PASS | GUID preservation is default; identity_remap is the documented fallback. GOLD inviolability is central to Phase 3b — FR-324 reaffirms `Skip(GOLD_INVIOLABLE)` for POS, inflection features, and (per FR-326) semantic-domain catalog entries. The five COMPLETE callbacks already honor this; the three new + one new-enum follow the same `_is_gold` check. |
-| II. flexlibs2-Direct | PASS | All callbacks import `flexlibs2` directly. Custom fields' `MetaDataCacheAccessor` is the documented LCM-direct path for non-first-class objects (analogous to Strata's `GetService(IMoStratumFactory)` Direct-fallback in Phase 3a). |
+| II. flexicon-Direct | PASS | All callbacks import `flexicon` directly. Custom fields' `MetaDataCacheAccessor` is the documented LCM-direct path for non-first-class objects (analogous to Strata's `GetService(IMoStratumFactory)` Direct-fallback in Phase 3a). |
 | III. Preview-Before-Mutate | PASS | Five-callback shape preserved across all nine categories. |
 | IV. Phased Merge Discipline | PASS | Phase 3b ordered behind 0-2-3a. FR-328..330 require Phase 1 + Phase 2 + FR-308 semantics to apply unchanged; FR-331 explicitly forbids modifying earlier-phase paths. |
 | V. Referential Completeness | PASS | FR-327 enforces dependency closure for variant types → inflection features; existing exception-features `dependencies` callback already enforces POS + IFsSymFeatVal closure; custom-field target-class validity handled in `plan_action`. |
@@ -62,7 +62,7 @@ Technical approach: Per Phase 3a's template, MCP-probe each factory used by the 
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. | PASS | data-model.md maps the nine categories cleanly to LCM types and clarifies GOLD detection per-category. |
-| II. | PASS | contracts/category-callbacks.md uses flexlibs2 Operations classes for 8 of 9; custom_fields uses `MetaDataCacheAccessor.AddCustomField` (LCM-direct). |
+| II. | PASS | contracts/category-callbacks.md uses flexicon Operations classes for 8 of 9; custom_fields uses `MetaDataCacheAccessor.AddCustomField` (LCM-direct). |
 | III. | PASS | quickstart.md exercises Preview first, then Move. |
 | IV. | PASS | quickstart.md Scenario E confirms Phase 0/1/2/3a unchanged. |
 | V. | PASS | Variant-type → inflection-feature dependency documented in data-model.md. |

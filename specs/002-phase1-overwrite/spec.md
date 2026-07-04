@@ -214,7 +214,7 @@ updates.
 - **Residue tag schema**: The `[GT-Tag]:` schema defined in Phase 0 (FR-010) is
   reused unchanged. Phase 1 extends it with an optional `snap=` suffix field;
   existing Phase 0 tags without `snap=` remain valid.
-- **flexlibs2 fork**: The MattGyverLee/flexlibs2 fork remains the runtime
+- **flexicon fork**: The MattGyverLee/flexicon fork remains the runtime
   dependency per constitution v5.0.0 Principle II. No additional fork patches
   are assumed to be required for Phase 1 at spec time.
 - **identity_remap availability**: The `identity_remap` dict from a prior Phase 0

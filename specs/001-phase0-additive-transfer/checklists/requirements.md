@@ -31,7 +31,7 @@
 
 ## Notes
 
-- The spec mentions flexlibs2 (the only runtime API flavor in this repo, consumed as
+- The spec mentions flexicon (the only runtime API flavor in this repo, consumed as
   the patched MattGyverLee fork), LibLCM (out of scope — the LibLCM-direct
   implementation lives in a separate post-Phase-2 sibling repository per constitution
   v5.0.0 Principle IV), and FLExToolsMCP (non-normative author-side assistant) by

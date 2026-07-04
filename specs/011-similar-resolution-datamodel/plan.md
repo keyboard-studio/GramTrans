@@ -43,9 +43,9 @@ reproducibility contract for SC-001/SC-002).
 **Language/Version**: Python 3 (hosted by a standard FlexTools install; `from __future__ import annotations`).
 
 **Primary Dependencies**: None new. Pure-Python `dataclasses` + `enum` + `typing`. `Lib/models.py`
-imports no flexlibs2/LCM (flavor-agnostic per its module docstring); `Lib/selection.py` capture
+imports no flexicon/LCM (flavor-agnostic per its module docstring); `Lib/selection.py` capture
 helpers reuse the existing `_cast`-guarded LCM access already present in the file. Runtime flavor
-is the MattGyverLee/flexlibs2 fork per constitution v5.0.0 Principle II (no new fork surface used
+is the MattGyverLee/flexicon fork per constitution v5.0.0 Principle II (no new fork surface used
 by 011).
 
 **Storage**: N/A — in-memory frozen dataclasses only.
@@ -76,7 +76,7 @@ change any plan/closure/execution output (SC-004 byte-identical guarantee).
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | **I. FLEx Domain Fidelity** (NON-NEGOTIABLE) | PASS | `SimilarCandidate` carries the lower-cased target **GUID** as identity (GUID-first, Principle I). No GOLD/reserved item is mutated (read-only capture). No cross-reference is written; nothing resolves-or-fails because nothing is transferred here. |
-| **II. FlexTools-Compatible, flexlibs2-Direct** | PASS | No adapter layer. `Lib/models.py` stays flavor-agnostic (survives into the LibLCM sibling repo unchanged); `Lib/selection.py` capture reuses the file's existing `_cast`-guarded flexlibs2-direct access. No new dependency. |
+| **II. FlexTools-Compatible, flexicon-Direct** | PASS | No adapter layer. `Lib/models.py` stays flavor-agnostic (survives into the LibLCM sibling repo unchanged); `Lib/selection.py` capture reuses the file's existing `_cast`-guarded flexicon-direct access. No new dependency. |
 | **III. Preview-Before-Mutate** (NON-NEGOTIABLE) | PASS (vacuous) | 011 is **data-model only**. It writes nothing to any target, adds no Move path, and `similar_resolutions` is inert until 013 consumes it (FR-010). `Lib/preview.py` / `Lib/transfer.py` are untouched. |
 | **IV. Phased Merge Discipline** | PASS | 011 delivers typed vocabulary for the eventual interactive-merge phase without partially implementing it — no per-conflict prompt, no field merge, no wizard page. It is additive scaffolding chunked ahead of 012–015, each of which has its own spec. |
 | **V. Referential Completeness** | PASS (N/A) | No closure is computed or transferred by 011. Candidate capture records *potential* target matches for a later UI; it neither pulls nor drops dependencies. |

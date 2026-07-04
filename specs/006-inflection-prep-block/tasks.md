@@ -39,7 +39,7 @@ description: "Phase 3b — Inflection / Lexicon-Prep Block tasks"
 
 - [x] T004 [P] MCP-probe `ICmPossibilityFactory` and `IPartOfSpeechFactory` (`flextools_get_object_api`); record Guid-overload availability and POS-vs-CmPossibility split in `specs/006-inflection-prep-block/probe-results.md`
 - [x] T005 [P] MCP-probe `MetaDataCacheAccessor.AddCustomField` signature + `CellarPropertyType` enum members; append to `probe-results.md`
-- [x] T006 [P] MCP-probe `ILexEntryTypeFactory` (used by both variant types and complex form types) + whether flexlibs2 exposes `project.VariantEntryTypes` / `project.ComplexEntryTypes` wrappers or whether `GetService` fallback applies; append to `probe-results.md`
+- [x] T006 [P] MCP-probe `ILexEntryTypeFactory` (used by both variant types and complex form types) + whether flexiconexposes `project.VariantEntryTypes` / `project.ComplexEntryTypes` wrappers or whether `GetService` fallback applies; append to `probe-results.md`
 - [x] T007 [P] MCP-probe `ICmSemanticDomainFactory` Guid-overload availability + verify `SemanticDomainListOA.PossibilitiesOS` walk path; append to `probe-results.md`
 - [x] T008 [P] MCP-probe how variant-type `InflFeatsOS` (`IFsFeatStruc` owned collection) enumerates referenced `IFsSymFeatVal`s for the FR-327 dependency check; append to `probe-results.md`
 
@@ -67,7 +67,7 @@ description: "Phase 3b — Inflection / Lexicon-Prep Block tasks"
 
 **Status (2026-06-21 08:45)**: US2 shipped as detect-and-report per LEX
 crew cycle-1 approval (Option C adopted). Creation remains blocked at
-flexlibs2 layer pending Phase 2 transaction mode. The four implemented
+flexiconlayer pending Phase 2 transaction mode. The four implemented
 callbacks (`enumerate_source`, `dependencies`,
 `required_writing_systems`, `plan_action`) detect target's existing
 custom fields via `CustomFieldOperations.GetAllFields` / `FindField`
@@ -80,10 +80,10 @@ promotion path when Phase 2 transaction mode lands.
 
 **Independent Test**: Quickstart Scenario A's custom-fields sub-step.
 
-- [x] T014 [P] [US2] Implement `custom_fields_enumerate_source` — **shipped as detect-only** via `CustomFieldOperations.GetAllFields` per Option C (creation blocked at flexlibs2 UoW layer; see [us2-blocker-memo.md](us2-blocker-memo.md))
+- [x] T014 [P] [US2] Implement `custom_fields_enumerate_source` — **shipped as detect-only** via `CustomFieldOperations.GetAllFields` per Option C (creation blocked at flexiconUoW layer; see [us2-blocker-memo.md](us2-blocker-memo.md))
 - [x] T015 [P] [US2] Implement `custom_fields_dependencies` (returns `()`) and `custom_fields_required_writing_systems`
 - [x] T016 [US2] Implement `custom_fields_plan_action` — `Skip(ALREADY_PRESENT_BY_IDENTITY)` on `(class_id, name)` tuple match; `Skip(NEEDS_MANUAL)` on absence (detect-and-report posture, cycle 3 ruling)
-- [~] T017 [US2] Implement `custom_fields_execute_action` — **registered no-op stub** pending Phase 2 transaction-mode rework at flexlibs2 layer
+- [~] T017 [US2] Implement `custom_fields_execute_action` — **registered no-op stub** pending Phase 2 transaction-mode rework at flexiconlayer
 - [x] T018 [US2] Unit tests in `tests/unit/test_categories_custom_fields.py` covering detect/identity/no-op invariants
 - [~] T019 [US2] Integration test `test_us2_custom_fields_round_trip` — deferred with T017 (no-op execute path has nothing to round-trip)
 - [~] T020 [US2] Live MCP Scenario A.2 — deferred with T017

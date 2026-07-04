@@ -71,7 +71,7 @@ Per-transfer-category mapping used by `props_for`:
 | Column | Meaning |
 |--------|---------|
 | category key | `GrammarCategory.value`-style key (e.g. `"pos"`, `"entry"`, `"slot"`). |
-| ops accessor | attribute on the flexlibs2 project handle (e.g. `"POS"`, `"LexEntry"`). |
+| ops accessor | attribute on the flexicon project handle (e.g. `"POS"`, `"LexEntry"`). |
 | finder | linear GUID lookup (mirrors `conflict._find_target_*_by_guid`). |
 | needs_owner | whether the wrapper requires an owner GUID (templates/slots). |
 | fallback | direct-read flag for the fork-gap categories (Slots, Phon Features, Stem Names). |
@@ -88,7 +88,7 @@ the `{field: {ws_id: text}}` shape for Name/Abbreviation/Description (+ optional
 ### Enumerated rows (concrete starting point for T022)
 
 Category keys mirror the `GrammarCategory.value` / `conflict._OW_OPS` style. **Accessor names
-marked "confirm" MUST be verified against `categories.py` / the flexlibs2 Operations class
+marked "confirm" MUST be verified against `categories.py` / the flexicon Operations class
 before wiring** — they are the module's best-known guess, not confirmed API (this is the
 open work T022/T023 must close, not silently invent):
 
@@ -116,7 +116,7 @@ Qt-free cache/orchestrator.
 
 | Member | Type | Notes |
 |--------|------|-------|
-| source / target handles | flexlibs2 project handles | Held for the wizard life; re-fetch by GUID on first click. |
+| source / target handles | flexicon project handles | Held for the wizard life; re-fetch by GUID on first click. |
 | `ws_role_of` | `Callable[[str], Optional[WsRole]]` or `{ws_id: WsRole}` | From `ws_role_map`. |
 | target GUID index | `dict[str, ...]` | **Lazy**; built once per service (linear `GetAll()` scan). |
 | props cache | `dict[key, dict]` | Caches property **dicts**, never LCM objects (FR-012). |

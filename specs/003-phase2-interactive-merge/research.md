@@ -50,7 +50,7 @@ This document resolves the technical unknowns identified in [plan.md](plan.md) b
 - The five-resolution model collapses to "filter the dict and optionally replace values" — no special-case branches per category.
 
 **Alternatives considered**:
-- *Apply decisions inside `ApplySyncableProperties` itself (in flexlibs2 fork)* — rejected: would couple flexlibs2 to GramTrans-specific resolution semantics. The fork stays generic.
+- *Apply decisions inside `ApplySyncableProperties` itself (in flexicon fork)* — rejected: would couple flexicon to GramTrans-specific resolution semantics. The fork stays generic.
 - *Per-category resolution methods (e.g., `_resolve_entry_conflicts`)* — rejected: every Carrier-A class has the same conflict shape; one filter covers all.
 
 ---
@@ -166,9 +166,9 @@ The UI dialog uses the prior decision (if any) as the pre-selected radio button 
 
 ---
 
-## R10. No new flexlibs2 fork patches needed
+## R10. No new flexicon fork patches needed
 
-**Decision**: Phase 2 introduces zero new flexlibs2 fork patches. All conflict detection, WS-mapping wizardry, and residue extension live in the GramTrans tree.
+**Decision**: Phase 2 introduces zero new flexicon fork patches. All conflict detection, WS-mapping wizardry, and residue extension live in the GramTrans tree.
 
 **Rationale**: The existing `GetSyncableProperties` / `ApplySyncableProperties` surface already returns and accepts plain Python dicts; Phase 2's filter operates entirely on those dicts. The WS wizard reads `project.WritingSystems.GetAll()` which the fork already exposes correctly post the Phase-0 WS-enumeration fix.
 

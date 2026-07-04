@@ -15,7 +15,7 @@ UI deferred (Layer-1 defaults). Validated live on Ejagham + Esperanto.
 ## Technical Context
 
 **Language/Version**: Python 3 (FlexTools host). **Primary deps**: PyQt6, MattGyverLee/
-flexlibs2 fork, SIL.LCModel via pythonnet. **Testing**: pytest (fake handles) + live
+flexicon fork, SIL.LCModel via pythonnet. **Testing**: pytest (fake handles) + live
 FlexTools MCP. **Project type**: FLExTrans-style flat `Lib/`. **Constraints**: pure
 builders (fake-handle testable); all LCM access via the existing `_cast` helper (pythonnet
 resolves against declared base interface). **Scale**: builders reuse the 008 enumeration;
@@ -26,7 +26,7 @@ skeleton/deps are tiny in practice (Ejagham ≤4 slots, 1 template/POS).
 - **I. FLEx Domain Fidelity** — PASS. Read-only derivation; GUID identity; correct LCM
   anchors (AffixSlotsOC, AffixTemplatesOS, IMoInflAffMsa.SlotsRC, InflectableFeatsRC,
   InflectionClassesOC, StemNamesOC, ExceptionFeaturesOC). Casts guarded.
-- **II. flexlibs2-Direct** — PASS. Direct imports; `_cast` pattern; no adapter.
+- **II. flexicon-Direct** — PASS. Direct imports; `_cast` pattern; no adapter.
 - **III. Preview-Before-Mutate** — PASS. Pages build a Selection only; single write at Move.
 - **IV. Phased Merge Discipline** — PASS. Conflict UI deferred; no later-phase merge here.
 - **V. Referential Completeness** — PASS (central). Closure derived + preselected; per-item

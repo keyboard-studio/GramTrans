@@ -38,7 +38,7 @@ before Preview engine existed). Per constitution v5.0.0:
 **Purpose**: Project initialization and basic scaffolding.
 
 - [x] T001 Create the directory skeleton from [plan.md](plan.md) Project Structure: `src/gramtrans/gramtrans.py`, `src/gramtrans/Lib/__init__.py` (or empty stub for `site.addsitedir`), `src/gramtrans/Lib/ui/__init__.py`, `tests/{unit,integration,fixtures}/`. DONE during Layer 1+2 validation spike.
-- [x] T002 Initialize Python packaging in `pyproject.toml` at repo root: declare `gramtrans` package, Python version per the FlexTools host, runtime deps `flexlibs2>=2.0` (installed from the MattGyverLee fork, see [../../CLAUDE.md](../../CLAUDE.md)) and PyQt, dev deps `pytest`. DONE 2026-06-19.
+- [x] T002 Initialize Python packaging in `pyproject.toml` at repo root: declare `gramtrans` package, Python version per the FlexTools host, runtime deps `flexicon>=2.0` (installed from the MattGyverLee fork, see [../../CLAUDE.md](../../CLAUDE.md)) and PyQt, dev deps `pytest`. DONE 2026-06-19.
 - [x] T003 [P] Configure linting/formatting in `pyproject.toml`: `ruff` rules + `black` line length, exclude `tests/fixtures/`. DONE.
 - [x] T004 [P] Configure pytest in `pyproject.toml`: `testpaths = ["tests"]`, marker registration for `integration` (requires FlexTools host) so unit-only runs can `-m "not integration"`. DONE.
 - [ ] T005 Create `tests/fixtures/toy_source/README.md` pointing at the live `Ejagham Mini` project; commit a placeholder `tests/fixtures/copy_target.py` stub to be filled in by T015
@@ -47,30 +47,30 @@ before Preview engine existed). Per constitution v5.0.0:
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Lock the flexlibs2 surface, document the fork dependency, scaffold the
+**Purpose**: Lock the flexicon surface, document the fork dependency, scaffold the
 helper modules under `Lib/`, and lay down the data-model types every user story depends
 on. There is **no** flavor-adapter contract to scaffold (constitution v5.0.0).
 
 **STATUS (2026-06-19)**: D-validation tasks T006–T012 were executed against the live
-flexlibs2 surface via the FLExToolsMCP. Findings are baked into [research.md](research.md)
+flexicon surface via the FLExToolsMCP. Findings are baked into [research.md](research.md)
 R1, R6, R7, R10 and into [.specify/memory/constitution.md](../../.specify/memory/constitution.md)
 v5.0.0. These tasks are marked complete as a record; no further validation work blocks
 user-story phases.
 
 ### MCP-Mediated Validation (research.md D1–D7) — RESOLVED
 
-- [x] T006 [P] Validate per-operation flavor mapping (research.md D1, R1) via `mcp__flextools-mcp__flextools_get_object_api` + `flextools_find_wrappers_for_lcm` — DONE 2026-06-19; R1 table rewritten in flexlibs2-direct form
+- [x] T006 [P] Validate per-operation flavor mapping (research.md D1, R1) via `mcp__flextools-mcp__flextools_get_object_api` + `flextools_find_wrappers_for_lcm` — DONE 2026-06-19; R1 table rewritten in flexicon-direct form
 - [x] T007 [P] Confirm FlexTools module entry-point shape (research.md D2) via `mcp__flextools-mcp__flextools_get_module_template` — DONE; `docs = {...}` + `MainFunction(project, report, modifyAllowed)` per FLExTrans convention confirmed (`FlexToolsModuleClass` wrapper NOT required)
 - [ ] T008 [P] Confirm PyQt vs PySide for the host (research.md D3) — DEFERRED to UI implementation start; default PyQt5 per `pyproject.toml`, switch to PySide2 if import fails
-- [x] T009 [P] Identify the project-enumeration mechanism (research.md D4) — DONE; filesystem scan of `C:\ProgramData\SIL\FieldWorks\Projects` (no flexlibs2 / LCM method enumerates the disk; the MCP's own `flextools_list_projects` is the reference implementation)
-- [x] T010 [P] Enumerate per-LCM-type GUID-on-create permissibility (research.md D5) — DONE; some flexlibs2 factory wrappers DO accept a `Guid` parameter on `Create()` (verified against POS, Template, Slot during the Layer 1+2 spike — see STATUS.md); for the remainder the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The single helper lives inline in `Lib/transfer.py`.
+- [x] T009 [P] Identify the project-enumeration mechanism (research.md D4) — DONE; filesystem scan of `C:\ProgramData\SIL\FieldWorks\Projects` (no flexicon / LCM method enumerates the disk; the MCP's own `flextools_list_projects` is the reference implementation)
+- [x] T010 [P] Enumerate per-LCM-type GUID-on-create permissibility (research.md D5) — DONE; some flexicon factory wrappers DO accept a `Guid` parameter on `Create()` (verified against POS, Template, Slot during the Layer 1+2 spike — see STATUS.md); for the remainder the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The single helper lives inline in `Lib/transfer.py`.
 - [x] T011 [P] Enumerate per-LCM-type residue-field availability (research.md D6) — DONE; dual-carrier strategy: `LiftResidue` where present (Lex + MoForm + MSA classes), `Description`-append with `[GT-Tag]:` marker elsewhere
 - [x] T012 [P] Confirm `UndoableUnitOfWorkHelper` Python accessibility (research.md D7) — DONE; the FlexTools runner pre-wraps every snippet in a UOW (`STATUS.md` MCP validator quirks); module code does NOT nest its own UOW
 - [x] T013 Synthesis: R1 / R6 / R7 / R10 in [research.md](research.md) updated; [plan.md](plan.md) Constitution Check rewritten for v5.0.0 (no adapter contract; LibLCM port is a separate sibling repo)
 
 ### Fork Dependency & Validation-Spike Closing — NEW under v5.0.0
 
-- [ ] T-Fork **[BLOCKING US1 impl]** Document the flexlibs2 fork dependency in [../../CLAUDE.md](../../CLAUDE.md) and the repo README: list the 9 patched files (`BaseOperations.py` + 8 Grammar Operations subclasses), the two patches (the `WritingSystems` enumeration fix + the new `ApplySyncableProperties` method), the fork URL or local path (`D:/Github/_Projects/_LEX/flexlibs2`), and the install steps. The `pyproject.toml` requirement stays as `flexlibs2>=2.0`; the fork is installed manually.
+- [ ] T-Fork **[BLOCKING US1 impl]** Document the flexicon fork dependency in [../../CLAUDE.md](../../CLAUDE.md) and the repo README: list the 9 patched files (`BaseOperations.py` + 8 Grammar Operations subclasses), the two patches (the `WritingSystems` enumeration fix + the new `ApplySyncableProperties` method), the fork URL or local path (`D:/Github/_Projects/_LEX/flexicon`), and the install steps. The `pyproject.toml` requirement stays as `flexicon>=2.0`; the fork is installed manually.
 - [ ] T-Spike **[BLOCKING Layer 3]** Refactor the existing `src/gramtrans/gramtrans.py.transfer_verb_vertical()` inline Move logic into the Preview/Move split required by constitution v5.0.0 Principle III closing clause.
 
   **Dependency order**: T019 (data-model types in `Lib/types.py`) → T020 (`Lib/residue.py`) → T-Spike → all other US1 implementation tasks.
@@ -159,7 +159,7 @@ Ejagham Mini → restored `Ejagham Full GT-Test`; verify acceptance scenarios 1�
 - [x] T055 [P] [US1] `src/gramtrans/Lib/ui/ws_mapping_dialog.py` — `WSMappingDialog(required_pairs, target_existing_ws_ids, parent)` modal QDialog with a 4-column table (source ws id / kind / target picker combo / create-in-target checkbox); OK button enabled only when every required row is mapped; returns `WSMapping` via `.selected_mapping()`. DONE 2026-06-19.
 - [x] T056 [P] [US1] `src/gramtrans/Lib/ui/stats_panel.py` — `StatsPanel.set_report(report)` renders per-category counts table (added/skipped/closure_pulled_in), skip list, identity remap (hidden when empty), wall-clock footer. Header includes mode + run_id + source→target. Per FR-017 + contracts/run-report.md. DONE 2026-06-19.
 - [x] T057 [US1] `src/gramtrans/Lib/ui/main_window.py` — `MainWindow` QDialog drives the full state machine: header → target picker → 14 category toggles + closure toggle → Preview button (opens WSMappingDialog if compute_preview returns NEEDS_WS_MAPPING) → cached-plan-signature gating → Move button → stats panel. Selection / closure-toggle changes invalidate the cached plan and disable Move (Principle III mechanical enforcement). DONE 2026-06-19.
-- [x] T058 [US1] Wire the UI ↔ core surface in `src/gramtrans/Lib/api.py` per [contracts/module-ui.md](contracts/module-ui.md): `initialize_run` (mints `RunContextStub` + GT- run_id), `list_target_candidates` (filesystem scan, excludes source by name/path), `bind_target` (FR-019 same-project refusal + lazy flexlibs2 open with TargetUnavailable on LCM error), `compute_preview` (two-stage NEEDS_WS_MAPPING / PREVIEW_READY), `execute_move` (PreviewStale guard + ImportResidueTag construction + `_NullReportSink` fallback). DONE 2026-06-19; 9 unit tests in `tests/unit/test_api_surface.py` cover the LCM-independent paths. The `bind_target` flexlibs2 open + `execute_move` actual writes require FlexTools host (integration tests).
+- [x] T058 [US1] Wire the UI ↔ core surface in `src/gramtrans/Lib/api.py` per [contracts/module-ui.md](contracts/module-ui.md): `initialize_run` (mints `RunContextStub` + GT- run_id), `list_target_candidates` (filesystem scan, excludes source by name/path), `bind_target` (FR-019 same-project refusal + lazy flexicon open with TargetUnavailable on LCM error), `compute_preview` (two-stage NEEDS_WS_MAPPING / PREVIEW_READY), `execute_move` (PreviewStale guard + ImportResidueTag construction + `_NullReportSink` fallback). DONE 2026-06-19; 9 unit tests in `tests/unit/test_api_surface.py` cover the LCM-independent paths. The `bind_target` flexicon open + `execute_move` actual writes require FlexTools host (integration tests).
 - [ ] T059 [US1] Run [quickstart.md](quickstart.md) Scenarios A and D against the Ejagham fixture pair; capture the snapshot JSONs as pre/post Import Residue artifacts (constitution Development-Workflow gate)
 
 **Checkpoint**: User Story 1 fully functional. Linguists can run the complete additive
@@ -297,7 +297,7 @@ stories.
 
 ### Constitution Gate Reminders
 
-- Phase 0 imports flexlibs2 directly. There is no `flavors/` directory; no adapter contract. (Principle II, v5.0.0)
+- Phase 0 imports flexicon directly. There is no `flavors/` directory; no adapter contract. (Principle II, v5.0.0)
 - Preview Mode MUST produce zero writes; T029 + T081 enforce this. The Layer 1+2 Move-mode spike is the one-time exception closed by T-Spike. (Principle III)
 - GOLD inviolability test T035 MUST pass before Phase 0 ships. (Principle I)
 - Phase 1 / Phase 2 features (overwrite, interactive merge) MUST NOT appear in this Phase 0 codebase. (Principle IV)

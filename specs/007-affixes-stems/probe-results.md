@@ -32,7 +32,7 @@ This document records the live FlexTools-MCP probe outputs that validate (and su
 
 ## T007 — MSA subclass operations (`MSAOperations`)
 
-flexlibs2 wrappers in `Lexicon/MSAOperations`, all confirmed:
+flexicon wrappers in `Lexicon/MSAOperations`, all confirmed:
 
 | Method | Signature | Returns | Phase 3c use |
 |---|---|---|---|
@@ -243,13 +243,13 @@ Inventory probe via `flextools_run_module` walking `project.LexEntry.GetAll()` +
 
 5. **Templates = 7, Slots = 9** — both smaller than spec quickstart estimates (~5/~25). 17.1 sub-pass should run in milliseconds. SC-301 wall-clock budget (< 10s for Phase 3c slice) trivially achievable.
 
-6. **flexlibs2 wrapper availability for US4 implementation**: `MorphRuleOperations.CreateCompoundRule(name, endocentric=True, description=None)` exists — US4 T059 should use this wrapper instead of the ServiceLocator fallback path. Same applies to `MorphRuleOperations.CreateAffixTemplate(pos, name, description=None)` for US2 T030. **Spec correction needed**: update FR-341 + research.md R7 + contracts/category-callbacks.md to reflect wrapper availability.
+6. **flexicon wrapper availability for US4 implementation**: `MorphRuleOperations.CreateCompoundRule(name, endocentric=True, description=None)` exists — US4 T059 should use this wrapper instead of the ServiceLocator fallback path. Same applies to `MorphRuleOperations.CreateAffixTemplate(pos, name, description=None)` for US2 T030. **Spec correction needed**: update FR-341 + research.md R7 + contracts/category-callbacks.md to reflect wrapper availability.
 
 ### Spec corrections required (additions to the original list)
 
 14. **plan.md SC-301** (sizing): note that compound + ad-hoc rules are 0 in Ejagham Mini; live verification of US4 is gap-flagged.
 15. **quickstart.md Scenario A**: revise inventory numbers — "~13 affix entries" → "~88 affix entries", "~25 slots" → "9 slots", "~5 templates" → "7 templates", "~239 stem entries" → "164 stem entries".
-16. **research.md R7 + contracts/category-callbacks.md (US2 + US4)**: prefer `MorphRuleOperations.CreateAffixTemplate` and `CreateCompoundRule` flexlibs2 wrappers over ServiceLocator fallback. Reduces T030 + T059 surface area.
+16. **research.md R7 + contracts/category-callbacks.md (US2 + US4)**: prefer `MorphRuleOperations.CreateAffixTemplate` and `CreateCompoundRule` flexicon wrappers over ServiceLocator fallback. Reduces T030 + T059 surface area.
 17. **tasks.md T028 / T041 / T055**: update fixture expected counts to match the 88 / 7 / 9 / 6 numbers.
 18. **tasks.md US4 (T056-T066)**: insert a note that live verification deferred / requires synthetic fixtures (Option (a)). Live MCP Scenario A (T073) skips the US4 sub-step against Ejagham Mini.
 
@@ -297,7 +297,7 @@ Probes T006-T011 do NOT re-cover the following already-validated surface:
 - `IMoInflAffixSlotFactory.Create(Guid)` — Phase 0 verified (4 slots under Verb).
 - `IMoInflAffixTemplateFactory.Create(Guid)` — Phase 0 verified.
 - `MorphType` cross-project resolution: GUIDs are FW-global, resolve in target by GUID without identity_remap (STATUS.md Phase 0.5).
-- `BaseOperations.ApplySyncableProperties` — patched fork (CLAUDE.md flexlibs2 fork dependency). Handles ITsString + object-ref-skip paths.
+- `BaseOperations.ApplySyncableProperties` — patched fork (CLAUDE.md flexicon fork dependency). Handles ITsString + object-ref-skip paths.
 - `ILexEntry.LiftResidue` (String, writable) — Phase 0 Carrier A target. **Not `ImportResidue`** (also present; ITsString-typed, less convenient).
 
 These are referenced as known-good in the Phase 3c implementation tasks; probes T006-T011 only chase the genuinely-new surface and surfaced the corrections above.

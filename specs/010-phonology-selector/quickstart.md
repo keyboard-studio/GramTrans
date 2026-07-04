@@ -5,7 +5,7 @@ FlexTools MCP against **Ejagham Mini → Ejagham Full GT-Test** (restore a fresh
 
 ## Prerequisites
 
-- flexlibs2 fork installed (`pip install -e D:/Github/_Projects/_LEX/flexlibs2`).
+- flexicon fork installed (`pip install -e D:/Github/_Projects/_LEX/flexicon`).
 - Fresh target for live runs:
   ```powershell
   & 'C:\Program Files\SIL\FieldWorks 9\FieldWorks.exe' -restore `

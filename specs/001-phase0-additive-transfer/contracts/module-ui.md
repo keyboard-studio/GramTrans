@@ -3,11 +3,11 @@
 **Plan**: [../plan.md](../plan.md)
 **Data Model**: [../data-model.md](../data-model.md)
 
-The PyQt UI layer (`src/gramtrans/Lib/ui/`) MUST NOT import flexlibs2 directly or
+The PyQt UI layer (`src/gramtrans/Lib/ui/`) MUST NOT import flexicon directly or
 reach into the engine internals. Its only window onto the engine is the small
 surface declared here, exposed as module-level functions in `src/gramtrans/Lib/api.py`.
 Per constitution v5.0.0 Principle II there is no `flavors/` or `categories/`
-subpackage to ban — the prohibition is simply "no `from flexlibs2 ...` imports in
+subpackage to ban — the prohibition is simply "no `from flexicon ...` imports in
 `Lib/ui/`; call `Lib/api.py` instead".
 
 ## Main window lifecycle (UI calls into core)
@@ -65,7 +65,7 @@ def execute_move(
 
 | Component | Reads | Writes (to engine) | Forbidden |
 |-----------|-------|---------------------|-----------|
-| `main_window.py` | `RunContext`, `Selection`, current `RunPlan`, current `RunReport` | `Selection`, triggers `compute_preview` / `execute_move` via `Lib/api.py` | Direct LCM access, raw `from flexlibs2 ...` imports, bypassing `Lib/api.py`. |
+| `main_window.py` | `RunContext`, `Selection`, current `RunPlan`, current `RunReport` | `Selection`, triggers `compute_preview` / `execute_move` via `Lib/api.py` | Direct LCM access, raw `from flexicon ...` imports, bypassing `Lib/api.py`. |
 | `target_picker.py` | `TargetCandidate[]` | Returns chosen `TargetCandidate` | Modifying any state besides its return value. |
 | `ws_mapping_dialog.py` | `RequiredWSMapping`, current target's WS inventory | Returns `WSMapping` | Mutating the target (WS creation is staged in `WSMapping`; only the engine performs the create). |
 | `affix_tree_picker.py` | Source affix inventory grouped by template → slot → affix + Unbound | Returns `frozenset[str]` for `Selection.affix_picks` | Mutating source. |

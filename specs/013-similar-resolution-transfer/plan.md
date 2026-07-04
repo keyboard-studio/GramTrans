@@ -18,7 +18,7 @@ The two link actions differ only in how entry-level fields are written:
   other than routing the new ENTRY action into the existing branch).
 - **`merge`** — fill-the-gaps: per-WS alt is applied only if the target alt is empty
   (after strip); plain str only if target is None/empty; bool/int skipped entirely. This
-  is a new write mode requiring a new `fill_gaps` kwarg on the flexlibs2 fork's
+  is a new write mode requiring a new `fill_gaps` kwarg on the flexicon fork's
   `ApplySyncableProperties`.
 
 Child creation (senses / MSAs / allomorphs, with fingerprint de-duplication) is identical
@@ -41,12 +41,12 @@ no Qt, no wizard page, no diff rendering.
   _execute_layer3, new _populate_entry_children helper)
 - `src/gramtrans/Lib/models.py` — PlannedOverwrite (add write_mode field)
 - `src/gramtrans/Lib/matcher.py` — fingerprint helpers (add fingerprint_with_owner)
-- **[fork]** `flexlibs2/code/BaseOperations.py` and 8 Grammar/*Operations.py — add
+- **[fork]** `flexicon/code/BaseOperations.py` and 8 Grammar/*Operations.py — add
   fill_gaps kwarg to ApplySyncableProperties
 
-**Cross-repo boundary**: Tasks touching flexlibs2 require edits in the separate
-`D:/Github/_Projects/_LEX/flexlibs2` repository and must be installed with
-`pip install -e D:/Github/_Projects/_LEX/flexlibs2` before GramTrans tests run.
+**Cross-repo boundary**: Tasks touching flexicon require edits in the separate
+`D:/Github/_Projects/_LEX/flexicon` repository and must be installed with
+`pip install -e D:/Github/_Projects/_LEX/flexicon` before GramTrans tests run.
 
 **Upstream dependency**: Feature 011 merged — `Selection.similar_resolutions` and
 `similar_resolution_for` exist.
@@ -81,19 +81,19 @@ Add `fill_gaps=False` as a kwarg to `ApplySyncableProperties` — NOT a sibling 
 Add `fill_gaps=False` to all 8 Grammar Operations subclass overrides and BaseOperations,
 threading via `super().ApplySyncableProperties(..., fill_gaps=fill_gaps)`.
 
-Files (all in the flexlibs2 fork):
+Files (all in the flexicon fork):
 
 | File | Location |
 |------|----------|
-| `BaseOperations.py` | `flexlibs2/code/BaseOperations.py:1028` |
-| `POSOperations.py` | `flexlibs2/code/Grammar/POSOperations.py:1159` |
-| `MorphRuleOperations.py` | `flexlibs2/code/Grammar/MorphRuleOperations.py:914` |
-| `GramCatOperations.py` | `flexlibs2/code/Grammar/GramCatOperations.py:640` |
-| `InflectionFeatureOperations.py` | `flexlibs2/code/Grammar/InflectionFeatureOperations.py:1693` |
-| `NaturalClassOperations.py` | `flexlibs2/code/Grammar/NaturalClassOperations.py:1074` |
-| `EnvironmentOperations.py` | `flexlibs2/code/Grammar/EnvironmentOperations.py:707` |
-| `PhonologicalRuleOperations.py` | `flexlibs2/code/Grammar/PhonologicalRuleOperations.py:1448` |
-| `PhonemeOperations.py` | `flexlibs2/code/Grammar/PhonemeOperations.py:1328` |
+| `BaseOperations.py` | `flexicon/code/BaseOperations.py:1028` |
+| `POSOperations.py` | `flexicon/code/Grammar/POSOperations.py:1159` |
+| `MorphRuleOperations.py` | `flexicon/code/Grammar/MorphRuleOperations.py:914` |
+| `GramCatOperations.py` | `flexicon/code/Grammar/GramCatOperations.py:640` |
+| `InflectionFeatureOperations.py` | `flexicon/code/Grammar/InflectionFeatureOperations.py:1693` |
+| `NaturalClassOperations.py` | `flexicon/code/Grammar/NaturalClassOperations.py:1074` |
+| `EnvironmentOperations.py` | `flexicon/code/Grammar/EnvironmentOperations.py:707` |
+| `PhonologicalRuleOperations.py` | `flexicon/code/Grammar/PhonologicalRuleOperations.py:1448` |
+| `PhonemeOperations.py` | `flexicon/code/Grammar/PhonemeOperations.py:1328` |
 
 The GramTrans executor passes `fill_gaps=True` iff `overwrite.write_mode == "merge"`.
 
@@ -160,7 +160,7 @@ stats panel) see it with no additional wiring.
 
 ### FR-007a — Fill-Gaps Write Mode
 
-**Files**: flexlibs2 fork (see R2 table above) + `transfer.py`
+**Files**: flexicon fork (see R2 table above) + `transfer.py`
 
 The `BaseOperations.ApplySyncableProperties` implementation loop (lines 1102-1172)
 gains fill-gaps guards per R1. The executor at `transfer.py:1331`:
@@ -233,7 +233,7 @@ src/gramtrans/
                           # MODIFY _execute_overwrite ENTRY branch (FR-008)
                           # MODIFY _execute_layer3 to call helper (FR-009)
 
-[fork] flexlibs2/code/
+[fork] flexicon/code/
     ├── BaseOperations.py               # ADD fill_gaps kwarg (R2)
     └── Grammar/
         ├── POSOperations.py            # ADD fill_gaps kwarg (R2)
@@ -257,7 +257,7 @@ tests/
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | **I. FLEx Domain Fidelity** | PASS | GUID-first identity preserved: identity_remap keys are entry GUIDs; fingerprint_with_owner overrides index 1 to the resolved target GUID so cross-entry fingerprint comparison is sound. Fill-gaps per-WS-alt semantics respects the LCM multistring ownership model. |
-| **II. FlexTools-Compatible, flexlibs2-Direct** | PASS | All transfer code imports flexlibs2 directly. The fill_gaps kwarg is a backward-compatible additive change (default False). No flavors/ adapter introduced. |
+| **II. FlexTools-Compatible, flexicon-Direct** | PASS | All transfer code imports flexicon directly. The fill_gaps kwarg is a backward-compatible additive change (default False). No flavors/ adapter introduced. |
 | **III. Preview-Before-Mutate** | PASS | Planner (preview.py) emits PlannedOverwrite with write_mode before any mutation. Executor reads the plan verbatim. No mutation in the preview pass. |
 | **IV. Phased Merge Discipline** | PASS | Additive to Phase 1 overwrite surface. Does not reorder phases. The "merge" write mode is an executor-side apply variant, not a Phase 2 interactive step. |
 | **V. Referential Completeness** | PASS | identity_remap is pre-seeded in build_run_plan; downstream blocks (report, stats) see it without additional wiring (SC-005). |
@@ -303,6 +303,6 @@ Both must pass before feature 013 is marked complete.
 
 ## Complexity Tracking
 
-The flexlibs2 cross-repo boundary is the primary complexity source: 9 files across two
+The flexicon cross-repo boundary is the primary complexity source: 9 files across two
 repositories must be coordinated; the `pip install -e` reinstall step is required after
-each flexlibs2 edit before GramTrans tests reflect the change. No Constitution violations.
+each flexicon edit before GramTrans tests reflect the change. No Constitution violations.

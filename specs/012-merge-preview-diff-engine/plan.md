@@ -36,7 +36,7 @@ on feature 011's `SimilarResolution` action vocabulary (`overwrite`/`merge`/`cre
 (per [pyproject.toml](../../pyproject.toml)). No 3.9+ syntax; use `from __future__ import
 annotations` and `typing` generics (`Dict`, `Tuple`, `Optional`), matching `ws_fonts.py`.
 
-**Primary Dependencies**: flexlibs2 (MattGyverLee fork) for `GetSyncableProperties` at
+**Primary Dependencies**: flexicon (MattGyverLee fork) for `GetSyncableProperties` at
 runtime **only** — the pure core and `to_html` never import it. The module MUST NOT import
 Qt (PyQt6). Reuses in-repo `Lib/ws_fonts.py` (`WsRole`, `WsFont`, `WsFontRegistry`).
 
@@ -74,7 +74,7 @@ props table. Pure unit tests only.
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | **I. FLEx Domain Fidelity** | PASS | Read-only feature. GUID-first identity is honored (cache keys are GUIDs; re-fetch by GUID on first click). WS identity drives the `ws_role_map` classifier so string-bearing segments are font/direction-tagged. Target-only keys render `unchanged` (never implies deletion) — matches `ApplySyncableProperties` touch-only-keys-it-receives semantics. |
-| **II. FlexTools-Compatible, flexlibs2-Direct** | PASS | Runtime `props_for`/`MergePreviewService` import flexlibs2 directly (no `flavors/`). `GetSyncableProperties` is the canonical surface; direct-multistring fallback covers the fork gaps. Degrades gracefully (props fetch failure → note, never exception to caller — FR-008/SC-005). No new optional dependency. |
+| **II. FlexTools-Compatible, flexicon-Direct** | PASS | Runtime `props_for`/`MergePreviewService` import flexicon directly (no `flavors/`). `GetSyncableProperties` is the canonical surface; direct-multistring fallback covers the fork gaps. Degrades gracefully (props fetch failure → note, never exception to caller — FR-008/SC-005). No new optional dependency. |
 | **III. Preview-Before-Mutate** | PASS (reinforces) | This feature *is* preview machinery. It writes nothing to any project; it computes and renders diffs only. It advances the Principle III mandate that Move work route through a preview layer. |
 | **IV. Phased Merge Discipline** | PASS | Additive to the Phase 1/2 preview surface; no phase reordering. Mirrors (does not import) `_deterministic_merge`, keeping the Move-time merge semantics as the single source of truth. Introduces no Phase 3 / LibLCM concern. |
 | **V. Referential Completeness** | N/A (read-only) | This feature diffs a single item's fields; closure display remains a preview-pane (014) concern. No closure computation here. |

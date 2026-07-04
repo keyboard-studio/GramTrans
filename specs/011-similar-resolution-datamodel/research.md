@@ -1,7 +1,7 @@
 # Phase 0 Research: Similar-Candidate Capture & Per-Item Resolution Data Model (011)
 
 All decisions below were validated read-only against a **live** FLEx repository via the
-FLExTools MCP (`flexlibs2` mode, `write_enabled=false`, project **Ejagham Full GT-Test** —
+FLExTools MCP (`flexicon` mode, `write_enabled=false`, project **Ejagham Full GT-Test** —
 the validated target from `STATUS.md`). The MCP is the user's declared source of truth for
 this plan. Where a decision rests on empirical data, the concrete probe result is quoted so a
 later reader can see the ground truth without re-running the probe.

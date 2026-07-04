@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- MattGyverLee/flexlibs2 fork installed (`pip install -e D:/Github/_Projects/_LEX/flexlibs2`).
+- MattGyverLee/flexicon fork installed (`pip install -e D:/Github/_Projects/_LEX/flexicon`).
 - PyQt6 available.
 - FLEx projects present: `Ejagham Full GT-Test` and `Esperanto`.
 

@@ -13,7 +13,7 @@ whose `LexemeFormOA.MorphTypeRA.IsAffixType` is true.
 (`AttributeError: 'ILexDb' object has no attribute 'EntriesOC'. Did you mean: 'Entries'?`).
 Counts: Ejagham 4,317 entries → 33 affixes; Esperanto 15,318 → 68 affixes.
 
-**Alternatives considered**: `project.LexEntry.GetAll()` (flexlibs2 wrapper) — viable
+**Alternatives considered**: `project.LexEntry.GetAll()` (flexicon wrapper) — viable
 but the builder takes a raw `source` handle and the direct `LexDbOA.Entries` walk keeps
 the fake-handle test shape simple. The existing `affixes_enumerate_source` uses
 `.EntriesOC` — that is bug #2 (out of scope; do NOT copy it).

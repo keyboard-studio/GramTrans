@@ -202,7 +202,7 @@ entry Y; assert Y gains X's children and that fingerprint-matched children are n
   (source-wins).
 - **FR-007a**: The executor MUST support a `merge` (target-preserving) write mode for entry-level
   fields that applies a source value only where the target field is empty/absent and preserves
-  the target's value otherwise. This requires a fill-the-gaps variant of the flexlibs2 fork's
+  the target's value otherwise. This requires a fill-the-gaps variant of the flexicon fork's
   `ApplySyncableProperties` (which today applies source-wins unconditionally); the planned write
   mode from FR-002 selects between source-wins and fill-gaps at apply time.
 - **FR-008**: `_execute_layer3` MUST add a pass over plan overwrites where `category==ENTRY` and
@@ -260,7 +260,7 @@ entry Y; assert Y gains X's children and that fingerprint-matched children are n
 - The MSA/allomorph fingerprint owner-guid override for the resolve-into case is a **live-verify
   risk**: it must be validated against a real project pair (Ejagham Mini → Ejagham Full GT-Test)
   before the feature is considered done.
-- The **fill-gaps `merge` write mode is a new capability** in the flexlibs2 fork's
+- The **fill-gaps `merge` write mode is a new capability** in the flexicon fork's
   `ApplySyncableProperties` (which currently applies source-wins only). Both the new apply
   variant and the field-emptiness test (what counts as "empty" per multistring writing system)
   are **live-verify risks** to validate against the real project pair before done. Until the

@@ -2,12 +2,12 @@
 
 **Feature**: 013-similar-resolution-transfer | **Date**: 2026-07-03
 
-Task ordering: S1/S2 spikes -> R4 carrier -> R2 flexlibs2 kwarg -> R3 fingerprint
+Task ordering: S1/S2 spikes -> R4 carrier -> R2 flexicon kwarg -> R3 fingerprint
 helper -> FR-009 child extractor -> FR-008 executor branch -> FR-006 identity_remap
 threading -> FR-001 planner hook -> S3 verification.
 
-Tasks marked **[FORK]** touch the flexlibs2 repository at
-`D:/Github/_Projects/_LEX/flexlibs2`. Run `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
+Tasks marked **[FORK]** touch the flexicon repository at
+`D:/Github/_Projects/_LEX/flexicon`. Run `pip install -e D:/Github/_Projects/_LEX/flexicon`
 after each fork edit before running GramTrans tests.
 
 ---
@@ -80,7 +80,7 @@ change.
 
 **Depends on**: T-S1
 
-**[FORK]** Edit `flexlibs2/code/BaseOperations.py:1028`.
+**[FORK]** Edit `flexicon/code/BaseOperations.py:1028`.
 
 Change signature to:
 ```python
@@ -116,7 +116,7 @@ In the loop body (lines 1102-1172), add fill-gaps guards per R1:
       continue  # stored False/0 is a real choice; never overwrite in fill-gaps mode
   ```
 
-**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
+**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexicon`
 
 ---
 
@@ -128,7 +128,7 @@ In the loop body (lines 1102-1172), add fill-gaps guards per R1:
 `super().ApplySyncableProperties(...)`. Add `fill_gaps=fill_gaps` to each super() call
 and add `fill_gaps=False` to each override's signature.
 
-Files and line numbers (all in `flexlibs2/code/Grammar/`):
+Files and line numbers (all in `flexicon/code/Grammar/`):
 
 | File | Line |
 |------|------|
@@ -145,7 +145,7 @@ For each file: change `def ApplySyncableProperties(self, item, props, ws_map=Non
 `def ApplySyncableProperties(self, item, props, ws_map=None, fill_gaps=False)` and
 thread `fill_gaps=fill_gaps` into the `super()` call.
 
-**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
+**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexicon`
 
 ---
 
@@ -415,7 +415,7 @@ so T-S3a can call it directly without a live `self.project`. This is mandatory:
 every `ApplySyncableProperties` call, so any test touching the method requires a real
 project unless the loop body is isolated.
 
-**File**: `flexlibs2/code/BaseOperations.py`
+**File**: `flexicon/code/BaseOperations.py`
 
 Extract the loop body (lines 1102-1172) into:
 ```python
@@ -433,7 +433,7 @@ def _apply_props_loop(item, props, target_ws_by_id, fill_gaps=False):
 
 `ApplySyncableProperties` calls `_apply_props_loop(item, props, ws_map_resolved, fill_gaps)`.
 
-**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
+**Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexicon`
 
 **Checklist**:
 - [ ] `_apply_props_loop` has no reference to `self` or `self.project`.

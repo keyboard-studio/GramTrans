@@ -5,15 +5,15 @@ Version change: 4.0.0 → 5.1.0
 Bump rationale: MAJOR (5.0.0) — Principle II redefined again. v4.0.0's mandatory
 flavor-adapter contract (`flavors/base.py` + per-flavor adapters as the only
 allowed import point for LCM operations) is REMOVED. v5.0.0 says: every
-Phase 0/1/2 module file imports `flexlibs2` directly. The LibLCM-direct port
+Phase 0/1/2 module file imports `flexicon` directly. The LibLCM-direct port
 is now a **separate fork project** (a sibling repo built on the same spec/plan
 artifacts), not a same-contract in-tree re-implementation. This redefinition
 codifies the actual shape on disk (the FLExTrans-style entry file plus a `Lib/`
-sibling directory of helpers) and the chosen flexlibs2-fork dependency model.
+sibling directory of helpers) and the chosen flexicon-fork dependency model.
 
 MINOR (5.1.0) — Principle II updated: flexicon (dist pyflexicon) is now the
-runtime dependency in place of the MattGyverLee/flexlibs2 fork. flexicon is a
-standalone independent project — NOT a fork of stock flexlibs2. The flexlibs2
+runtime dependency in place of the MattGyverLee/flexicon fork. flexicon is a
+standalone independent project — NOT a fork of stock flexicon. The flexicon
 package name resolves via a deprecation shim (removal targeted flexicon v5.0.0);
 new code MUST use flexicon imports. pyproject.toml declares `pyflexicon>=4.1`.
 Last Amended date set to 2026-07-04.
@@ -32,13 +32,13 @@ Principles defined:
   V.   Referential Completeness
 
 Modified principles:
-  II. v4.0.0 "flexlibs2-Primary with LibLCM Backport (adapter pattern mandatory)"
-      → v5.0.0 "flexlibs2-Direct (no adapter pattern in this repo)"
+  II. v4.0.0 "flexicon-Primary with LibLCM Backport (adapter pattern mandatory)"
+      → v5.0.0 "flexicon-Direct (no adapter pattern in this repo)"
       → v5.1.0 "flexicon-Direct". Module code imports flexicon directly. There
-      is no `flavors/base.py`, no `flavors/flexlibs2_adapter.py`, no
+      is no `flavors/base.py`, no `flavors/flexicon_adapter.py`, no
       `flavors/liblcm_adapter.py` in this tree. flexicon (dist pyflexicon) is
-      a standalone independent project — NOT a fork of stock flexlibs2. The
-      flexlibs2 package name resolves via a deprecation shim (removal targeted
+      a standalone independent project — NOT a fork of stock flexicon. The
+      flexicon package name resolves via a deprecation shim (removal targeted
       flexicon v5.0.0); new code MUST use flexicon imports. The LibLCM-direct
       port lives in a separate sibling repository authored after all merge phases
       ship, sharing only the spec artifacts (spec.md, data-model.md, contracts/)
@@ -63,19 +63,19 @@ Kept from v4.0.0:
 
 Removed framing:
   - "flavor adapter pattern is mandatory from day one" (removed).
-  - "`flavors/base.py` defines the contract; `flavors/flexlibs2_adapter.py` is
+  - "`flavors/base.py` defines the contract; `flavors/flexicon_adapter.py` is
     implemented in full" (removed — no `flavors/` directory exists).
   - "All `core/` and `categories/` code calls the adapter contract — never raw
-    flexlibs2 imports directly" (reversed — modules import flexlibs2 directly).
+    flexicon imports directly" (reversed — modules import flexicon directly).
 
 Added framing:
   - flexicon (dist pyflexicon) is a standalone independent project — NOT a fork
-    of stock flexlibs2. It natively provides the `WritingSystems` enumeration
+    of stock flexicon. It natively provides the `WritingSystems` enumeration
     fix and the `ApplySyncableProperties` method on `BaseOperations` + 8
-    Grammar Operations subclasses. The flexlibs2 package name resolves via a
+    Grammar Operations subclasses. The flexicon package name resolves via a
     deprecation shim (removal targeted flexicon v5.0.0). pyproject.toml declares
     `pyflexicon>=4.1`; the install path is documented in [CLAUDE.md](../../CLAUDE.md)
-    and the repo README. The disk directory is literally named `flexlibs2` and
+    and the repo README. The disk directory is literally named `flexicon` and
     MUST NOT be renamed.
   - File layout follows the **FLExTrans module convention**: a flat entry
     file (`src/gramtrans/gramtrans.py` with `docs = {...}` + `def MainFunction(
@@ -96,9 +96,9 @@ Downstream artifact updates required (in this project):
       shape; Assumptions API-surface paragraph.
   ⚠ specs/001-phase0-additive-transfer/data-model.md — drop the `Flavor` enum
       LIBLCM forward-compat field on PlannedAction (Phase 3 is a separate
-      fork project; this tree only ever produces FLEXLIBS2 actions).
+      fork project; this tree only ever produces FLEXICON actions).
   ⚠ specs/001-phase0-additive-transfer/contracts/category-transfer.md — drop
-      the flavor-adapter framing; categories call flexlibs2 directly.
+      the flavor-adapter framing; categories call flexicon directly.
   ⚠ specs/001-phase0-additive-transfer/tasks.md — drop T016 / T017 / T018
       (flavor adapter scaffolding + stub); collapse leaf-category tasks
       (T039–T048) into one inline `Lib/categories.py` task; keep dedicated
@@ -112,7 +112,7 @@ project, not a deferred in-tree task.
 
 Prior Sync Impact Reports
 -------------------------
-v3.0.0 → v4.0.0: flexlibs2-primary with mandatory adapter pattern; LibLCM as
+v3.0.0 → v4.0.0: flexicon-primary with mandatory adapter pattern; LibLCM as
   in-tree backport target.
 v2.0.0 → v3.0.0: flexlibs1-preferred, LibLCM-fallback (reversed in v4.0.0).
 v1.1.0 → v2.0.0: MCP demoted to author-side; LibLCM promoted to runtime flavor.
@@ -155,7 +155,7 @@ flavor-adapter contract in this repository — the v4.0.0 `flavors/base.py` requ
 removed.
 
 - **flexicon (dist pyflexicon) is the direct runtime dependency.** flexicon is a standalone
-  independent project — NOT a fork of stock flexlibs2. Every Phase 0/1/2 file imports
+  independent project — NOT a fork of stock flexicon. Every Phase 0/1/2 file imports
   flexicon modules at the top (`from flexicon.BaseOperations import ApplySyncableProperties`,
   `from flexicon.Grammar.POSOperations import POSOperations`, etc.). The Operations-class
   API is the canonical surface (`project.POS`, `project.MorphRule`,
@@ -165,9 +165,9 @@ removed.
   fallback when no Operations wrapper covers a specific LCM surface;
   `CastingOperations.cast_to_concrete(obj)` is used when polymorphic property access
   requires casting (per MCP polymorphic-casting validator). `pyproject.toml` declares
-  `pyflexicon>=4.1`. The flexlibs2 package name resolves via a deprecation shim (removal
+  `pyflexicon>=4.1`. The flexiconpackage name resolves via a deprecation shim (removal
   targeted flexicon v5.0.0); new code MUST use flexicon imports. The install path is at
-  `D:/Github/_Projects/_LEX/flexlibs2` (the disk directory is literally named `flexlibs2`
+  `D:/Github/_Projects/_LEX/flexicon` (the disk directory is literally named `flexicon`
   and MUST NOT be renamed); install and override inventory are documented in the repo README
   and [CLAUDE.md](../../CLAUDE.md).
 - **LibLCM (.NET) is NOT consumed in this repository.** The LibLCM-direct implementation
@@ -211,7 +211,7 @@ permits, and MUST tag newly created entries in Import Residue.
 Layer 1 + Layer 2 work documented in `STATUS.md` (Verb POS, Verb template, 4 slots copied
 from Ejagham Mini to a throwaway `Ejagham Full GT-Test` target) ran Move-mode writes
 before the Preview engine existed. This was a deliberate validation spike to confirm the
-flexlibs2 surface end-to-end against a real LCM target. It is acknowledged as a one-time
+flexicon surface end-to-end against a real LCM target. It is acknowledged as a one-time
 exception. All further Move work — Layer 3 included — MUST route through `Lib/preview.py`
 (plan-builder) and `Lib/transfer.py` (plan-executor), and the existing
 `gramtrans.py.transfer_verb_vertical()` MUST be refactored into that pair before Layer 3
@@ -235,7 +235,7 @@ MUST NOT be partially implemented before the prior phase is complete and validat
 - **Phase 2 — Interactive Merge.** Per-conflict prompt with {accept-merge, take-left,
   take-right, skip, other}; vernacular mapping wizard (SFM-import style); undoable.
 - **Phase 3 (post-merge) — LibLCM fork project.** After Phases 0/1/2 ship in this repo
-  against flexlibs2, a **separate sibling repository** re-implements the same module
+  against flexicon, a **separate sibling repository** re-implements the same module
   against raw LibLCM, reusing this repo's `spec.md`, `data-model.md`, and `contracts/`
   artifacts as the contract. No user-visible behavior changes; only the runtime flavor
   swaps. Phase 3 is NOT a task in this repo's tasks.md.
@@ -273,7 +273,7 @@ default is the only safe semantics; opt-out lets advanced users override.
   - **flexicon (pyflexicon)** — the Pythonic Operations-class API, a standalone independent
     package providing `GetSyncableProperties` and `ApplySyncableProperties` natively.
     Imported directly by module files (`pyflexicon>=4.1`). No adapter indirection. The
-    flexlibs2 package name resolves via a deprecation shim; new code MUST use flexicon
+    flexicon package name resolves via a deprecation shim; new code MUST use flexicon
     imports.
   - **LibLCM** — NOT consumed in this repo. The LibLCM-direct port is a separate
     post-Phase-2 sibling repository that re-implements the same spec.

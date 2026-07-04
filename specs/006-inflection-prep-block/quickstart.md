@@ -9,7 +9,7 @@ no Phase 0/1/2/3a regression.
 
 ## Prerequisites
 
-- flexlibs2 fork installed editable: `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
+- flexicon fork installed editable: `pip install -e D:/Github/_Projects/_LEX/flexicon`
 - FlexTools MCP session started against `Ejagham Full GT-Test` with write enabled.
 - Phase 3a six-category dispatch verified (`pytest tests/integration/test_phase3a_phonology_e2e.py` green).
 - Target snapshot taken via `git`-style backup before Scenario B (overwrite re-run is destructive on identity_remap-fallback objects).

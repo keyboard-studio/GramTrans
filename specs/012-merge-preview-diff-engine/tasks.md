@@ -66,7 +66,7 @@ diff/render/props/service code lands.
 - [X] T004 Create `src/gramtrans/Lib/merge_preview.py` with `from __future__ import annotations`,
       the module docstring (three layers; Qt-free; mirrors-not-imports `conflict.py`), and
       `typing` imports only (`Dict`, `Tuple`, `Optional`, `Callable`, `Any`; py38 target — no
-      3.9+ syntax). MUST NOT import Qt; keep any flexlibs2 import lazy/guarded inside functions.
+      3.9+ syntax). MUST NOT import Qt; keep any flexicon import lazy/guarded inside functions.
 - [X] T005 Define the pure value types in `src/gramtrans/Lib/merge_preview.py` (FR-001,
       data-model.md): `SegmentKind` (added/unchanged/removed/note), frozen
       `DiffSegment(text, kind, ws_role=None)` — **no `rtl` field** (A2, lex-simplify: direction
@@ -205,7 +205,7 @@ returns the `{field: {ws_id: text}}` shape (or `None` + note on failure).
       T022)"): columns category key → ops accessor → finder → needs_owner → fallback. Populate
       the **4 fully-covered** rows reusing the existing `conflict._OW_OPS` finders (POS, LexEntry,
       Senses, Allomorphs). **Confirm the accessor names flagged "confirm" in that table**
-      (`Environments`, `PhonRules`, `Strata`, `GramCat`) against `categories.py` / the flexlibs2
+      (`Environments`, `PhonRules`, `Strata`, `GramCat`) against `categories.py` / the flexicon
       Operations class before wiring — do not assume them. Add a comment that the other 8 finders
       are net-new (T023/T024) — the table MUST NOT imply they already exist (A3, lex-author; U1).
 - [X] T023 [P] [US3] **[B1]** Implement the **7 one-arg** finders

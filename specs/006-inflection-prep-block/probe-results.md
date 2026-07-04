@@ -2,9 +2,9 @@
 
 **Date**: 2026-06-21
 **Project**: Ejagham Full GT-Test (read-only)
-**Session**: `flextools_start(api_mode=flexlibs2)`
+**Session**: `flextools_start(api_mode=flexicon)`
 
-Records the literal flexlibs2 / LCM 9.x API surface for each factory and
+Records the literal flexicon / LCM 9.x API surface for each factory and
 accessor used by Phase 3b implementations (T004-T008).
 
 ## T004 — ICmPossibilityFactory + IPartOfSpeechFactory

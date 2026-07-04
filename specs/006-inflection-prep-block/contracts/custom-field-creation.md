@@ -48,7 +48,7 @@ if new_flid == 0:
 ```
 
 Help text and label-override multistrings are set via subsequent MDC
-calls (`SetFieldHelp` / `SetFieldLabel`) IF the flexlibs2 fork exposes
+calls (`SetFieldHelp` / `SetFieldLabel`) IF the flexicon fork exposes
 them; otherwise apply through `Cache.DomainDataByFlid.SetMultiStringAlt`
 on the meta-data-cache itself. Probe at planning time.
 

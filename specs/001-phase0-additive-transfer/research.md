@@ -6,45 +6,45 @@
 
 This document consolidates the research and decisions made during Phase 0 planning.
 Each entry has a **Decision**, a **Rationale**, and **Alternatives considered**.
-Validation against the live flexlibs2 API surface (via the FLExToolsMCP author-side
+Validation against the live flexicon API surface (via the FLExToolsMCP author-side
 tooling) was performed on 2026-06-19; entries below are post-validation.
 
 ---
 
-## R1. Per-operation flexlibs2 surface (direct imports; no adapter)
+## R1. Per-operation flexicon surface (direct imports; no adapter)
 
 **Decision**: Per constitution v5.0.0 Principle II, **every Phase 0 operation imports
-flexlibs2 directly**. There is no `flavors/` adapter contract in this repo. The
+flexicon directly**. There is no `flavors/` adapter contract in this repo. The
 LibLCM-direct implementation lives in a **separate post-Phase-2 sibling repository**
 (see Principle IV) that re-implements the same module against raw LCM, sharing only
 the spec artifacts (spec.md, data-model.md, contracts/) — not source. The
 "LibLCM-port note" column below survives as informational guidance to the future fork
 authors, not as an in-tree adapter contract.
 
-| Operation family | flexlibs2 surface (direct import in `Lib/*.py`) | LibLCM-fork note (sibling repo, informational) |
+| Operation family | flexicon surface (direct import in `Lib/*.py`) | LibLCM-fork note (sibling repo, informational) |
 |---|---|---|
 | Project handle, opening source for read, opening target for write | `FLExProject.OpenProject(name, writeEnabled=True/False)` | LibLCM: open via `LcmCache` / `FdoCache` directly. |
-| Project enumeration (target picker) | Filesystem scan of the FieldWorks projects directory (`C:\ProgramData\SIL\FieldWorks\Projects`) — no flexlibs2 method enumerates the disk. Implemented in `Lib/ui/target_picker.py`. | LibLCM: same filesystem mechanism; no LCM equivalent. |
+| Project enumeration (target picker) | Filesystem scan of the FieldWorks projects directory (`C:\ProgramData\SIL\FieldWorks\Projects`) — no flexiconmethod enumerates the disk. Implemented in `Lib/ui/target_picker.py`. | LibLCM: same filesystem mechanism; no LCM equivalent. |
 | LCM object traversal (read-only walks of source) | `project.<Operations>.GetAll()` per category accessor: `POS`, `MorphRule`, `InflectionFeature`, `Allomorph`, `WritingSystem`, `GramCat`, `Variant`, `CustomField`, `Phonemes`, etc. | LibLCM: `Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS` style traversal. |
 | Object creation in target — most categories | `project.POS.Create`, `project.MorphRule.CreateAffixTemplate`, `project.InflectionFeature.CreateClosedFeatureWithValues`, `project.Phonemes.Create`, `project.MSA.CreateStem` / `CreateInflAff` / `CreateDerivAff` / `CreateUnclassifiedAffix`, `project.WritingSystem.<Create>`. | LibLCM: `IPartOfSpeechFactory.Create`, `IMoInflAffixTemplateFactory.Create`, `IFsClosedFeatureFactory.Create`, etc. resolved via `Cache.ServiceLocator.GetInstance<T>()`. |
-| ServiceLocator fallback (when no Operations wrapper) | `project.GetService(IFooFactory)` — flexlibs2's discoverable wrapper around `Cache.ServiceLocator.GetService(...)`. No `clr.GetClrType()` needed. | LibLCM: direct `Cache.ServiceLocator.GetInstance<T>()` / `GetService<T>()`. |
-| GUID-preserving creation | Some flexlibs2 factory wrappers DO accept a `Guid` parameter on `Create()` — validated against `POSOperations`, `MorphRuleOperations.CreateAffixTemplate`, slot factory during the STATUS.md Layer 1+2 spike. Where they don't, the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The helper lives inline at the top of `Lib/transfer.py` (no separate adapter helper). | LibLCM: identical pattern, just without the `GetService` wrapper. |
+| ServiceLocator fallback (when no Operations wrapper) | `project.GetService(IFooFactory)` — flexicon discoverable wrapper around `Cache.ServiceLocator.GetService(...)`. No `clr.GetClrType()` needed. | LibLCM: direct `Cache.ServiceLocator.GetInstance<T>()` / `GetService<T>()`. |
+| GUID-preserving creation | Some flexicon factory wrappers DO accept a `Guid` parameter on `Create()` — validated against `POSOperations`, `MorphRuleOperations.CreateAffixTemplate`, slot factory during the STATUS.md Layer 1+2 spike. Where they don't, the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The helper lives inline at the top of `Lib/transfer.py` (no separate adapter helper). | LibLCM: identical pattern, just without the `GetService` wrapper. |
 | Writing-system inventory + creation (target side) | Read: `project.GetAllAnalysisWSs()`, `project.GetAllVernacularWSs()`, `project.GetWritingSystems()`, `project.WSHandle(tag)`, `project.WSUIName(handle)`. Create: `project.WritingSystem.<Create>` (per Operations accessor). | LibLCM: `Cache.ServiceLocator.WritingSystemManager` directly. |
-| Sync writable properties on existing/new objects | `BaseOperations.ApplySyncableProperties(item, props, ws_map=None)` — the inverse of `GetSyncableProperties`. **Only available in the patched MattGyverLee/flexlibs2 fork** (see [CLAUDE.md](../../CLAUDE.md)); stock flexlibs2 does not expose it. | LibLCM: open-coded multistring/string apply with the same dict shape. |
-| Polymorphic property access (`LiftResidue`, `Description`, `Guid`, etc.) | `CastingOperations.cast_to_concrete(obj)` from flexlibs2 — wraps the pythonnet cast. The MCP polymorphic-casting validator auto-rewrites violations. | LibLCM: explicit `((IConcreteType)obj).Property` casts. |
+| Sync writable properties on existing/new objects | `BaseOperations.ApplySyncableProperties(item, props, ws_map=None)` — the inverse of `GetSyncableProperties`. **Only available in the patched MattGyverLee/flexicon fork** (see [CLAUDE.md](../../CLAUDE.md)); stock flexicon does not expose it. | LibLCM: open-coded multistring/string apply with the same dict shape. |
+| Polymorphic property access (`LiftResidue`, `Description`, `Guid`, etc.) | `CastingOperations.cast_to_concrete(obj)` from flexicon — wraps the pythonnet cast. The MCP polymorphic-casting validator auto-rewrites violations. | LibLCM: explicit `((IConcreteType)obj).Property` casts. |
 | Import Residue tagging — Carrier A (LCM residue field) | For `ILexEntry`, `ILexSense`, `ILexEntryRef`, `ILexEtymology`, `ILexPronunciation`, `ILexReference`, `ILexExampleSentence`, `IMoForm`, `IMoMorphSynAnalysis`: set `LiftResidue` (validated as the residue carrier on these classes). Helper: `Lib/residue.py.apply_carrier_a(obj, tag)`. | LibLCM: identical property, accessed via explicit cast. |
 | Import Residue tagging — Carrier B (Description-append) | For grammar-piece classes lacking a residue field (`IPartOfSpeech`, `IMoInflAffixTemplate`, `IMoInflAffixSlot`, `IFsClosedFeature`, `IFsComplexFeature`, `IFsFeatStrucType`, `IFsSymFeatVal`, `IMoInflClass`, `IMoStemName`, `IMoCompoundRule`, `IMoAdhocProhibGr`, `IPhPhonemeSet`, `IPhEnvironment`, `IPhNaturalClass`, `IPhSegmentRule`, etc.): append `\n[GT-Tag]: GT\|<run_id>\|<source>\|<iso_ts>` to the inherited `Description` multistring (defined on `ICmPossibility`, `ICmMajorObject`, `IFsFeatDefn`, and others — confirmed via `resolve_property` casting index). Append is non-destructive; existing prose preserved. Helper: `Lib/residue.py.apply_carrier_b(obj, tag)`. | LibLCM: identical strategy; same inherited interfaces. |
 | Undo wrapping | The FlexTools runner already wraps each `MainFunction` invocation in an `UndoableUnitOfWork` (verified per STATUS.md "MCP validator quirks": nesting your own raises "Nested tasks are not supported"). Module code does NOT open its own UOW. | LibLCM-fork repo: same constraint applies under FlexTools. Stand-alone LibLCM tools open their own UOW via `UndoableUnitOfWorkHelper.Do(...)` from `SIL.LCModel.Infrastructure`. |
 
 **Rationale**: The v4.0.0 adapter-contract experiment added overhead with no payoff
-during a single-flavor build. v5.0.0 retires it. Direct flexlibs2 imports keep module
+during a single-flavor build. v5.0.0 retires it. Direct flexicon imports keep module
 code idiomatic; the LibLCM-fork repo is free to pick natural raw-LCM idioms in its own
 codebase, sharing the spec artifacts above as the contract instead of a Python-shaped
 adapter base class.
 
 **Alternatives considered**:
 - *Mandatory `flavors/` adapter contract (v4.0.0 framing).* Rejected — added a layer
-  of indirection across `core/` ↔ `flavors/` ↔ flexlibs2 with no payoff during the
+  of indirection across `core/` ↔ `flavors/` ↔ flexicon with no payoff during the
   single-flavor build. The LibLCM port is cleaner as a separate sibling repo where
   raw-LCM idioms are first-class instead of squeezed through a Python-shaped adapter.
 - *flexlibs1-preferred with LibLCM fallback (v3.0.0 framing).* Rejected — flexlibs1
@@ -52,8 +52,8 @@ adapter base class.
   `project.InflectionFeature.CreateClosedFeatureWithValues` surfaces that Phase 0
   needs.
 - *Co-equal "whichever fits best" routing (v2.0.0 framing).* Rejected — biased the
-  design toward LibLCM where flexlibs2 had perfectly good wrappers.
-- *LibLCM for everything from day one.* Rejected — gives up flexlibs2's idiom
+  design toward LibLCM where flexicon had perfectly good wrappers.
+- *LibLCM for everything from day one.* Rejected — gives up flexicon's idiom
   benefits, casting helpers, and Operations classes; pushes complexity into every
   call site.
 - *Decide per-call at runtime via a strategy object.* Rejected — over-engineered for
@@ -102,8 +102,8 @@ from flextoolslib import *
 import site
 site.addsitedir(r"Lib")
 
-# direct flexlibs2 imports
-from flexlibs2.BaseOperations import ApplySyncableProperties
+# direct flexicon imports
+from flexicon.BaseOperations import ApplySyncableProperties
 # ...
 
 docs = {
@@ -169,7 +169,7 @@ currently-open source project. Present them in `target_picker.py` as a single-se
 list with project name + path; refuse Run until a target is chosen.
 
 **Resolved (2026-06-19)**: filesystem scan of `C:\ProgramData\SIL\FieldWorks\Projects`
-is the canonical mechanism — no flexlibs2 / LCM helper enumerates the disk. The
+is the canonical mechanism — no flexicon / LCM helper enumerates the disk. The
 MCP's own `flextools_list_projects` is the reference implementation.
 `Lib/ui/target_picker.py` implements the scan directly (no adapter indirection) and
 filters out the currently-open source by path equality.
@@ -187,14 +187,14 @@ which simplifies role assignment. The picker only needs to list candidate target
 
 ## R6. GUID preservation across projects
 
-**Decision** (revised 2026-06-19 against STATUS.md Layer 1+2 spike): Several flexlibs2
+**Decision** (revised 2026-06-19 against STATUS.md Layer 1+2 spike): Several flexicon
 Operations wrappers in the patched MattGyverLee fork DO accept a `Guid` parameter on
 their `Create()` overloads (validated against POS, affix template, and slot factories
 during the Layer 1+2 spike — source GUIDs were preserved end-to-end, see STATUS.md
 "Layer 2 — Template + 4 Slots"). Where the wrapper does not accept a Guid, the
 standard pattern is:
 
-1. Resolve the factory via `project.GetService(IFooFactory)` (flexlibs2's discoverable
+1. Resolve the factory via `project.GetService(IFooFactory)` (flexicon's discoverable
    wrapper around `Cache.ServiceLocator.GetService`).
 2. Call `factory.Create()` (or the appropriate Create overload) to instantiate.
 3. Add the new object to its owning collection (e.g., `PhonemesOC.Add(new_phoneme)`)
@@ -375,7 +375,7 @@ LCM raises when the project is locked or read-only — surfacing it as a user-vi
 error before showing the WS mapping dialog (FR-020). If the target equals the source
 by path, abort immediately (FR-019).
 
-**Detection mechanism (T033b reference)**: Under flexlibs2, a locked target raises
+**Detection mechanism (T033b reference)**: Under flexicon, a locked target raises
 on `OpenProject(..., writeEnabled=True)`. The exact exception type to catch is
 LCM-side (`SIL.LCModel.LcmFileLockedException` or similar); confirm during T033b
 implementation by triggering the condition (open the target in FLEx itself before
@@ -397,11 +397,11 @@ the error before they spend time on the WS mapping step.
 ## Items deferred to implementation
 
 All D-validation items from the v3.0.0 draft of this document were resolved on
-2026-06-19 against the live flexlibs2 surface via the FLExToolsMCP. Findings are
+2026-06-19 against the live flexicon surface via the FLExToolsMCP. Findings are
 baked into R1, R6, R7, R10 above. Status:
 
 - ~~**D1**: per-operation flavor mapping~~ → resolved in R1; constitution bumped
-  to v4.0.0 (flexlibs2-primary) on 2026-06-19, then to v5.0.0 (no adapter contract;
+  to v4.0.0 (flexicon-primary) on 2026-06-19, then to v5.0.0 (no adapter contract;
   LibLCM port = separate sibling repo) on the same date.
 - ~~**D2**: FlexTools module entry shape~~ → resolved; the FLExTrans-style
   convention is `docs = {...}` dict + `MainFunction(project, report, modifyAllowed)`
@@ -413,11 +413,11 @@ baked into R1, R6, R7, R10 above. Status:
   implementation. Default to PyQt5 per `pyproject.toml`; switch to PySide2 if the
   host import fails.
 - ~~**D4**: project enumeration mechanism~~ → resolved as filesystem scan of the
-  FieldWorks projects directory; no flexlibs2 / LCM method enumerates the disk
+  FieldWorks projects directory; no flexicon / LCM method enumerates the disk
   (the MCP's own `flextools_list_projects` does this and is the reference
   implementation).
 - ~~**D5**: per-LCM-type GUID-on-create permissibility~~ → resolved in R6 (revised
-  2026-06-19 against the STATUS.md Layer 1+2 spike): some flexlibs2 factory
+  2026-06-19 against the STATUS.md Layer 1+2 spike): some flexicon factory
   wrappers DO accept a `Guid` parameter on `Create()`; where they don't, the
   pattern is `factory.Create()` → add to owner → assign `obj.Guid`.
 - ~~**D6**: per-LCM-type residue-field availability~~ → resolved in R7 (dual

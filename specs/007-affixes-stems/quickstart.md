@@ -11,7 +11,7 @@ This quickstart documents the runnable validation scenarios for Phase 3c. It exi
 
 1. **Backup restored to target**: `Ejagham Full GT-Test` restored from `backups/Ejagham Full.fwbackup` (see [STATUS.md](../../STATUS.md) "Restore the throwaway target" command).
 2. **Phase 3a + Phase 3b shipped to target first**: Phase 3c assumes the phonology block (memo step 5b Strata, step 13b Semantic Domains) and the inflection-prep block (POS, Inflection Features, Inflection Classes, Variant Types, Complex Form Types, Semantic Domains) are already in target. Run Phase 3a then Phase 3b first if the target is empty.
-3. **flexlibs2 fork installed**: `pip install -e D:/Github/_Projects/_LEX/flexlibs2` (see [CLAUDE.md](../../CLAUDE.md) "flexlibs2 fork dependency").
+3. **flexicon fork installed**: `pip install -e D:/Github/_Projects/_LEX/flexicon` (see [CLAUDE.md](../../CLAUDE.md) "flexicon fork dependency").
 4. **MCP server available**: `flextools-mcp` MUST be reachable for the verification probes.
 
 ## Scenario A — Empty target, full Phase 3a→3b→3c chain

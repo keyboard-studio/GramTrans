@@ -39,7 +39,7 @@ threading → 014 preview pane → 015 wizard flow). It produces a new pure modu
      value is not applied (target wins). This mirrors 013's FR-007a apply semantics.
 2. **LCM props fetch + category registry** — a `props_for(...)` that pulls a comparable
    property dict for any transfer category via `GetSyncableProperties`, with a per-category
-   ops/finder table and **direct-multistring fallbacks** for the categories the flexlibs2 fork
+   ops/finder table and **direct-multistring fallbacks** for the categories the flexicon fork
    does not cover (Slots, Phonological Features, Stem Names — see the plan's correction #5).
    Plus a writing-system→role classifier (`ws_role_map`) so value segments can be font-tagged.
 3. **HTML rendering** — `to_html(preview, registry)` turning a computed preview into escaped,
@@ -125,7 +125,7 @@ RTL, and strike-through on removed segments.
 
 The engine can pull a comparable property dict for a source or target object of any transfer
 category, using the right operations wrapper per category, and — for the categories the
-flexlibs2 fork does not cover — falling back to direct guarded multistring reads so the diff
+flexicon fork does not cover — falling back to direct guarded multistring reads so the diff
 still has something to show.
 
 **Why this priority**: Without props fetch there is nothing to diff for non-affix categories;

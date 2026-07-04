@@ -33,7 +33,7 @@ python -m pytest tests/unit/test_merge_preview_diff.py tests/unit/test_merge_pre
 
 ## Qt-free guarantee (SC-007)
 
-The import-with-no-Qt test proves the module never pulls PyQt at import time. Keep flexlibs2
+The import-with-no-Qt test proves the module never pulls PyQt at import time. Keep flexicon
 imports lazy/guarded inside `props_for`/`MergePreviewService` so `diff_props` and `to_html`
 import cleanly in a bare Python environment.
 

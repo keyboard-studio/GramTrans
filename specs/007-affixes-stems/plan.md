@@ -15,7 +15,7 @@ Technical approach: Per Phase 3a/3b precedent, MCP-probe each new factory at pla
 **Language/Version**: Python 3.12.
 
 **Primary Dependencies**:
-- `flexlibs2` (MattGyverLee fork) — direct LCM access per constitution Principle II. Pre-existing Operations classes already in fork: `LexEntryOperations`, `LexSenseOperations`, `AllomorphOperations`, `MSAOperations`, `MorphRuleOperations`. New surface for Phase 3c probes: affix-template / slot / compound-rule factories under `LangProject.MorphologicalDataOA` and `IPartOfSpeech.AffixTemplatesOS` / `AffixSlotsOC`.
+- `flexicon` (MattGyverLee fork) — direct LCM access per constitution Principle II. Pre-existing Operations classes already in fork: `LexEntryOperations`, `LexSenseOperations`, `AllomorphOperations`, `MSAOperations`, `MorphRuleOperations`. New surface for Phase 3c probes: affix-template / slot / compound-rule factories under `LangProject.MorphologicalDataOA` and `IPartOfSpeech.AffixTemplatesOS` / `AffixSlotsOC`.
 - `SIL.LCModel` interfaces (lazy-imported): `ILexEntry`, `ILexSense`, `IMoMorphType` (for the `IsAffixType` partition), `IMoInflAffMsa`, `IMoStemMsa`, `IMoAffixAllomorph`, `IMoStemAllomorph`, `ILexExampleSentence`, `ILexPronunciation`, `ILexEtymology`, `ILexEntryRef`, `IMoInflAffixSlot`, `IMoInflAffixTemplate`, `IMoEndoCompound`, `IMoExoCompound`, `IMoAdhocProhibition`, plus factories.
 
 **Storage**: No new storage. State lives in target LCM objects + the existing residue tag. One new in-plan mapping: `RunPlan.msa_slot_bindings: dict[Guid, list[Guid]]` (msa_guid → list of slot_guids) — ephemeral, consumed at the end of `AFFIX_TEMPLATES` execution and discarded with the plan.
@@ -35,7 +35,7 @@ Technical approach: Per Phase 3a/3b precedent, MCP-probe each new factory at pla
 - Post-pass A and 17.1 sub-pass each < 200ms for the realistic ceiling.
 
 **Constraints**:
-- Constitution Principle II: flexlibs2-Direct.
+- Constitution Principle II: flexicon-Direct.
 - Principle III: Preview-Before-Mutate — every new `plan_action` runs during `build_run_plan`, no LCM writes. The 17.1 sub-pass and post-pass A produce their `PlannedAction`s during preview as well; executor merely wires references using already-stashed mappings.
 - Principle IV: additive over Phases 0/1/2/3a/3b. The collision guard in `_create_with_guid` already returns `Skip(ALREADY_PRESENT_BY_GUID)` for entries Phase 0 created; no new Phase-0-aware code paths in Phase 3c.
 - Affix vs stem partition is strictly per-entry by `IsAffixType` — no enumeration-time short-circuit, no global filter switch.
@@ -51,7 +51,7 @@ Technical approach: Per Phase 3a/3b precedent, MCP-probe each new factory at pla
 | Principle | Status | Justification |
 |-----------|--------|---------------|
 | I. FLEx Domain Fidelity | PASS | GUID preservation default for all five new categories where the factory supports `Create(Guid, owner)`. Where the factory lacks Guid overloads (MSAs and allomorphs via `IMoInflAffMsaFactory.Create(ILexEntry, SandboxGenericMSA)` — already verified in Phase 0 Layer 3), `identity_remap` per FR-303 inherited from Phase 1. GOLD inviolability does not apply to any Phase 3c category (no FW catalog at the affix/stem/template/slot/rule level). |
-| II. flexlibs2-Direct | PASS | All five callbacks import `flexlibs2` Operations classes directly (`LexEntryOperations`, `MSAOperations`, `AllomorphOperations`, `MorphRuleOperations`). No adapter contract. |
+| II. flexicon-Direct | PASS | All five callbacks import `flexicon` Operations classes directly (`LexEntryOperations`, `MSAOperations`, `AllomorphOperations`, `MorphRuleOperations`). No adapter contract. |
 | III. Preview-Before-Mutate | PASS | Five-callback shape preserved across all five new categories. The 17.1 sub-pass and post-pass A produce their planned wires during preview (`enumerate_source` returns the binding intent; `plan_action` records the binding as a side effect on `plan.msa_slot_bindings` / `plan.lexentry_ref_bindings`); the executor only emits the writes when the dispatch loop reaches the owning category. |
 | IV. Phased Merge Discipline | PASS | Phase 3c ordered behind 0-2-3a-3b. FR-338 reaffirms Phase 1 overwrite + Phase 2 merge inheritance. FR-334 codifies retirement-in-place of Phase 0 verb-vertical via universal collision guard, no special-case code. |
 | V. Referential Completeness | PASS | FR-332 enforces lexeme-form + morph-type closure for the affix/stem partition. FR-335 enforces sense → semantic-domain closure against Phase 3b transfers. FR-336 enforces MSA → Stratum closure against Phase 3a. FR-337 enforces ad-hoc + compound rules → affix LexEntry closure via `identity_remap`. FR-340 enforces post-pass A closure with explicit `DEPENDENCY_UNRESOLVED` skips. |
@@ -63,7 +63,7 @@ Technical approach: Per Phase 3a/3b precedent, MCP-probe each new factory at pla
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. | PASS | data-model.md catalogs each LCM type per category and the `IsAffixType` partition; GOLD detection N/A. |
-| II. | PASS | contracts/category-callbacks.md uses flexlibs2 Operations classes exclusively. |
+| II. | PASS | contracts/category-callbacks.md uses flexicon Operations classes exclusively. |
 | III. | PASS | quickstart.md exercises Preview first, then Move. Scenario E confirms preview produces no LCM writes. |
 | IV. | PASS | quickstart.md Scenario F confirms a Phase 0 verb-vertical re-run after Phase 3c produces 0 new actions (SC-303). |
 | V. | PASS | All five reference-closure FRs surface in data-model.md as explicit edge tables. |

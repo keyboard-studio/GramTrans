@@ -64,7 +64,7 @@ FR-308 inheritance for all 5 new categories.
     - `MoEndoCompound`: adds `HeadLast` (bool) + `OverridingMsaOA` (owned `IMoStemMsa`, optional).
     - `MoExoCompound`: adds `ToMsaOA` (owned `IMoStemMsa`, mandatory).
     - **There is NO `LeftMsaOA`/`RightMsaOA` on either subclass** — the parser derives operands from the morpheme chain at parse time; the rule stores only the result MSA.
-    - Recommended creation path: `MorphRuleOperations.CreateCompoundRule(name, endocentric=True, description=None)` (flexlibs2 wrapper). ServiceLocator fallback only if the wrapper proves unsuitable at write-implementation time.
+    - Recommended creation path: `MorphRuleOperations.CreateCompoundRule(name, endocentric=True, description=None)` (flexicon wrapper). ServiceLocator fallback only if the wrapper proves unsuitable at write-implementation time.
   - **Ad-hoc prohibitions** (`LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC`): base `IMoAdhocProhib` carries `Adjacency` (int) + `Disabled` (bool). Concrete subclasses:
     - `MoAdhocProhibGr` (GROUP): adds `Name`, `Description` (Carrier B residue), **`MembersOC` (owned collection)** of nested `IMoAdhocProhib` atoms. Note: members are OWNED, not referenced — atoms are children of their parent group.
     - `MoAlloAdhocProhib` (ATOMIC, allomorph-based): adds `AllomorphsRS` + `FirstAllomorphRA` + `RestOfAllosRS` referencing `IMoForm` allomorphs from US1.

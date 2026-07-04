@@ -7,7 +7,7 @@ for verification.
 ## Prerequisites
 
 - Phases 0, 1, 2 shipped (commits 531211a … c050aa1; 267 tests passing).
-- flexlibs2 fork installed (D:/Github/_Projects/_LEX/flexlibs2).
+- flexicon fork installed (D:/Github/_Projects/_LEX/flexicon).
 - Ejagham Mini source project has at least: 1 phoneme, 1 natural class,
   1 phonological rule, 1 stratum. (If not, populate manually before
   running Scenario A — or use the `populate-phonology.py` helper that

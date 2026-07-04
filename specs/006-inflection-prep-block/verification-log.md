@@ -2,7 +2,7 @@
 
 **Source**: `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Mini`
 **Target**: `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Full GT-Test`
-**flexlibs2 fork**: `D:/Github/_Projects/_LEX/flexlibs2` (editable install)
+**flexicon fork**: `D:/Github/_Projects/_LEX/flexicon` (editable install)
 
 Three live-MCP runs landed against the same source/target pair on 2026-06-21,
 each at a successively-later code state. Each section below records the
@@ -19,7 +19,7 @@ post-state.
 ### Bug discovered + fixed before run
 
 `src/gramtrans/Lib/categories.py` referenced `project.InflectionFeature`
-(singular) but the flexlibs2 fork exposes `project.InflectionFeatures` (plural).
+(singular) but the flexicon fork exposes `project.InflectionFeatures` (plural).
 6 occurrences + 2 `hasattr` checks fixed in commit `194438a`. Test fakes in
 `test_categories_inflection_features.py` + `test_categories_inflection_classes.py`
 updated to mirror. The Phase 0 unit tests passed under the wrong name only
@@ -77,7 +77,7 @@ Target CloseProject() called -- changes saved.
 
 **Verdict at the time**: PARTIAL. The 3 actions reported did land and survived
 target `CloseProject`. POS count didn't move because `gram_categories_*`
-callbacks walked `project.GramCat.GetAll()`, which the flexlibs2 fork resolves
+callbacks walked `project.GramCat.GetAll()`, which the flexicon fork resolves
 to `IFsFeatStrucType` (owned by `LangProject.MsFeatureSystemOA.TypesOC`) —
 **not** POS. Ordering-memo step 6 (and the spec narrative) said
 "Parts of Speech (= 'Gram Categories')"; the code targeted

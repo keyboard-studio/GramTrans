@@ -53,7 +53,7 @@ resolved (T001–T012 Phase 1–2 in a prior session; **T013–T030 this session
 
 **Updated**: 2026-06-21 (22:50 close-sweep)
 **Branch**: `main`
-**Phase**: Phase 3b **CLOSED** — all 41 tasks resolved (4 deferred-with-rationale; 37 shipped). US2 creation still blocked at flexlibs2 layer (detect-and-report posture adopted). Phase 3c spec scaffolded at [specs/007-affixes-stems/](specs/007-affixes-stems/) — memo steps 14-18 (affixes, ad-hoc / compound rules, slots, affix templates, stems).
+**Phase**: Phase 3b **CLOSED** — all 41 tasks resolved (4 deferred-with-rationale; 37 shipped). US2 creation still blocked at flexicon layer (detect-and-report posture adopted). Phase 3c spec scaffolded at [specs/007-affixes-stems/](specs/007-affixes-stems/) — memo steps 14-18 (affixes, ad-hoc / compound rules, slots, affix templates, stems).
 
 ### Phase 3b close-sweep (2026-06-21 22:50)
 
@@ -85,7 +85,7 @@ This distinction was deliberate (lex-domain ruling, cycle 3). Do not collapse th
 - **Rename `GRAM_CATEGORIES` enum -> `PARTS_OF_SPEECH`** at next API-break window. Enum string `"gram_categories"` is a public serialized-plan surface; retargeted now (Option B per cycle 2) to unblock US3 + Scenario C live verification while preserving plan compatibility. Update dispatch tables in `preview.py` + `transfer.py` and all selection-dict references in the same atomic commit.
 - **Add new `FEATURE_STRUC_TYPES` category** targeting `MsFeatureSystemOA.TypesOC` via `project.GramCat`. Salvages the pre-Option-B Phase 0 callback bodies (they correctly handle IFsFeatStrucType creation — just under the wrong label). Fills the ordering-memo gap: no current row exists for the feature-struct-type list.
 - **Spec-006 US1 clarification**: document the two-path setup (Phase 0 verb-vertical closure handles real POSes via `_select_source_poses` / `_plan_pos_closure`; Phase 3b leaf-dispatch `GRAM_CATEGORIES` callbacks handle the same target via the leaf-dispatch loop). The verb-vertical collision guard in `gram_categories_execute_action` covers the dual-dispatch case.
-- **Pattern audit** (lex-qc P2): sweep all `project.<Accessor>.GetAll()` callsites in `categories.py` against the flexlibs2 fork's actual accessor names + the spec's claimed LCM collection. Two same-shape bugs (`InflectionFeature`/`InflectionFeatures` accessor mismatch, `GramCat`/`POS` collection mismatch) caught this session; a third could be hiding.
+- **Pattern audit** (lex-qc P2): sweep all `project.<Accessor>.GetAll()` callsites in `categories.py` against the flexicon fork's actual accessor names + the spec's claimed LCM collection. Two same-shape bugs (`InflectionFeature`/`InflectionFeatures` accessor mismatch, `GramCat`/`POS` collection mismatch) caught this session; a third could be hiding.
 
 ---
 
@@ -110,14 +110,14 @@ This distinction was deliberate (lex-domain ruling, cycle 3). Do not collapse th
 
 ### US2 blocker (custom_fields)
 
-`flexlibs2.CustomFieldOperations.CreateField` refuses to run inside an open
+`flexicon.CustomFieldOperations.CreateField` refuses to run inside an open
 UoW with `FP_TransactionError`. Phase-1 transaction mode (the default in
-flexlibs2 `OpenProject`) keeps that envelope open for our entire
+flexicon `OpenProject`) keeps that envelope open for our entire
 `transfer.execute()`. Raw `IFwMetaDataCacheManaged.AddCustomField` bypass
-produces corrupt records on next FLEx UI open (per the flexlibs2 docstring).
+produces corrupt records on next FLEx UI open (per the flexicon docstring).
 
 T014-T020 deferred. Unblock requires either:
-1. flexlibs2 exposes a `transaction_mode='direct'` flag on `OpenProject`.
+1. flexicon exposes a `transaction_mode='direct'` flag on `OpenProject`.
 2. Split `MainFunction` into schema-pre-pass + transaction-pass with separately-opened direct-mode handle.
 3. Document a manual user workaround and ship without automation.
 
@@ -132,7 +132,7 @@ See [specs/006-inflection-prep-block/us2-blocker-memo.md](specs/006-inflection-p
 
 ### Next pickup checklist
 
-1. **Resolve US2 blocker.** Choose one of the three remediation paths in the memo. The cleanest is path (2): two-phase `MainFunction` with a schema-pre-pass. Requires confirming flexlibs2 exposes a direct-mode `OpenProject` flag.
+1. **Resolve US2 blocker.** Choose one of the three remediation paths in the memo. The cleanest is path (2): two-phase `MainFunction` with a schema-pre-pass. Requires confirming flexicon exposes a direct-mode `OpenProject` flag.
 2. **Live MCP verification of US1+US3** — Scenarios A.1, A.3, C in quickstart. Defer Scenario B (overwrite re-run) until a non-empty US3 source is available. Defer Scenario D (FR-308) — covered by dispatch smoke.
 3. **Phase 3c spec** — memo steps 14-18 (affixes, ad-hoc/compound rules, slots, affix templates, stems). The leaf-dispatch pattern from 3a/3b extends naturally to these, modulo the heavy-category surfaces (affixes/templates/MSA) that don't fit the pure-leaf shape.
 
@@ -428,7 +428,7 @@ target. Full run:
 - 13 MoInflAffMsas + 20 MoAffixAllomorphs created with new GUIDs (LibLCM's
   `IMoInflAffMsaFactory.Create(ILexEntry, SandboxGenericMSA)` and
   `IMoAffixAllomorphFactory.Create` don't expose Guid overloads;
-  `identity_remap` captures the mapping per FR-012). Used flexlibs2's
+  `identity_remap` captures the mapping per FR-012). Used flexicon's
   `MSAOperations.CreateInflAff(sense, pos, slots)` wrapper for the
   SandboxGenericMSA dance.
 - 12 of 13 MSAs wired to a slot via `SlotsRC` (by GUID lookup against
@@ -439,7 +439,7 @@ target. Full run:
 - Allomorph `PhoneEnvRC` re-wired to the (reused) target environments.
 
 **Fork patches landed during this work** (all under
-`D:/Github/_Projects/_LEX/flexlibs2/flexlibs2/code/Lexicon/`):
+`D:/Github/_Projects/_LEX/flexicon/flexicon/code/Lexicon/`):
 
 - `LexEntryOperations.py`, `AllomorphOperations.py`, `LexSenseOperations.py`,
   `ExampleOperations.py`, `EtymologyOperations.py`, `LexReferenceOperations.py`,
@@ -511,13 +511,13 @@ Four MCP-driven checks against live LCM, all PASS:
    ~67 total, well under SC-001's 100-piece budget.
 4. **Patched fork ApplySyncableProperties** confirmed at runtime on POS,
    MorphRules, LexEntry, Allomorphs (MCP indexer doesn't surface it but the
-   runtime has it). Validates the `flexlibs2 fork` dependency is correctly
+   runtime has it). Validates the `flexicon fork` dependency is correctly
    installed.
 
 Plus one **bug fix** discovered via MCP: `Lib/residue.apply_carrier_b` previously
 cast `obj` to `ICmPossibility` before reading `Description`. Live MCP probe
 showed that cast raises `TypeError` on `IMoInflAffixTemplate` — the spike's
-writes happened to land somehow (likely a flexlibs2-version-dependent fallback),
+writes happened to land somehow (likely a flexicon-version-dependent fallback),
 but a fresh write through the new code path would crash. Replaced with direct
 `getattr(obj, "Description")` access; uniform across every Carrier-B class
 (POS, Template, Slot, FsClosedFeature, ...). Round-trip parsed all 6 spike
@@ -533,7 +533,7 @@ Cross-session run_ids decoded from live Description fields:
    scaffolding (v4.0.0 adapter pattern bypassed; Move-mode writes happened
    before any Preview engine existed).
 2. **Constitution v5.0.0** retired the v4.0.0 adapter-contract requirement —
-   `flavors/` is gone; flexlibs2 is imported directly; the LibLCM-direct
+   `flavors/` is gone; flexicon is imported directly; the LibLCM-direct
    implementation moved to a separate post-Phase-2 sibling repository.
 3. **T-Spike refactor**: the inline `transfer_verb_vertical()` Move logic was
    split into `Lib/preview.py` (plan builder, never mutates target) and
@@ -687,10 +687,10 @@ T058 (api.py).
 
 ---
 
-## flexlibs2 fork dependency (CLAUDE.md + README.md document this)
+## flexicon fork dependency (CLAUDE.md + README.md document this)
 
-Runtime depends on **MattGyverLee/flexlibs2** at
-`D:/Github/_Projects/_LEX/flexlibs2`. Two patches:
+Runtime depends on **MattGyverLee/flexicon** at
+`D:/Github/_Projects/_LEX/flexicon`. Two patches:
 
 1. `GetSyncableProperties` writing-system enumeration fix
    (`project.WritingSystems.GetAll()`, not `ws_factory.WritingSystems`).
@@ -703,7 +703,7 @@ Patched files (9):
 `Grammar/NaturalClassOperations.py`, `Grammar/EnvironmentOperations.py`,
 `Grammar/PhonologicalRuleOperations.py`, `Grammar/PhonemeOperations.py`.
 
-Install via `pip install -e D:/Github/_Projects/_LEX/flexlibs2`.
+Install via `pip install -e D:/Github/_Projects/_LEX/flexicon`.
 
 ---
 
@@ -749,7 +749,7 @@ Install via `pip install -e D:/Github/_Projects/_LEX/flexlibs2`.
     dodge static checks when needed in MCP probes — never needed in actual runtime.
   - The runner pre-wraps every snippet in a UOW; don't nest your own
     `UndoableUnitOfWorkHelper.Do(...)`.
-  - `from flexlibs2 import (...)` MUST be a single line for the MCP parser.
+  - `from flexicon import (...)` MUST be a single line for the MCP parser.
 
 - **Don't reintroduce `Flavor` enum**: v5.0.0 explicitly removed it.
 

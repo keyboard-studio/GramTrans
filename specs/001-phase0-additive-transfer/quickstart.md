@@ -10,7 +10,7 @@ in `tasks.md` and the implementation phase.
 ## Prerequisites
 
 - A working FlexTools installation that can host Python modules.
-- The **patched MattGyverLee/flexlibs2 fork** installed into the FlexTools Python
+- The **patched MattGyverLee/flexicon fork** installed into the FlexTools Python
   environment (constitution v5.0.0 Principle II — direct runtime dependency; see
   [../../CLAUDE.md](../../CLAUDE.md) for the patches and install steps). The LibLCM
   .NET bridge is NOT required for this repo; the LibLCM-direct implementation is a

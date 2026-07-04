@@ -365,8 +365,8 @@ not transferred unless they were pulled in as dependencies of the selected affix
   versions — same-version compatibility between source and target is a precondition
   guaranteed by the host environment, not something the module verifies at runtime.
 - **API surface (informational)**: Per constitution v5.0.0 Principle II, Phase 0 imports
-  flexlibs2 **directly** (no flavor-adapter contract in this repo). The runtime depends
-  on the patched MattGyverLee/flexlibs2 fork carrying the `WritingSystems` enumeration
+  flexicon **directly** (no flavor-adapter contract in this repo). The runtime depends
+  on the patched MattGyverLee/flexicon fork carrying the `WritingSystems` enumeration
   fix and the new `ApplySyncableProperties` method. The LibLCM-direct implementation is
   a **separate post-Phase-2 sibling repository**, not an in-tree deliverable. flexlibs1
   is not used (superseded by v4.0.0). This is reiterated here as scope context; the

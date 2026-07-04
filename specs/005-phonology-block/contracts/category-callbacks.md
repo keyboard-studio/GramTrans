@@ -19,7 +19,7 @@ def enumerate_source(context: RunContext, selection: Selection) -> Iterable[piec
             like pos_picks; phonology has no such filters in 3a).
 
     Returns:
-        Iterable of LCM object wrappers (flexlibs2 yields .concrete-bearing
+        Iterable of LCM object wrappers (flexicon yields .concrete-bearing
         wrappers; downstream callbacks must _unwrap before casting).
     """
 

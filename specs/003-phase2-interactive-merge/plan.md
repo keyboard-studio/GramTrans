@@ -15,7 +15,7 @@ Technical approach: A new `Lib/conflict.py` module owns the `ConflictPrompt` / `
 **Language/Version**: Python 3.12 (matches Phase 0/1; FlexTools host's pythonnet runtime).
 
 **Primary Dependencies**:
-- `flexlibs2` (MattGyverLee fork) — direct LCM access (per constitution Principle II).
+- `flexicon` (MattGyverLee fork) — direct LCM access (per constitution Principle II).
 - `PyQt5` — already imported by `Lib/ui/` in Phase 1 for the category-picker widget.
 - `base64` + `json` (stdlib) — for the residue `merge=` segment encoding.
 
@@ -51,7 +51,7 @@ Technical approach: A new `Lib/conflict.py` module owns the `ConflictPrompt` / `
 | Principle | Status | Justification |
 |-----------|--------|---------------|
 | I. FLEx Domain Fidelity | PASS | Phase 2 ADDS user choice on conflicts but never weakens GUID identity, GOLD inviolability, or cross-reference resolution. The merge resolutions affect only field VALUES on already-matched objects. |
-| II. flexlibs2-Direct | PASS | No new `flavors/` files. New modules (`Lib/conflict.py`, `Lib/ui/conflict_dialog.py`, `Lib/ui/ws_wizard.py`) import `flexlibs2` directly when they touch LCM objects. The PyQt widget code touches no LCM API. |
+| II. flexicon-Direct | PASS | No new `flavors/` files. New modules (`Lib/conflict.py`, `Lib/ui/conflict_dialog.py`, `Lib/ui/ws_wizard.py`) import `flexicon` directly when they touch LCM objects. The PyQt widget code touches no LCM API. |
 | III. Preview-Before-Mutate | PASS | Conflict detection and prompt collection happen during Preview / plan-build. Move execution consumes the resolved `MergeDecisionLog` as a frozen input. No Move write occurs before the user clicks "apply". |
 | IV. Phased Merge Discipline | PASS | Phase 2 is ordered behind Phase 1 (which shipped in this session as commits e129b72..f4cdd9c). FR-213/FR-214 enforce the single-UoW commit boundary required by constitution Phase 2 framing ("undoable"). |
 | V. Referential Completeness | PASS | Phase 2 does not alter the dependency closure walker. User choices on a field value never cause a cross-reference to dangle. |

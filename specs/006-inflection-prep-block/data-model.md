@@ -68,7 +68,7 @@
 
 ### 8. Complex Form Type (`complex_form_types` — STUB to fill)
 
-- **LCM type**: `ILexEntryType` (with `ComplexFormTypeTags` discriminator, or the shared `ILexEntryType` interface in flexlibs2)
+- **LCM type**: `ILexEntryType` (with `ComplexFormTypeTags` discriminator, or the shared `ILexEntryType` interface in flexicon)
 - **Owner**: `LangProject.LexDbOA.ComplexEntryTypesOA.PossibilitiesOS`
 - **GOLD signal**: `CatalogSourceId` non-empty (FW ships "Compound", "Idiom", "Phrasal Verb" etc.).
 - **Fields**: Name, Abbreviation, ReverseName, ReverseAbbr, Description (all multistring). No feature constraints.
