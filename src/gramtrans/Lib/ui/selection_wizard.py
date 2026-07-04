@@ -245,7 +245,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
 
-        self.setTitle("Step 1 of 6: Project + Writing Systems")
+        self.setTitle("Step 1 of 8: Project + Writing Systems")
         self.setSubTitle(
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
@@ -634,7 +634,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 6: Item Picker")
+        self.setTitle("Step 4 of 8: Item Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
@@ -1369,7 +1369,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 6: Morphology Skeleton")
+        self.setTitle("Step 5 of 8: Morphology Skeleton")
         self.setSubTitle(
             "Review the parts of speech, slots, and templates the picked affixes require. "
             "Pre-checked items are derived from your affix selection. "
@@ -1866,7 +1866,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 5 of 6: Grammatical Dependencies")
+        self.setTitle("Step 6 of 8: Grammatical Dependencies")
         self.setSubTitle(
             "Review the inflection features, classes, and stem names "
             "that the picked affixes' parts of speech require. All are preselected. "
@@ -2137,7 +2137,318 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
 
 # ---------------------------------------------------------------------------
-# Page 2 -- Phonology  (spec 010, Model-B independent block)
+# Page 2 -- Custom Fields  (Feature 016, US1/US2/US4)
+# ---------------------------------------------------------------------------
+
+# Data roles for _PageCustomFields
+_CF_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 60  # synthetic "cf:<owner>:<name>" guid
+_CF_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 61  # "group" | "item"
+_CF_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 63  # "NEW" | "IN TARGET" | ""
+
+# Display labels for the four owner-class levels.
+_CF_LEVEL_LABELS = {
+    "LexEntry":           "Entry",
+    "LexSense":           "Sense",
+    "LexExampleSentence": "Example",
+    "MoForm":             "Allomorph",
+}
+
+
+class _PageCustomFields(QtWidgets.QWizardPage):
+    """Page 2: Custom Fields block (Feature 016, US1/US2/US4).
+
+    Grouped tree: four owner-class levels (Entry / Sense / Example / Allomorph),
+    each with a count on its header.  Every row shows ``name + type-label`` in
+    col 0 and target-status in col 1 (US4).  ALL rows preselected on open.
+
+    The whole-block tristate toggle mirrors _PagePhonology: empty block =>
+    unchecked + disabled (not vacuously full, per Acceptance 1.3).
+
+    No ADD_NEW / MERGE / OVERWRITE conflict-mode control (per spec: CUSTOM_FIELDS
+    uses conservative MERGE-only default, applied automatically at plan time).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Step 2 of 8: Custom Fields")
+        self.setSubTitle(
+            "Review the source project's custom fields. All fields are preselected. "
+            "Untick the block to skip custom fields, or deselect individual fields. "
+            "Status column shows whether each field exists in the target."
+        )
+        self._mirroring: bool = False
+        self._records: list = []   # list[_CustomFieldRecord]
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        self._whole_block = QtWidgets.QCheckBox("Transfer custom fields block", self)
+        self._whole_block.setTristate(True)
+        self._whole_block.clicked.connect(self._on_whole_block_clicked)
+        layout.addWidget(self._whole_block)
+
+        self._tree = QtWidgets.QTreeWidget(self)
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Field (type)", "Status"])
+        self._tree.header().setStretchLastSection(True)
+        self._tree.setAlternatingRowColors(True)
+        layout.addWidget(self._tree, 1)
+
+    # ------------------------------------------------------------------
+    def initializePage(self) -> None:
+        """Called when the wizard enters this page; populates from source."""
+        if self._tree.receivers(self._tree.itemChanged) > 0:
+            self._tree.itemChanged.disconnect(self._on_item_changed)
+        self._populate_from_source()
+        self._tree.itemChanged.connect(self._on_item_changed)
+
+    def _populate_from_source(self) -> None:
+        """Enumerate source custom fields and build the four-level tree."""
+        self._tree.clear()
+        self._records = []
+
+        source = self._get_source()
+        target = self._get_target()
+
+        if source is None:
+            empty = QtWidgets.QTreeWidgetItem(self._tree, ["(No source project bound)", ""])
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self._refresh_whole_block()
+            return
+
+        # Import enumerate helper from categories (read-only, safe inside UoW).
+        if __package__:
+            from ..categories import (
+                _enumerate_custom_fields,
+                custom_field_type_label,
+                classify_custom_field,
+            )
+        else:
+            from categories import (  # type: ignore
+                _enumerate_custom_fields,
+                custom_field_type_label,
+                classify_custom_field,
+            )
+
+        try:
+            all_records = list(_enumerate_custom_fields(source))
+        except Exception:  # noqa: BLE001
+            all_records = []
+
+        self._records = all_records
+
+        # Group by owner class in canonical order.
+        from PyQt6 import QtGui as _QtGui
+
+        if __package__:
+            from ..categories import _CUSTOM_FIELD_OWNER_CLASSES
+        else:
+            from categories import _CUSTOM_FIELD_OWNER_CLASSES  # type: ignore
+
+        by_class: dict = {cls: [] for cls in _CUSTOM_FIELD_OWNER_CLASSES}
+        for rec in all_records:
+            if rec.owner_class in by_class:
+                by_class[rec.owner_class].append(rec)
+
+        for cls in _CUSTOM_FIELD_OWNER_CLASSES:
+            rows = by_class[cls]
+            level_label = _CF_LEVEL_LABELS.get(cls, cls)
+            count = len(rows)
+            header = QtWidgets.QTreeWidgetItem(
+                self._tree, [f"{level_label} ({count})", ""]
+            )
+            header.setData(0, _CF_KIND_ROLE, "group")
+            header.setFlags(
+                header.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            header.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            bold = header.font(0)
+            bold.setBold(True)
+            header.setFont(0, bold)
+
+            for rec in rows:
+                type_label = custom_field_type_label(rec.field_type)
+                row_label = f"{rec.name} ({type_label})"
+
+                # US4: classify against target.
+                status, type_diff_note = ("", None)
+                if target is not None:
+                    try:
+                        status, type_diff_note = classify_custom_field(rec, target)
+                    except Exception:  # noqa: BLE001
+                        status, type_diff_note = "", None
+
+                # Map status token to display text.
+                _status_display = {
+                    "NEW": "NEW",
+                    "IN_TARGET": "IN TARGET",
+                    "": "",
+                }
+                status_text = _status_display.get(status, status)
+                if type_diff_note:
+                    status_text = "IN TARGET"  # field exists, type differs
+
+                item = QtWidgets.QTreeWidgetItem(header, [row_label, status_text])
+                item.setData(0, _CF_GUID_ROLE, rec.guid)
+                item.setData(0, _CF_KIND_ROLE, "item")
+                item.setData(0, _CF_STATUS_ROLE, status)
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+                if type_diff_note:
+                    item.setToolTip(0, type_diff_note)
+                    item.setToolTip(1, type_diff_note)
+
+        self._tree.expandAll()
+        for col in range(2):
+            self._tree.resizeColumnToContents(col)
+        self._refresh_whole_block()
+
+    # -- whole-block toggle -----------------------------------------------
+    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
+        if not self._has_any_item():
+            self._refresh_whole_block()
+            return
+        want_checked = not self._all_items_checked()
+        self._set_all_items(want_checked)
+        self._refresh_whole_block()
+
+    def _set_all_items(self, checked: bool) -> None:
+        state = (QtCore.Qt.CheckState.Checked if checked
+                 else QtCore.Qt.CheckState.Unchecked)
+        self._mirroring = True
+        try:
+            for _grp, item in self._iter_item_rows():
+                item.setCheckState(0, state)
+        finally:
+            self._mirroring = False
+
+    def _refresh_whole_block(self) -> None:
+        """Reflect aggregate item state on the whole-block tristate box.
+
+        Empty block => unchecked + disabled (NOT vacuously full, per Acceptance 1.3).
+        """
+        self._mirroring = True
+        try:
+            if not self._has_any_item():
+                self._whole_block.setEnabled(False)
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+                return
+            self._whole_block.setEnabled(True)
+            checked = sum(
+                1 for _g, it in self._iter_item_rows()
+                if it.checkState(0) == QtCore.Qt.CheckState.Checked
+            )
+            total = sum(1 for _ in self._iter_item_rows())
+            if checked == 0:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            elif checked == total:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
+            else:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.PartiallyChecked)
+        finally:
+            self._mirroring = False
+
+    def _on_item_changed(self, item, column) -> None:
+        if self._mirroring or column != 0:
+            return
+        self._refresh_whole_block()
+
+    # -- tree walking helpers -----------------------------------------------
+    def _iter_item_rows(self):
+        """Yield (group_item, item) for every checkable custom-field item row."""
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            group = root.child(i)
+            if group.data(0, _CF_KIND_ROLE) != "group":
+                continue
+            for j in range(group.childCount()):
+                item = group.child(j)
+                if item.data(0, _CF_KIND_ROLE) == "item":
+                    yield group, item
+
+    def _has_any_item(self) -> bool:
+        for _ in self._iter_item_rows():
+            return True
+        return False
+
+    def _all_items_checked(self) -> bool:
+        any_item = False
+        for _g, item in self._iter_item_rows():
+            any_item = True
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                return False
+        return any_item
+
+    # -- state API (US2) ---------------------------------------------------
+    def leaf_item_picks(self) -> dict:
+        """Return leaf_item_picks dict for custom fields.
+
+        Fully-checked => omit key (transfer-all back-compat).
+        Partial => {GrammarCategory.CUSTOM_FIELDS: frozenset[str guids]}.
+        Fully-unchecked / empty => {GrammarCategory.CUSTOM_FIELDS: frozenset()}.
+        """
+        if not self._has_any_item():
+            return {}
+
+        checked_guids: set = set()
+        total = 0
+        for _grp, item in self._iter_item_rows():
+            total += 1
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                guid = item.data(0, _CF_GUID_ROLE)
+                if guid:
+                    checked_guids.add(guid)
+
+        if len(checked_guids) == total:
+            # Fully checked => omit key (transfer-all).
+            return {}
+        return {GrammarCategory.CUSTOM_FIELDS: frozenset(checked_guids)}
+
+    def whole_block_on(self) -> bool:
+        """True iff any field row is checked."""
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                return True
+        return False
+
+    # -- source/target helpers ---------------------------------------------
+    def _get_source(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(p0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Page 3 -- Phonology  (spec 010, Model-B independent block)
 # ---------------------------------------------------------------------------
 
 _PHON_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 20   # source GUID (item rows)
@@ -2171,7 +2482,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 6: Phonology")
+        self.setTitle("Step 3 of 8: Phonology")
         self.setSubTitle(
             "Review the source's phonology. The whole block is preselected. "
             "Untick the block to skip phonology, untick a category to trim it, "
@@ -2609,7 +2920,7 @@ class _PagePreview(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 6 of 7: Preview")
+        self.setTitle("Step 7 of 8: Preview")
         self.setSubTitle(
             "Review the planned transfer before committing. "
             "Warnings (entries with missing references) are highlighted."
@@ -2703,7 +3014,27 @@ def _compute_wizard_plan(wizard) -> tuple:
         similar_resolutions=affix_selection.similar_resolutions,
     )
 
-    # Step 5: phonology collapse-merge (applied AFTER resolution stamp per DR-4/P1).
+    # Step 5a: custom-fields merge (US2/T014 -- fold leaf_item_picks into selection).
+    cf_page = wizard.page_custom_fields() if hasattr(wizard, "page_custom_fields") else None
+    if cf_page is not None:
+        cf_picks = cf_page.leaf_item_picks()
+        if cf_picks:
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.CUSTOM_FIELDS] = True
+            merged_leaf = dict(selection.leaf_item_picks)
+            merged_leaf.update(cf_picks)
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                leaf_item_picks=merged_leaf,
+            )
+        elif cf_page.whole_block_on():
+            # Fully selected => include CUSTOM_FIELDS category (transfer-all).
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.CUSTOM_FIELDS] = True
+            selection = dataclasses.replace(selection, categories=merged_categories)
+
+    # Step 5b: phonology collapse-merge (applied AFTER resolution stamp per DR-4/P1).
     phon_page = wizard.page_phonology()
     if phon_page is not None and phon_page.inventory() is not None:
         collapsed = collapse_phonology(
@@ -2759,7 +3090,7 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._move_done = False
         # DR-1: cached plan is the sole freshness gate for the dry-run flow.
         self._cached_plan = None
-        self.setTitle("Step 6 of 6: Finish / Move")
+        self.setTitle("Step 8 of 8: Finish / Move")
         self.setSubTitle(
             "Click 'Execute Move' to write all planned actions to the target project. "
             "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
@@ -2965,6 +3296,7 @@ class SelectionWizard(QtWidgets.QWizard):
         # does not silently mis-resolve any literal page index.
         # _PageScopeConflict is retained for back-compat but removed from the flow.
         self._page_project_ws = _PageProjectWS(stub, host_project)
+        self._page_custom_fields = _PageCustomFields()
         self._page_phonology = _PagePhonology()
         self._page_items = _PageItemPicker()
         self._page_skeleton = _PageSkeleton()
@@ -2974,12 +3306,13 @@ class SelectionWizard(QtWidgets.QWizard):
         self._page_preview = _PagePreview()
         self._page_finish = _PageFinish(report_sink, modify_allowed)
 
-        self.addPage(self._page_project_ws)   # index 0
-        self.addPage(self._page_phonology)     # index 1
-        self.addPage(self._page_items)         # index 2
-        self.addPage(self._page_skeleton)      # index 3
-        self.addPage(self._page_gram_deps)     # index 4
-        self.addPage(self._page_finish)        # index 5
+        self.addPage(self._page_project_ws)    # index 0
+        self.addPage(self._page_custom_fields) # index 1
+        self.addPage(self._page_phonology)     # index 2
+        self.addPage(self._page_items)         # index 3
+        self.addPage(self._page_skeleton)      # index 4
+        self.addPage(self._page_gram_deps)     # index 5
+        self.addPage(self._page_finish)        # index 6
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
@@ -2993,6 +3326,9 @@ class SelectionWizard(QtWidgets.QWizard):
     # `wizard.page(N)` silently. Each accessor returns the stored attribute.
     def page_project_ws(self):
         return self._page_project_ws
+
+    def page_custom_fields(self):
+        return self._page_custom_fields
 
     def page_phonology(self):
         return self._page_phonology

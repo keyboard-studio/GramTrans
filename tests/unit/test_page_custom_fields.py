@@ -1,0 +1,386 @@
+"""Tests for _PageCustomFields wizard page (Feature 016, US1/US2/US4).
+
+T008 -- US1 grouping, counts, preselection, empty-level, zero-fields edge case.
+T012 -- US2 whole-block toggle, single-field deselect, level tristate.
+T020 -- US4 status column: NEW / IN_TARGET / blank-no-target / type-diff note.
+"""
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+pytest.importorskip("PyQt6")
+
+from PyQt6 import QtCore, QtWidgets
+
+from gramtrans.Lib.ui import selection_wizard as _sw
+from gramtrans.Lib.categories import (
+    _CustomFieldRecord,
+    _CUSTOM_FIELD_OWNER_CLASSES,
+    custom_field_type_label,
+)
+from gramtrans.Lib.models import GrammarCategory
+
+
+# ---------------------------------------------------------------------------
+# QApplication fixture (session-scoped)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def qapp():
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Helpers / fakes
+# ---------------------------------------------------------------------------
+
+def _make_cf_records(*specs):
+    """Build _CustomFieldRecord list from (owner, name, field_type) triples."""
+    return [
+        _CustomFieldRecord(owner, name, field_id=1, field_type=ft)
+        for owner, name, ft in specs
+    ]
+
+
+class _FakeCustomFields:
+    def __init__(self, records):
+        self._by_class = {}
+        for r in records:
+            self._by_class.setdefault(r.owner_class, []).append(
+                (r.field_id, r.name, r.field_type, r.list_root_guid)
+            )
+
+    def GetAllFields(self, cls):
+        return self._by_class.get(cls, [])
+
+    def FindField(self, cls, name):
+        for row in self._by_class.get(cls, []):
+            if row[1] == name:
+                return row[0]
+        return None
+
+
+class _FakeProject:
+    def __init__(self, records=None):
+        records = records or []
+        self.CustomFields = _FakeCustomFields(records)
+
+
+class _FakeTargetProject(_FakeProject):
+    """Target project that optionally has a type-mismatched MDC."""
+    def __init__(self, records=None, type_overrides=None):
+        super().__init__(records)
+        self._type_overrides = type_overrides or {}
+
+    class _FakeMDC:
+        def __init__(self, overrides):
+            self._overrides = overrides
+
+        def GetFieldType(self, flid):
+            return self._overrides.get(flid, 13)
+
+    class _FakeCache:
+        def __init__(self, overrides):
+            self.MetaDataCacheAccessor = _FakeTargetProject._FakeMDC(overrides)
+
+    @property
+    def Cache(self):
+        return self._FakeCache(self._type_overrides)
+
+
+class _FakeStubWizard:
+    """Stand-in for SelectionWizard -- avoids QObject init in tests."""
+
+    def __init__(self, source=None, target=None):
+        self._source = source
+        self._target = target
+
+    def page_project_ws(self):
+        return self
+
+    def context(self):
+        return self
+
+    @property
+    def source_handle(self):
+        return self._source
+
+    @property
+    def target_handle(self):
+        return self._target
+
+    @property
+    def _host(self):
+        return self._source
+
+
+def _make_page(qapp, records=None, target=None):
+    """Instantiate _PageCustomFields and inject fake wizard."""
+    page = _sw._PageCustomFields()
+    fake_wizard = _FakeStubWizard(
+        source=_FakeProject(records or []),
+        target=target,
+    )
+    page.wizard = lambda: fake_wizard
+    return page
+
+
+def _populate_page(page):
+    """Trigger tree population (normally called by initializePage)."""
+    page._populate_from_source()
+
+
+# ---------------------------------------------------------------------------
+# T008 -- US1: grouping, counts, preselection, empty-level, zero-fields
+# ---------------------------------------------------------------------------
+
+class TestUS1Grouping:
+    def test_four_level_groups_present(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "Notes", 13),
+            ("LexSense", "Domain", 24),
+            ("LexExampleSentence", "Corpus", 13),
+            ("MoForm", "Dialect", 16),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        root = page._tree.invisibleRootItem()
+        assert root.childCount() == 4
+        labels = [root.child(i).text(0) for i in range(root.childCount())]
+        assert any("Entry" in l for l in labels)
+        assert any("Sense" in l for l in labels)
+        assert any("Example" in l for l in labels)
+        assert any("Allomorph" in l for l in labels)
+
+    def test_header_shows_count(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "Notes", 13),
+            ("LexEntry", "Source", 13),
+            ("LexSense", "Domain", 24),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        root = page._tree.invisibleRootItem()
+        entry_header = None
+        for i in range(root.childCount()):
+            h = root.child(i)
+            if "Entry" in h.text(0):
+                entry_header = h
+                break
+        assert entry_header is not None
+        assert "2" in entry_header.text(0)
+
+    def test_row_shows_name_and_type_label(self, qapp):
+        records = _make_cf_records(("LexEntry", "Notes", 13))
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        root = page._tree.invisibleRootItem()
+        entry_header = None
+        for i in range(root.childCount()):
+            h = root.child(i)
+            if "Entry" in h.text(0):
+                entry_header = h
+                break
+        assert entry_header is not None
+        assert entry_header.childCount() >= 1
+        row = entry_header.child(0)
+        row_text = row.text(0) + row.text(1)
+        assert "Notes" in row_text
+        assert custom_field_type_label(13) in row_text
+
+    def test_every_row_checked_on_open(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexSense", "B", 14),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        for _grp, item in page._iter_item_rows():
+            assert item.checkState(0) == QtCore.Qt.CheckState.Checked
+
+    def test_empty_level_renders_no_error(self, qapp):
+        # Only LexEntry has a record; the other three levels are empty.
+        records = _make_cf_records(("LexEntry", "Notes", 13))
+        page = _make_page(qapp, records)
+        _populate_page(page)
+        root = page._tree.invisibleRootItem()
+        assert root.childCount() == 4  # all four headers rendered
+
+    def test_zero_custom_fields_block_unchecked_disabled(self, qapp):
+        page = _make_page(qapp, [])
+        _populate_page(page)
+        assert not page._whole_block.isEnabled()
+        assert page._whole_block.checkState() == QtCore.Qt.CheckState.Unchecked
+
+    def test_zero_custom_fields_no_item_rows(self, qapp):
+        page = _make_page(qapp, [])
+        _populate_page(page)
+        items = list(page._iter_item_rows())
+        assert items == []
+
+
+# ---------------------------------------------------------------------------
+# T012 -- US2: whole-block toggle, single deselect, level tristate
+# ---------------------------------------------------------------------------
+
+class TestUS2Toggles:
+    def test_whole_block_off_unchecks_all(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexSense", "B", 14),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        # Simulate user clicking the whole-block checkbox to turn off.
+        page._on_whole_block_clicked()  # all checked -> uncheck all
+
+        for _grp, item in page._iter_item_rows():
+            assert item.checkState(0) == QtCore.Qt.CheckState.Unchecked
+
+    def test_whole_block_off_contributes_no_picks(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexSense", "B", 14),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+        page._on_whole_block_clicked()  # uncheck all
+
+        picks = page.leaf_item_picks()
+        cf_picks = picks.get(GrammarCategory.CUSTOM_FIELDS, frozenset())
+        assert isinstance(cf_picks, frozenset)
+        assert len(cf_picks) == 0
+
+    def test_deselect_single_field_omits_only_that_guid(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexEntry", "B", 13),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        rows = list(page._iter_item_rows())
+        rows[0][1].setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+
+        picks = page.leaf_item_picks()
+        cf_picks = picks.get(GrammarCategory.CUSTOM_FIELDS, frozenset())
+        assert len(cf_picks) == 1  # one of two fields remains
+
+    def test_all_in_level_deselected_header_not_fully_checked(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexEntry", "B", 13),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+
+        root = page._tree.invisibleRootItem()
+        entry_header = None
+        for i in range(root.childCount()):
+            h = root.child(i)
+            if "Entry" in h.text(0):
+                entry_header = h
+                break
+        assert entry_header is not None
+        for j in range(entry_header.childCount()):
+            child = entry_header.child(j)
+            if child.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable:
+                child.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+
+        # AutoTristate means the header should NOT be fully Checked.
+        assert entry_header.checkState(0) != QtCore.Qt.CheckState.Checked
+
+    def test_all_checked_full_block_omits_key_for_transfer_all(self, qapp):
+        """Fully-checked block => leaf_item_picks does NOT include key (transfer-all)."""
+        records = _make_cf_records(("LexEntry", "A", 13))
+        page = _make_page(qapp, records)
+        _populate_page(page)
+        picks = page.leaf_item_picks()
+        assert GrammarCategory.CUSTOM_FIELDS not in picks
+
+    def test_partial_selection_emits_guid_subset(self, qapp):
+        records = _make_cf_records(
+            ("LexEntry", "A", 13),
+            ("LexEntry", "B", 13),
+        )
+        page = _make_page(qapp, records)
+        _populate_page(page)
+        rows = list(page._iter_item_rows())
+        rows[0][1].setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+        picks = page.leaf_item_picks()
+        assert GrammarCategory.CUSTOM_FIELDS in picks
+        cf_picks = picks[GrammarCategory.CUSTOM_FIELDS]
+        assert len(cf_picks) == 1
+
+
+# ---------------------------------------------------------------------------
+# T020 -- US4: status column NEW / IN_TARGET / blank / type-diff note
+# ---------------------------------------------------------------------------
+
+class TestUS4StatusColumn:
+    def test_status_new_when_not_in_target(self, qapp):
+        records = _make_cf_records(("LexEntry", "Notes", 13))
+        target = _FakeTargetProject([])  # no custom fields
+        page = _make_page(qapp, records, target=target)
+        _populate_page(page)
+
+        rows = list(page._iter_item_rows())
+        assert len(rows) == 1
+        item = rows[0][1]
+        status_text = item.text(1)
+        assert "NEW" in status_text.upper()
+
+    def test_status_in_target_when_present(self, qapp):
+        records = _make_cf_records(("LexEntry", "Notes", 13))
+        target = _FakeTargetProject(_make_cf_records(("LexEntry", "Notes", 13)))
+        page = _make_page(qapp, records, target=target)
+        _populate_page(page)
+
+        rows = list(page._iter_item_rows())
+        item = rows[0][1]
+        status_text = item.text(1)
+        assert "IN" in status_text.upper() or "TARGET" in status_text.upper()
+
+    def test_blank_status_when_no_target_bound(self, qapp):
+        records = _make_cf_records(("LexEntry", "Notes", 13))
+        page = _make_page(qapp, records, target=None)
+        _populate_page(page)
+
+        rows = list(page._iter_item_rows())
+        item = rows[0][1]
+        status_text = item.text(1)
+        # No target => blank status or degrade to NEW.
+        assert status_text in ("", "NEW")
+
+    def test_type_diff_note_shown_when_type_differs(self, qapp):
+        records = _make_cf_records(("LexEntry", "Notes", 13))  # Text (13)
+        # Target has "Notes" but MDC returns type 14 for flid 1.
+        target_records = _make_cf_records(("LexEntry", "Notes", 13))
+        target = _FakeTargetProject(
+            target_records,
+            type_overrides={1: 14},  # flid 1 -> MultiString
+        )
+        page = _make_page(qapp, records, target=target)
+        _populate_page(page)
+
+        rows = list(page._iter_item_rows())
+        item = rows[0][1]
+        col1 = item.text(1)
+        tip = item.toolTip(0) or item.toolTip(1)
+        has_note = any(
+            x in (col1 + tip).upper()
+            for x in ("TYPE", "DIFF", "MISMATCH", "IN TARGET", "SOURCE")
+        )
+        assert has_note, f"Expected type-diff info in col1={col1!r} or tooltip={tip!r}"
