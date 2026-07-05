@@ -613,7 +613,7 @@ def _enumerate_custom_fields(project):
                     # Legacy 2-tuple path (existing fakes / older flexicon).
                     field_id, label = row[0], row[1]
                     field_type = 0
-                    list_root_guid = None
+                    list_root_guid = ""  # normalized from None; str default per _CustomFieldRecord
                 yield _CustomFieldRecord(
                     cls, label, field_id,
                     field_type=field_type,

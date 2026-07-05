@@ -226,6 +226,25 @@ def test_execute_action_is_a_noop() -> None:
     assert result is None
 
 
+def test_execute_action_value_fill_dispatch_skipped() -> None:
+    """G-1 coverage gap: US3 Acceptance-3 value-fill dispatch has no unit
+    coverage because custom_fields_execute_action is a documented no-op stub
+    (MVP T019 decision: value population is handled by transfer.execute
+    internals on matched LCM objects).
+
+    T026 validated the live persistence path end-to-end.  A focused mock-only
+    unit test for the dispatch path is SKIPPED here because any meaningful
+    assertion about value-write behaviour would require real LCM objects
+    (IFwMetaDataCacheManaged, a live Cache.MetaDataCacheAccessor, etc.) that
+    are unavailable in the unit-test environment.  Coverage is deferred until
+    the stub is promoted to a real implementation.
+    """
+    pytest.skip(
+        "G-1: value-fill dispatch requires live LCM objects; "
+        "T026 covers the live persistence path end-to-end."
+    )
+
+
 # ============================================================================
 # Registry sanity
 # ============================================================================

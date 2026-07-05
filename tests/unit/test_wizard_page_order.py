@@ -12,9 +12,23 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import importlib
+import importlib.util
+
 import pytest
 
-pytest.importorskip("PyQt6")
+# Skip at collection time if PyQt6 is genuinely absent OR already stubbed
+# (importlib.util.find_spec raises ValueError when PyQt6 is a MagicMock stub).
+# This mirrors the guard in test_page_custom_fields.py (b589d6c pattern) and
+# prevents pytest.importorskip from pre-loading real PyQt6 into sys.modules on
+# a combined run, which would make the setdefault stubs in test_ui_gating.py
+# and test_wizard_page_flow.py become no-ops (confirmed latent CI order-dep).
+try:
+    _pyqt6_spec = importlib.util.find_spec("PyQt6")
+except (ValueError, AttributeError):
+    _pyqt6_spec = None  # stub installed; treat as absent for real-Qt tests
+if _pyqt6_spec is None:
+    pytest.skip("PyQt6 not installed or stubbed", allow_module_level=True)
 
 from gramtrans.Lib.ui import selection_wizard as _sw
 

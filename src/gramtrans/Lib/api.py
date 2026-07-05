@@ -54,6 +54,21 @@ else:
 
 
 # ============================================================================
+# Custom-field schema constants (LCM / CellarPropertyType refs)
+# ============================================================================
+
+# CellarPropertyType values for list-backed reference fields.
+# ReferenceAtomic = 24 (LCM CellarPropertyType.ReferenceAtomic)
+# ReferenceCollection = 26 (LCM CellarPropertyType.ReferenceCollection)
+# See probe-results.md §"destinationClass / list-field ruling".
+_LIST_FIELD_TYPES: frozenset = frozenset((24, 26))
+
+# CmPossibility.ClassID in LCM — used as destinationClass for list-backed
+# reference fields in the 7-arg AddCustomField overload.
+# See probe-results.md §"Corrected API facts" and LCM class registry.
+_CM_POSSIBILITY_CLASS_ID: int = 7  # CmPossibility
+
+# ============================================================================
 # Stub + candidate types (contracts/module-ui.md)
 # ============================================================================
 
@@ -288,15 +303,18 @@ def _ensure_custom_fields(target_project_name: str,
         return created
 
     proj = FLExProject()
-    proj.OpenProject(projectName=target_project_name, writeEnabled=True)
+    try:
+        proj.OpenProject(projectName=target_project_name, writeEnabled=True)
+    except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
+        raise RuntimeError(
+            f"_ensure_custom_fields: could not open {target_project_name!r} "
+            f"for schema write: {exc!s}"
+        ) from exc
     try:
         mdc_managed = IFwMetaDataCacheManaged(proj.Cache.MetaDataCacheAccessor)
         cf_ops = proj.CustomFields
 
         def _do_creates():
-            # CellarPropertyType values for list-backed reference fields.
-            _LIST_FIELD_TYPES = frozenset((24, 26))  # ReferenceAtomic=24, ReferenceCollection=26
-            _CM_POSSIBILITY_CLASS_ID = 7  # CmPossibility.ClassID in LCM
             for act in create_actions:
                 # Idempotency: skip if already present (re-run safety).
                 existing = cf_ops.FindField(act.owner_class, act.field_name)
@@ -329,6 +347,14 @@ def _ensure_custom_fields(target_project_name: str,
         # NonUndoableUnitOfWorkHelper.Do equivalent via flexicon's UoW context.
         # Schema (MDC) writes are non-undoable by LCM design; flexicon exposes
         # this via the project's ActionHandler at CurrentDepth==0.
+        #
+        # Citation: probe-results.md §"Evidence" op-005 confirms CurrentDepth==0
+        # at snippet start (undoable open, before any UndoableOperation block).
+        # probe-results.md §"Required engine flow (Option B, PATH-CLOSE-REBIND)"
+        # step 2 states: "run the create-definition pre-pass at CurrentDepth==0,
+        # before any value-write UndoableOperation block."  The PATH-CLOSE-REBIND
+        # single-owner contract guarantees this: we close the Phase-1 handle
+        # before opening here, so no other UoW owner can be active.
         _do_creates()
     finally:
         proj.CloseProject()
