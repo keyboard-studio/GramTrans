@@ -179,30 +179,47 @@ class TestBuildEntryTypesInventory:
                         if g.category == GrammarCategory.VARIANT_TYPES)
         assert vt_group.rows[0].status == "in_target"
 
-    # US3 -- GOLD detection
-    def test_gold_item_shown_as_in_target(self):
-        """GOLD item (catalog_source_id set) shown as in_target when target bound.
+    # US3 -- GOLD detection via GUID-identity match (domain ruling: no catalog_source_id path)
+    def test_gold_item_guid_match_shown_as_in_target(self):
+        """GOLD detection relies solely on the target-GUID-identity match (domain ruling).
 
-        Per spec 021 FR-009 / clarification: GOLD is a cross-referencing device.
-        When a target IS bound, GOLD types link to the target's equivalent GOLD
-        by identity and are shown as in_target regardless of whether the target
-        also carries the same GUID (the engine will Skip(GOLD_INVIOLABLE) at plan
-        time; the UI shows the cross-reference so the user understands the link).
+        A source entry type whose GUID is present in the target is shown as in_target.
+        catalog_source_id alone is NOT used for GOLD detection per domain ruling:
+        the vestigial _is_gold_entry_type helper has been removed.
         """
         build, _, _ = _get_builder()
         gold_vt = FakeEntryType("gold-v1", "GOLD Type",
                                 catalog_source_id="FW-GOLD-001")
         src = _simple_source(variants=[gold_vt])
-        # Provide a target (even empty) so status computation runs.
-        tgt = _simple_target(variants=[])
+        # Target carries the same GUID -> in_target via GUID-identity match.
+        tgt = _simple_target(variants=[gold_vt])
         inv = build(src, target=tgt)
         vt_group = next(g for g in inv.groups
                         if g.category == GrammarCategory.VARIANT_TYPES)
         # GOLD type must still appear (not hidden)
         assert len(vt_group.rows) >= 1
         gold_row = next(r for r in vt_group.rows if r.guid == "gold-v1")
-        # GOLD is shown as in_target (it is linked to the target's GOLD by identity)
+        # GUID is in target -> in_target
         assert gold_row.status == "in_target"
+
+    def test_gold_item_guid_absent_from_target_is_new(self):
+        """GOLD item whose GUID is absent from the target shows as 'new'.
+
+        Without GUID-identity match, catalog_source_id is irrelevant (domain ruling).
+        """
+        build, _, _ = _get_builder()
+        gold_vt = FakeEntryType("gold-v1", "GOLD Type",
+                                catalog_source_id="FW-GOLD-001")
+        src = _simple_source(variants=[gold_vt])
+        # Target is empty (no matching GUID)
+        tgt = _simple_target(variants=[])
+        inv = build(src, target=tgt)
+        vt_group = next(g for g in inv.groups
+                        if g.category == GrammarCategory.VARIANT_TYPES)
+        assert len(vt_group.rows) >= 1
+        gold_row = next(r for r in vt_group.rows if r.guid == "gold-v1")
+        # No GUID match -> new
+        assert gold_row.status == "new"
 
     def test_non_gold_no_catalog_source_id_is_new(self):
         build, _, _ = _get_builder()
@@ -357,3 +374,123 @@ class TestEntryTypesMissingRefWarnings:
         }
         warnings = warn(inv, checked, target=None)
         assert len(warnings) == 2
+
+
+# ---------------------------------------------------------------------------
+# _gather_target_infl_feat_guids — IFsClosedFeature cast + TypeError guard
+# ---------------------------------------------------------------------------
+
+class TestGatherTargetInflFeatGuids:
+    """Unit tests for _gather_target_infl_feat_guids without live LCM.
+
+    Stubs IFsClosedFeature in SIL.LCModel so that:
+      - casting a "closed" fake returns a wrapper whose .ValuesOC yields fake
+        value objects with known .guid attributes;
+      - casting a "complex" fake raises TypeError (mirrors real IFsComplexFeature
+        behaviour).
+    """
+
+    def _import_gather(self):
+        from gramtrans.Lib.selection import _gather_target_infl_feat_guids
+        return _gather_target_infl_feat_guids
+
+    # ------------------------------------------------------------------
+    # Fakes
+    # ------------------------------------------------------------------
+
+    class _FakeSymFeatVal:
+        """Stand-in for IFsSymFeatVal: exposes .guid for _entry_types_guid fallback."""
+        def __init__(self, guid: str):
+            self.guid = guid
+
+    class _FakeClosedFeatDef:
+        """A feature def that should cast successfully to IFsClosedFeature."""
+        def __init__(self, value_guids):
+            self._value_guids = value_guids
+
+    class _FakeComplexFeatDef:
+        """A feature def that should cause TypeError on IFsClosedFeature cast."""
+        pass
+
+    class _FakeInflectionFeatures:
+        def __init__(self, feat_defs):
+            self._feat_defs = feat_defs
+
+        def FeatureGetAll(self):
+            return iter(self._feat_defs)
+
+    class _FakeTarget:
+        def __init__(self, feat_defs):
+            self.InflectionFeatures = \
+                TestGatherTargetInflFeatGuids._FakeInflectionFeatures(feat_defs)
+
+    def _install_stub(self, monkeypatch, closed_class, complex_class):
+        """Inject a fake IFsClosedFeature into SIL.LCModel via a replacement module.
+
+        Replaces sys.modules["SIL.LCModel"] with a fresh types.ModuleType that
+        carries only IFsClosedFeature; monkeypatch restores the original on teardown.
+        """
+        import sys
+        import types as _types
+
+        def _fake_cast(obj):
+            if isinstance(obj, closed_class):
+                vals = [
+                    TestGatherTargetInflFeatGuids._FakeSymFeatVal(g)
+                    for g in obj._value_guids
+                ]
+                wrapper = _types.SimpleNamespace(ValuesOC=vals)
+                return wrapper
+            raise TypeError(f"Cannot cast {type(obj)} to IFsClosedFeature")
+
+        stub_lcm = _types.ModuleType("SIL.LCModel")
+        stub_lcm.IFsClosedFeature = _fake_cast
+        # Preserve ICmObject so _entry_types_guid fallback path still works.
+        original_lcm = sys.modules.get("SIL.LCModel")
+        if original_lcm is not None:
+            stub_lcm.ICmObject = getattr(original_lcm, "ICmObject", None)
+        monkeypatch.setitem(sys.modules, "SIL.LCModel", stub_lcm)
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    def test_closed_feature_value_guids_collected(self, monkeypatch):
+        """Closed features contribute all their value GUIDs to the returned set."""
+        gather = self._import_gather()
+        self._install_stub(monkeypatch, self._FakeClosedFeatDef, self._FakeComplexFeatDef)
+
+        closed1 = self._FakeClosedFeatDef(["val-aaa", "val-bbb"])
+        closed2 = self._FakeClosedFeatDef(["val-ccc"])
+        target = self._FakeTarget([closed1, closed2])
+
+        result = gather(target)
+        assert result == frozenset({"val-aaa", "val-bbb", "val-ccc"})
+
+    def test_complex_feature_contributes_no_guids_no_exception(self, monkeypatch):
+        """IFsComplexFeature cast raises TypeError — skipped silently, zero guids."""
+        gather = self._import_gather()
+        self._install_stub(monkeypatch, self._FakeClosedFeatDef, self._FakeComplexFeatDef)
+
+        complex_def = self._FakeComplexFeatDef()
+        target = self._FakeTarget([complex_def])
+
+        result = gather(target)
+        assert result == frozenset()
+
+    def test_mixed_closed_and_complex_only_closed_guids_returned(self, monkeypatch):
+        """Mix of closed and complex: only closed-feature values appear in result."""
+        gather = self._import_gather()
+        self._install_stub(monkeypatch, self._FakeClosedFeatDef, self._FakeComplexFeatDef)
+
+        closed = self._FakeClosedFeatDef(["val-x", "val-y"])
+        complex_def = self._FakeComplexFeatDef()
+        target = self._FakeTarget([closed, complex_def])
+
+        result = gather(target)
+        assert result == frozenset({"val-x", "val-y"})
+
+    def test_none_target_returns_empty_frozenset(self):
+        """None target short-circuits before any cast attempt."""
+        gather = self._import_gather()
+        assert gather(None) == frozenset()

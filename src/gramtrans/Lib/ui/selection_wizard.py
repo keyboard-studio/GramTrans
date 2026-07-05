@@ -3596,7 +3596,7 @@ class _PagePreview(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 7 of 8: Preview")
+        self.setTitle("Preview (inactive)")
         self.setSubTitle(
             "Review the planned transfer before committing. "
             "Warnings (entries with missing references) are highlighted."

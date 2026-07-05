@@ -19,6 +19,7 @@ POS-Grouped Affix Inventory (specs/008-affix-pos-picker):
 """
 from __future__ import annotations
 
+import collections
 import logging as _logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
@@ -2846,17 +2847,19 @@ def _entry_types_target_sets(target, accessor_name: str) -> Set[str]:
     list_obj = getattr(lex_db, accessor_name, None)
     if list_obj is None:
         return guids
-    # Walk flat list via PossibilitiesOS + SubPossibilitiesOS
-    stack = list(getattr(list_obj, "PossibilitiesOS", []) or [])
-    while stack:
-        node = stack.pop(0)
+    # Walk flat list via PossibilitiesOS + SubPossibilitiesOS (deque for O(1) popleft)
+    queue: collections.deque = collections.deque(
+        getattr(list_obj, "PossibilitiesOS", []) or []
+    )
+    while queue:
+        node = queue.popleft()
         g = _entry_types_guid(node)
         if g:
             guids.add(g)
         subs = getattr(node, "SubPossibilitiesOS", None)
         if subs:
             for child in subs:
-                stack.append(child)
+                queue.append(child)
     return guids
 
 
@@ -2898,14 +2901,17 @@ def _walk_entry_type_nodes(list_obj) -> List[tuple]:
     out: List[tuple] = []
     if list_obj is None:
         return out
-    stack = [(node, 0) for node in (getattr(list_obj, "PossibilitiesOS", []) or [])]
-    while stack:
-        node, depth = stack.pop(0)
+    # Use deque for O(1) popleft (BFS order preserved)
+    queue: collections.deque = collections.deque(
+        (node, 0) for node in (getattr(list_obj, "PossibilitiesOS", []) or [])
+    )
+    while queue:
+        node, depth = queue.popleft()
         out.append((node, depth))
         subs = getattr(node, "SubPossibilitiesOS", None)
         if subs:
             for child in subs:
-                stack.append((child, depth + 1))
+                queue.append((child, depth + 1))
     return out
 
 
@@ -2927,11 +2933,6 @@ def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
       variant_infl_feat_deps: variant_type_guid -> frozenset[infl_feat_val_guid]
       (for FR-010 missing-ref derivation at Move gate).
     """
-    if __package__:
-        from .categories import _is_gold_entry_type  # noqa: PLC0415
-    else:
-        from categories import _is_gold_entry_type  # type: ignore  # noqa: PLC0415
-
     groups: List[EntryTypesCategoryGroup] = []
     infl_feat_deps: Dict[str, FrozenSet[str]] = {}
 
@@ -2953,14 +2954,11 @@ def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
             if not g:
                 continue
 
-            # Determine target status.
+            # Determine target status via GUID-identity match only (domain ruling:
+            # GOLD detection relies solely on the target-GUID-identity match; the
+            # _is_gold_entry_type / _KNOWN_GOLD_ENTRY_TYPE_GUIDS path is removed).
             if target is None:
                 status = None
-            elif _is_gold_entry_type(node):
-                # GOLD types are cross-referenced to the target's GOLD by identity.
-                # Show as in_target (the engine's plan_action will Skip(GOLD_INVIOLABLE)
-                # or match by identity -- spec 021 FR-009 clarification).
-                status = "in_target"
             elif g in tgt_guids:
                 status = "in_target"
             else:
@@ -3072,24 +3070,36 @@ def entry_types_missing_ref_warnings(
 def _gather_target_infl_feat_guids(target) -> FrozenSet[str]:
     """Return the frozenset of inflection-feature VALUE GUIDs in target.
 
-    Walks MsFeatureSystemOA (phonology features system) and any
-    InflectionFeatures operations that expose them.  Falls back to empty
-    frozenset on any failure (safe default -- raises a warning, never crashes).
+    Walks target.InflectionFeatures.FeatureGetAll() — the correct flexicon
+    accessor for IFsClosedFeature objects (verified against categories.py:501
+    `inflection_features_enumerate_source` and :529 `_target_iter` which both
+    call `.FeatureGetAll()`).  `.GetAll()` is the POS accessor and must NOT
+    be used here.
+
+    Falls back to empty frozenset on any failure (safe default -- raises a
+    warning, never crashes).
     """
     guids: Set[str] = set()
     if target is None:
         return frozenset()
-    # Primary path: target.InflectionFeatures.GetAll() (flexicon accessor)
+    # Primary path: target.InflectionFeatures.FeatureGetAll() (flexicon accessor)
     try:
-        for feat in target.InflectionFeatures.GetAll():
-            # Each feature has sub-values (IFsClosedValue -> IFsSymFeatVal)
-            vals = getattr(feat, "ValuesOC", None)
+        from SIL.LCModel import IFsClosedFeature  # noqa: PLC0415 — lazy, absent in unit tests
+        for feat in target.InflectionFeatures.FeatureGetAll():
+            # Each IFsFeatDefn must be cast to IFsClosedFeature to expose ValuesOC.
+            # IFsComplexFeature (and any other non-closed variant) raises TypeError
+            # on the cast — skip those silently; they have no value-level GUIDs.
+            try:
+                closed = IFsClosedFeature(feat)
+            except TypeError:
+                continue  # IFsComplexFeature or non-closed — no ValuesOC
+            vals = closed.ValuesOC
             if vals is None:
                 continue
             for v in vals:
                 g = _entry_types_guid(v)
                 if g:
                     guids.add(g)
-    except (AttributeError, TypeError, Exception):  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         pass
     return frozenset(guids)

@@ -99,26 +99,6 @@ def _is_gold(obj) -> bool:
         return False
 
 
-def _is_gold_entry_type(node) -> bool:
-    """GOLD detection for ILexEntryType / ILexEntryInflType (spec 021).
-
-    Isolated behind this single helper for easy reswap if `CatalogSourceId`
-    proves unreliable for entry types (a lex-verification probe is running
-    in parallel -- see plan.md GOLD-Detection Gate).
-
-    TODO (spec-021 GOLD-gate): CatalogSourceId may be None for GOLD-shipped
-    ILexEntryType / ILexEntryInflType even when the type was installed from
-    the FW catalog.  Until the probe confirms the attribute is reliable for
-    these types, this delegates to the generic `_is_gold` helper.
-    If the probe shows CatalogSourceId is unreliable, replace this body with
-    an identity-based detection using a pre-populated set of known GOLD GUIDs:
-        obj_guid = _guid_str_from(node)
-        return obj_guid in _KNOWN_GOLD_ENTRY_TYPE_GUIDS
-    The GOLD path uses Skip(GOLD_INVIOLABLE); a redefined-meaning source GOLD
-    type with a differing GUID falls through as a new user-defined type.
-    """
-    return _is_gold(node)
-
 
 def _guid_str_from(obj) -> str:
     """Extract a lower-cased GUID string from an LCM object.
