@@ -188,6 +188,12 @@ class TestPageProjectWS:
         ws_list.count.return_value = 3
         ws_list.item.side_effect = lambda i: [item0, item1, item2][i]
         page._ws_list = ws_list
+        # Pre-set _row_state=None so selected_ws_ids() falls through to the
+        # legacy _ws_list path without triggering Qt's uninitialized-QObject
+        # guard (raised when a QObject subclass instance has never had
+        # __init__ called and a missing attribute is looked up via Qt's
+        # __getattribute__ override).
+        page._row_state = None
 
         result = page.selected_ws_ids()
         assert result == ["en", "seh"]

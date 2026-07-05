@@ -3,37 +3,120 @@
 T008 -- US1 grouping, counts, preselection, empty-level, zero-fields edge case.
 T012 -- US2 whole-block toggle, single-field deselect, level tristate.
 T020 -- US4 status column: NEW / IN_TARGET / blank-no-target / type-diff note.
+
+Isolation note
+--------------
+Real PyQt6 imports are deferred to the ``qapp`` fixture (session scope) to
+avoid polluting ``sys.modules`` at collection time.  test_ui_gating.py and
+test_wizard_page_flow.py install MagicMock stubs via ``sys.modules.setdefault``
+which is a no-op if real PyQt6 is already loaded.  By deferring the import to
+fixture-execution time we ensure both test files see the right Qt bindings.
 """
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import os
+import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
-pytest.importorskip("PyQt6")
+# Skip the entire module at *collection* time if PyQt6 is genuinely absent.
+# importlib.util.find_spec raises ValueError when PyQt6 is a MagicMock stub
+# (stub.__spec__ is not set).  Guard against both absence and stubbing.
+try:
+    _pyqt6_spec = importlib.util.find_spec("PyQt6")
+except (ValueError, AttributeError):
+    _pyqt6_spec = None  # stub installed; treat as absent for real-Qt tests
+if _pyqt6_spec is None:
+    pytest.skip("PyQt6 not installed or stubbed", allow_module_level=True)
 
-from PyQt6 import QtCore, QtWidgets
-
-from gramtrans.Lib.ui import selection_wizard as _sw
-from gramtrans.Lib.categories import (
-    _CustomFieldRecord,
-    _CUSTOM_FIELD_OWNER_CLASSES,
-    custom_field_type_label,
-)
-from gramtrans.Lib.models import GrammarCategory
+# ---------------------------------------------------------------------------
+# Lazy module-level references -- populated by the qapp fixture below.
+# They are ``None`` at import time and filled in before any test runs.
+# All test helpers and test methods access them via the module's namespace,
+# which is populated by the time ``qapp`` has run (session-scoped, autouse).
+# ---------------------------------------------------------------------------
+QtCore = None          # noqa: N816  (filled by qapp fixture)
+QtWidgets = None       # noqa: N816
+_sw = None             # selection_wizard module
+_CustomFieldRecord = None
+_CUSTOM_FIELD_OWNER_CLASSES = None
+custom_field_type_label = None
+GrammarCategory = None
 
 
 # ---------------------------------------------------------------------------
-# QApplication fixture (session-scoped)
+# QApplication fixture (session-scoped, autouse so helpers can use globals)
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def qapp():
-    app = QtWidgets.QApplication.instance()
+    """Bootstrap real PyQt6 and inject lazy globals.
+
+    autouse=True ensures this fixture runs before any test in the module,
+    including tests whose parameter lists only name ``qapp`` by position.
+
+    If the ``PyQt6`` slot in ``sys.modules`` is a MagicMock stub (installed by
+    test_ui_gating.py or test_wizard_page_flow.py), the real widget tests
+    cannot run.  We skip in that case rather than fail with cryptic mock errors.
+    """
+    import sys
+    from unittest.mock import MagicMock
+
+    installed = sys.modules.get("PyQt6")
+    if installed is not None and isinstance(installed, MagicMock):
+        pytest.skip(
+            "PyQt6 is stubbed (MagicMock) in this session -- "
+            "run test_page_custom_fields.py in isolation for real-Qt tests"
+        )
+
+    global QtCore, QtWidgets, _sw
+    global _CustomFieldRecord, _CUSTOM_FIELD_OWNER_CLASSES
+    global custom_field_type_label, GrammarCategory
+
+    # Import real PyQt6 (deferred from module level).
+    from PyQt6 import QtCore as _QtCore, QtWidgets as _QtWidgets
+    QtCore = _QtCore
+    QtWidgets = _QtWidgets
+
+    # Import gramtrans modules (after PyQt6 is in sys.modules).
+    from gramtrans.Lib.ui import selection_wizard as _sw_mod
+    _sw = _sw_mod
+
+    # Guard: if selection_wizard was already imported in this session with a
+    # stub QWizardPage as base (e.g. test_wizard_page_flow.py patched
+    # QtWidgets.QWizardPage before us), _PageCustomFields cannot create real
+    # Qt widgets.  Detect this by inspecting the MRO for a real Qt class.
+    _cf_bases = getattr(_sw_mod._PageCustomFields, "__mro__", ())
+    _has_real_qt = any(
+        getattr(b, "staticMetaObject", None) is not None
+        for b in _cf_bases
+        if b is not object
+    )
+    if not _has_real_qt:
+        pytest.skip(
+            "selection_wizard was imported with stub QWizardPage -- "
+            "run test_page_custom_fields.py in isolation for real-Qt tests"
+        )
+
+    from gramtrans.Lib.categories import (
+        _CustomFieldRecord as _CFR,
+        _CUSTOM_FIELD_OWNER_CLASSES as _CFOC,
+        custom_field_type_label as _CFTL,
+    )
+    _CustomFieldRecord = _CFR
+    _CUSTOM_FIELD_OWNER_CLASSES = _CFOC
+    custom_field_type_label = _CFTL
+
+    from gramtrans.Lib.models import GrammarCategory as _GC
+    GrammarCategory = _GC
+
+    app = _QtWidgets.QApplication.instance()
     if app is None:
-        app = QtWidgets.QApplication([])
+        app = _QtWidgets.QApplication([])
     return app
 
 

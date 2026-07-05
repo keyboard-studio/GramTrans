@@ -74,6 +74,25 @@ sys.modules.setdefault("PyQt6.QtCore", _qtcore_stub)
 sys.modules.setdefault("PyQt6.QtWidgets", _qtwidgets_stub)
 
 # ---------------------------------------------------------------------------
+# Read back the ACTUALLY installed QtCore -- it may be the stub above or the
+# real PyQt6 if test_014_pane_display.py (or any other real-Qt test file) was
+# collected first and pre-loaded the real package.  All sentinel values used in
+# mock item construction below MUST come from this installed module so that
+# comparisons inside the product code resolve correctly.
+# ---------------------------------------------------------------------------
+_installed_qtcore = sys.modules["PyQt6.QtCore"]
+_REAL_CHECKED = _installed_qtcore.Qt.CheckState.Checked
+
+# Derive the actual UserRole from whatever is installed.  The stub sets it to
+# 0x0100; real PyQt6 also uses 256.  Either way, the role constants must match
+# what affix_tree_picker.py baked in at its import time.
+_installed_user_role = _installed_qtcore.Qt.ItemDataRole.UserRole
+try:
+    _installed_user_role = int(_installed_user_role)
+except (TypeError, ValueError):
+    _installed_user_role = _QT_USER_ROLE  # fall back to stub value
+
+# ---------------------------------------------------------------------------
 # Now safe to import the UI modules and the model types they depend on.
 # ---------------------------------------------------------------------------
 from gramtrans.Lib.models import GrammarCategory, WSKind, WSMapping, WSMappingEntry
@@ -90,8 +109,10 @@ AffixTreePicker = _atp_mod.AffixTreePicker
 MainWindow = _mw_mod.MainWindow
 
 # The GUID/KIND role constants baked into affix_tree_picker at import time.
-_GUID_ROLE = _QT_USER_ROLE + 1   # 257
-_KIND_ROLE = _QT_USER_ROLE + 2   # 258
+# Use _installed_user_role so they match the module's baked-in values regardless
+# of whether real or stub PyQt6 was loaded.
+_GUID_ROLE = _installed_user_role + 1   # 257 with either stub or real Qt
+_KIND_ROLE = _installed_user_role + 2   # 258
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +245,10 @@ def _make_affix_item(guid: str, checked: bool) -> MagicMock:
         return None
 
     item.data.side_effect = data
-    item.checkState.return_value = _QT_CHECKED if checked else 0
+    # Use _REAL_CHECKED (read from whichever Qt is installed) so that the
+    # product code's ``== QtCore.Qt.CheckState.Checked`` comparison resolves
+    # correctly whether we have the stub (integer 2) or real PyQt6 (Enum).
+    item.checkState.return_value = _REAL_CHECKED if checked else 0
     return item
 
 
@@ -241,7 +265,7 @@ def _make_slot_item(guid: str, affix_items: list, checked: bool) -> MagicMock:
         return None
 
     item.data.side_effect = data
-    item.checkState.return_value = _QT_CHECKED if checked else 0
+    item.checkState.return_value = _REAL_CHECKED if checked else 0
     return item
 
 
@@ -258,7 +282,7 @@ def _make_template_item(guid: str, slot_items: list, checked: bool) -> MagicMock
         return None
 
     item.data.side_effect = data
-    item.checkState.return_value = _QT_CHECKED if checked else 0
+    item.checkState.return_value = _REAL_CHECKED if checked else 0
     return item
 
 
@@ -349,6 +373,11 @@ class TestMainWindowCollectSelection:
         closure_cb = MagicMock()
         closure_cb.isChecked.return_value = True
         dlg._closure_cb = closure_cb
+        # Pre-set _scope_combos so that getattr() in _collect_selection finds it
+        # without triggering Qt's C++ uninitialized-object guard (raised when a
+        # QObject subclass instance has never had __init__ called and a missing
+        # attribute is accessed via Qt's __getattribute__ override).
+        dlg._scope_combos = {}
 
         sel = dlg._collect_selection()
 
@@ -366,6 +395,7 @@ class TestMainWindowCollectSelection:
         closure_cb = MagicMock()
         closure_cb.isChecked.return_value = False
         dlg._closure_cb = closure_cb
+        dlg._scope_combos = {}
 
         sel = dlg._collect_selection()
 
@@ -380,6 +410,7 @@ class TestMainWindowCollectSelection:
         closure_cb = MagicMock()
         closure_cb.isChecked.return_value = False
         dlg._closure_cb = closure_cb
+        dlg._scope_combos = {}
 
         sel = dlg._collect_selection()
 
