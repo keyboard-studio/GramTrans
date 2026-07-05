@@ -1,5 +1,58 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 016 — Custom Fields Wizard Tab (create-early, fill-later) CREW-APPROVED (2026-07-05)
+
+**Spec**: [specs/016-custom-fields-wizard-tab/](specs/016-custom-fields-wizard-tab/) — spec + plan
++ contract + tasks (26) + research.md + probe-results.md. LEX crew: 6 review cycles, APPROVED.
+**Commits (direct-to-main)**: `c0443f7` (fakes/research/tests) · `f7e17ec` (record+helpers) ·
+`2ec39ba` (tasks+probe docs) · `03171c0` (UI page US1/US2/US4) · `5193ffe` (handle-lifecycle memo) ·
+`18ccd01` (US3 engine T016-T019) · `34a8484` (T026 verify docs) · `b589d6c` (test-pollution fix) ·
+`81ed8a6` (list-type 7-arg fix) · `1f59da9` (QC P1/P2 remediation).
+**Tests**: full unit suite **911 passed / 7 skipped / 13 xfailed / 1 xpassed / 0 failed**.
+
+### What shipped
+- **Custom Fields wizard page** at index 1 (Project+WS → **Custom Fields** → Phonology → Affixes →
+  Skeleton → Gram deps → Finish; titles "of 7"), reached via `page_custom_fields()` accessor.
+  Grouped by owner level (Entry/Sense/Example/Allomorph), counts, type labels, all preselected,
+  whole-block tristate toggle + per-field trim, NEW/IN TARGET status column + type-diff note, NO
+  conflict-mode control (Layer-1 MERGE default).
+- **Engine**: `_CustomFieldRecord` carries `field_type` + `list_root_guid`; `custom_field_type_label`
+  + `classify_custom_field` (type-diff ⇒ IN_TARGET note, never `IDENTITY_COLLISION`, FR-008);
+  `custom_fields_plan_action` emits `CreateDefinitionAction` for NEW fields; `leaf_item_picks`
+  filter on `custom_fields_enumerate_source` wires per-field trim into the plan.
+- **US3 create-early/fill-later** via **PATH-CLOSE-REBIND** in `api.py._ensure_custom_fields` +
+  `execute_move`: close the Phase-1 target handle → open a fresh `undoable=True` handle → create
+  definitions at `CurrentDepth==0` (`AddCustomField` in `NonUndoableUnitOfWorkHelper.Do`) → close
+  (persist) → reopen Phase-1 + re-bind `RunContext`/`RunPlan` → value-fill. `transfer.execute`
+  internals unchanged. Fail-loud (flid==0 ⇒ RuntimeError) + idempotent (name+class match).
+
+### Key findings (live-MCP, in probe-results.md — GT-Test restored clean each time)
+- **T004 gate GO**: custom-field creation is blocked in Phase-1 mode but works + persists in
+  Phase-2/**undoable** at `CurrentDepth==0` — refuted the Phase-3b NO-GO.
+- **Single-owner required**: two write handles can co-open in-process, but a secondary handle's
+  schema write neither persists nor updates the primary's stale MDC ⇒ PATH-CLOSE-REBIND.
+- **T026 PASS**: create → close → Phase-1 reopen → SetValue → reopen persists **both** schema AND
+  value (no issue-#21 corruption).
+- **AddCustomField signature** (corrects the 006 contract): 4th arg is `destinationClass:Int32`
+  (0 for value types), NOT list_root_guid; list root is the **7th** arg. On
+  `IFwMetaDataCacheManaged` (cast from `cache.MetaDataCacheAccessor`). List types
+  (ReferenceAtomic=24/ReferenceCollection=26) use the 7-arg overload (destinationClass=CmPossibility=7
+  + fieldListRoot). Value types: 4-arg/0.
+
+### Non-blocking follow-ups (crew-flagged)
+1. **checkState int-vs-IntEnum latent sibling** in `selection_wizard.py` (`_PagePhonology`, predates
+   016) — standalone test-fragility cleanup.
+2. **G-1 value-fill dispatch is live-only coverage** — `test_execute_action_value_fill_dispatch_skipped`
+   is a documented skip; T026 is the live coverage holder. Consider a stub-level harness later.
+3. **List-field runtime path unproven on a list-bearing source** — the 7-arg path is implemented +
+   reasoned but not yet exercised against a real list-backed custom field (Ejagham corpus has none).
+
+### Next blocking task (unchanged)
+**T-Spike** in [specs/001-phase0-additive-transfer/tasks.md](specs/001-phase0-additive-transfer/tasks.md):
+the `transfer_verb_vertical()` → `Lib/preview.py` + `Lib/transfer.py` Preview/Move split before Layer 3.
+
+---
+
 ## ▶▶▶ Feature 010 — Phonology Selector (Model-B) COMPLETE (2026-07-02)
 
 **Branch**: `feature/010-phonology-selector` (off `main`)
