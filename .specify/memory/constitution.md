@@ -1,117 +1,32 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 4.0.0 → 5.1.0
-Bump rationale: MAJOR (5.0.0) — Principle II redefined again. v4.0.0's mandatory
-flavor-adapter contract (`flavors/base.py` + per-flavor adapters as the only
-allowed import point for LCM operations) is REMOVED. v5.0.0 says: every
-Phase 0/1/2 module file imports `flexicon` directly. The LibLCM-direct port
-is now a **separate fork project** (a sibling repo built on the same spec/plan
-artifacts), not a same-contract in-tree re-implementation. This redefinition
-codifies the actual shape on disk (the FLExTrans-style entry file plus a `Lib/`
-sibling directory of helpers) and the chosen flexicon-fork dependency model.
-
-MINOR (5.1.0) — Principle II updated: flexicon (dist pyflexicon) is now the
-runtime dependency in place of the MattGyverLee/flexicon fork. flexicon is a
-standalone independent project — NOT a fork of stock flexicon. The flexicon
-package name resolves via a deprecation shim (removal targeted flexicon v5.0.0);
-new code MUST use flexicon imports. pyproject.toml declares `pyflexicon>=4.1`.
-Last Amended date set to 2026-07-04.
-
-Additionally, Principle III (Preview-Before-Mutate) is preserved unchanged in
-spirit but gains an explicit, one-time validation-spike clause acknowledging
-that the Layer 1 + Layer 2 work in STATUS.md ran Move-mode writes against a
-live throwaway target before the Preview engine existed. All further Move
-work is gated on the Preview engine.
-
-Principles defined:
-  I.   FLEx Domain Fidelity (NON-NEGOTIABLE)
-  II.  FlexTools-Compatible Output, flexicon-Direct                    (REDEFINED)
-  III. Preview-Before-Mutate (NON-NEGOTIABLE)                          (clarified)
-  IV.  Phased Merge Discipline                                         (clarified)
-  V.   Referential Completeness
-
-Modified principles:
-  II. v4.0.0 "flexicon-Primary with LibLCM Backport (adapter pattern mandatory)"
-      → v5.0.0 "flexicon-Direct (no adapter pattern in this repo)"
-      → v5.1.0 "flexicon-Direct". Module code imports flexicon directly. There
-      is no `flavors/base.py`, no `flavors/flexicon_adapter.py`, no
-      `flavors/liblcm_adapter.py` in this tree. flexicon (dist pyflexicon) is
-      a standalone independent project — NOT a fork of stock flexicon. The
-      flexicon package name resolves via a deprecation shim (removal targeted
-      flexicon v5.0.0); new code MUST use flexicon imports. The LibLCM-direct
-      port lives in a separate sibling repository authored after all merge phases
-      ship, sharing only the spec artifacts (spec.md, data-model.md, contracts/)
-      — not source files.
-
-  III. Preview-Before-Mutate (NON-NEGOTIABLE) is unchanged in normative force.
-      Added: a one-time, recorded validation spike (STATUS.md Layer 1 + Layer 2)
-      is acknowledged as predating the Preview engine. All further Move-mode
-      work — Layer 3 included — MUST go through `Lib/preview.py` (plan-builder)
-      and `Lib/transfer.py` (plan-executor).
-
-  IV. Phase 3 redefined from "in-tree LibLCM port" to "LibLCM fork project".
-      Phase 3 is no longer part of this repo's tree.
-
-Kept from v4.0.0:
-  - The shipped artifact is a FlexTools-compatible module.
-  - The FLExToolsMCP is a non-normative author-side assistant, not a runtime
-    dependency.
-  - flexicon (pyflexicon) is the runtime flavor for Phase 0/1/2.
-  - flexlibs1 is NOT used.
-  - GOLD inviolability, GUID-first identity, dual-carrier residue.
-
-Removed framing:
-  - "flavor adapter pattern is mandatory from day one" (removed).
-  - "`flavors/base.py` defines the contract; `flavors/flexicon_adapter.py` is
-    implemented in full" (removed — no `flavors/` directory exists).
-  - "All `core/` and `categories/` code calls the adapter contract — never raw
-    flexicon imports directly" (reversed — modules import flexicon directly).
-
-Added framing:
-  - flexicon (dist pyflexicon) is a standalone independent project — NOT a fork
-    of stock flexicon. It natively provides the `WritingSystems` enumeration
-    fix and the `ApplySyncableProperties` method on `BaseOperations` + 8
-    Grammar Operations subclasses. The flexicon package name resolves via a
-    deprecation shim (removal targeted flexicon v5.0.0). pyproject.toml declares
-    `pyflexicon>=4.1`; the install path is documented in [CLAUDE.md](../../CLAUDE.md)
-    and the repo README. The disk directory is literally named `flexicon` and
-    MUST NOT be renamed.
-  - File layout follows the **FLExTrans module convention**: a flat entry
-    file (`src/gramtrans/gramtrans.py` with `docs = {...}` + `def MainFunction(
-    project, report, modifyAllowed)`) plus a sibling `Lib/` subdirectory of
-    helpers loaded via `site.addsitedir(r"Lib")`. No `flavors/`, no `ui/`,
-    `core/`, `categories/` subpackages — instead flat helpers under `Lib/`.
-
+Version change: 5.1.0 → 6.0.0
+Bump rationale: MAJOR — Principle IV mode vocabulary redefined. ConflictMode
+  {ADD_NEW, MERGE, OVERWRITE} → mode {ADD_NEW, LINK, UPDATE, OVERWRITE} with a
+  computed per-item disposition {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Adds the
+  non-destructive UPDATE write semantic and field-identity-based true-SKIP.
+  "MERGE" renamed to "LINK" (it never merged — it linked). Data migration: reader
+  shim aliases persisted "merge" → "link" for >=1 release; no value maps to UPDATE.
+Principles modified: IV (Phased Merge Discipline) — mode vocabulary + dispositions.
 Templates requiring updates:
-  ✅ .specify/memory/constitution.md (this file)
-  ⚠ .specify/templates/plan-template.md — Constitution Check should describe
-      the post-Phase-2 LibLCM fork as a sibling deliverable, not an in-tree
-      port.
-
-Downstream artifact updates required (in this project):
-  ⚠ specs/001-phase0-additive-transfer/plan.md — Summary, Technical Context,
-      Constitution Check Row II, Project Structure (FLExTrans layout).
-  ⚠ specs/001-phase0-additive-transfer/spec.md — FR-001 clarifies the entry
-      shape; Assumptions API-surface paragraph.
-  ⚠ specs/001-phase0-additive-transfer/data-model.md — drop the `Flavor` enum
-      LIBLCM forward-compat field on PlannedAction (Phase 3 is a separate
-      fork project; this tree only ever produces FLEXICON actions).
-  ⚠ specs/001-phase0-additive-transfer/contracts/category-transfer.md — drop
-      the flavor-adapter framing; categories call flexicon directly.
-  ⚠ specs/001-phase0-additive-transfer/tasks.md — drop T016 / T017 / T018
-      (flavor adapter scaffolding + stub); collapse leaf-category tasks
-      (T039–T048) into one inline `Lib/categories.py` task; keep dedicated
-      files only for affixes / templates / MSAs; add the Layer 1+2 refactor
-      spike task; add an FR-020 (target-locked) task.
-
-Deferred items: none new. The LibLCM-direct port is now a separate fork
-project, not a deferred in-tree task.
+  [WARN] models.py ConflictMode enum + _DEFAULT_CONFLICT_MODES + allowed_modes_for
+  [WARN] conflict.py write-semantic dispatch (add UPDATE policy; true-SKIP downgrade)
+  [WARN] protection.py apply_isprotected_layer2 (LINK is the safe downgrade target)
+  [WARN] specs referencing ConflictMode.MERGE (008/009/010/016/018/019/020/021)
+  [WARN] residue tag reader (merge= alias shim)
 
 ---
 
 Prior Sync Impact Reports
 -------------------------
+v4.0.0 → v5.1.0: MAJOR (5.0.0) — Principle II redefined. v4.0.0's mandatory
+  flavor-adapter contract removed; every Phase 0/1/2 module file imports flexicon
+  directly. LibLCM-direct port is a separate fork project. MINOR (5.1.0) — flexicon
+  (dist pyflexicon) designated as the runtime dependency (standalone independent
+  project, NOT a fork of stock flexicon). Principle III gained the one-time
+  validation-spike clause for Layer 1+2. Principle IV: Phase 3 redefined from
+  in-tree LibLCM port to LibLCM fork project. Last Amended 2026-07-04.
 v3.0.0 → v4.0.0: flexicon-primary with mandatory adapter pattern; LibLCM as
   in-tree backport target.
 v2.0.0 → v3.0.0: flexlibs1-preferred, LibLCM-fallback (reversed in v4.0.0).
@@ -203,7 +118,7 @@ Every transfer MUST support two execution modes, and Preview MUST be the default
   current session's selection state.
 
 Preview output MUST list, per item: source GUID, target match (by GUID then fingerprint),
-proposed action (Add / Overwrite / Skip / Merge), and the dependency closure that will be
+proposed action (Add / Link / Update / Overwrite / Skip / Ignore), and the dependency closure that will be
 pulled along. Move Mode MUST be undoable through FLEx's standard undo stack wherever LCM
 permits, and MUST tag newly created entries in Import Residue.
 
@@ -240,9 +155,56 @@ MUST NOT be partially implemented before the prior phase is complete and validat
   artifacts as the contract. No user-visible behavior changes; only the runtime flavor
   swaps. Phase 3 is NOT a task in this repo's tasks.md.
 
+**Mode vocabulary (category-level user intent):**
+
+The collision policy each category operates under is one of four modes:
+
+| Mode | Meaning |
+|---|---|
+| `ADD_NEW` | Always create a new copy; never match against existing target objects. |
+| `LINK` | If present by GUID, reference the existing target object and write nothing. Otherwise ADD. (Replaces the former `MERGE` naming — the old behavior never merged data; it linked.) |
+| `UPDATE` | Write divergent fields from source into the target; never blank a target field from an empty source (non-destructive, source-preferring). DEFAULT for MULTI_INSTANCE categories. |
+| `OVERWRITE` | Source wins on every field, including blanking a target field when the source field is empty. Explicit opt-in required; not a default. |
+
+A reader shim MUST alias the persisted value `"merge"` to `"link"` for at least one
+release so that saved selections written before v6.0.0 continue to load correctly.
+No existing selection maps to `UPDATE`; it is opt-in only for SINGLE_INSTANCE categories.
+
+**Per-item disposition (computed outcome at plan time):**
+
+At plan time each selected item receives a computed disposition:
+
+| Disposition | When |
+|---|---|
+| `IGNORE` | Item or category is unchecked — never enters the plan. |
+| `SKIP` | Selected and present in target, but all user-editable fields are already in sync. Report must distinguish SKIP from IGNORE. |
+| `UPDATE` | Selected, present, diverges from target, and category mode is UPDATE — selective non-destructive write. |
+| `OVERWRITE` | Selected, present, diverges from target, and category mode is OVERWRITE — wholesale write. |
+| `ADD` | Selected and not present in target (or category mode is ADD_NEW) — create. |
+
+SKIP is determined by field-identity comparison, not merely by GUID presence. On a
+re-run, the residue baseline (`load_prior_log`) enables a genuine "untouched since last
+transfer" test; on a first transfer only a 2-way identical/diverged comparison is
+available. Reports and UI copy MUST NOT claim more certainty than the available baseline
+supports — "identical now" on first transfer, "untouched since last run" on re-runs.
+
+**The three write semantics (for reference):**
+
+| Semantic | Rule |
+|---|---|
+| fill-gaps | Write source to target only where the target field is empty. (Existing, pre-v6.0.0.) |
+| update | Write source to target wherever source is non-empty; keep target where source is empty. (NEW in v6.0.0.) |
+| overwrite | Write every field; empty source blanks target. (Existing, pre-v6.0.0.) |
+
+`UPDATE` mode uses the update semantic, implementable as a default-resolution pass over
+the existing `MergeResolution` machinery: auto `TAKE_SOURCE` on a divergent non-empty
+field, auto `KEEP_TARGET` where the source value is empty.
+
 Rationale: Each phase is independently useful and shippable. Phasing prevents Phase 2's
 complexity from blocking Phase 0's value, and the LibLCM port is decoupled from feature
-work entirely by living in a sibling repo.
+work entirely by living in a sibling repo. The mode-vocabulary redefinition (v6.0.0)
+corrects three defects in the prior model: "MERGE" was a misnomer (it linked, never
+merged), there was no non-destructive update path, and SKIP was conflated with IGNORE.
 
 ### V. Referential Completeness
 
@@ -345,4 +307,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 5.1.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-04
+**Version**: 6.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-05
