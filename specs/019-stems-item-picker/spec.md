@@ -175,13 +175,25 @@ single consolidated confirmation.
   an entry is an **affix** only when `IsAffixType` is explicitly true; **all other entries —
   including those with a missing lexeme form or null morphtype — MUST default to the stem
   partition** (never dropped from both tabs, never a crash). Each entry MUST appear in exactly
-  one tab (no overlap, no double-listing).
+  one tab (no overlap, no double-listing). The stem partition MUST use **include-on-exception**:
+  if traversing `LexemeFormOA.MorphTypeRA.IsAffixType` raises `AttributeError` or `TypeError`,
+  the entry MUST be placed in the stem bucket. The affix filter's skip-on-exception pattern
+  (selection.py:656,658 `except (AttributeError, TypeError): continue`) MUST NOT be copied
+  here — the inversion is intentional and explicit.
 - **FR-003**: The user MUST be able to check/uncheck individual stem entries; the selection MUST
   record the picked stem GUIDs (the wizard's item-pick set), consistent with the affix picker.
 - **FR-004**: Picked stems MUST feed the same Model-A grammatical-dependency closure as affixes:
   the POS, inflection classes, stem names, inflection features, and exception features a stem
   depends on MUST be computed and preselected on the Skeleton / Grammatical-deps pages and
-  included in the plan.
+  included in the plan. Correct accessors: stem POS is `MoStemMsa.PartOfSpeechRA`; stem
+  exception/inflection features are `MoStemMsa.MsFeaturesOA`; inflection classes are reached
+  via `POS.InflectionClassesOC`. The stem dep walk MUST also read `InflectionClassRA` on
+  `IMoStemMsa` if-present (guarded None-check): a non-null value is a referential edge feeding
+  the FR-009 missing-reference aggregation, identical to other stem deps. (MCP-confirmed real
+  property, RA → `IMoInflClass`, requires cast; 0/2444 populated on Ejagham live data — no
+  behavior change confirmed. ADDITIVE TO `POS.InflectionClassesOC`, not a replacement.) Stem
+  names via
+  `IPartOfSpeech.StemNamesOC`; inflectable features via `POS.InflectableFeatsRC`.
 - **FR-005**: A picked stem's owned-child closure (senses, MSAs, allomorphs, examples,
   pronunciations, etymologies, entry-refs) MUST travel with the stem, using the shared LexEntry
   closure engine.
@@ -203,6 +215,16 @@ single consolidated confirmation.
   identity governs create-vs-skip (Constitution I).
 - **FR-012**: This phase MUST NOT present conflict-mode (ADD_NEW / MERGE / OVERWRITE) controls;
   the per-category Layer-1 default MUST be applied automatically.
+- **FR-013**: `SlotsRC` EXISTS on `IMoStemMsa` (MCP-confirmed; RC, requires cast) — OUT: NEVER
+  read in the stem dep walk. Rationale: empty on live data (0/2444 stem MSAs populated on
+  Ejagham Full GT-Test) AND architecturally affix-only (slot membership; a stem MSA is never
+  cast to `IMoInflAffMsa`). `InflectionClassRA` IS read (guarded None-check per FR-004). The
+  dependency collection walk for stems MUST use `MoStemMsa` exclusively. A stem MSA MUST NOT be
+  cast to `IMoInflAffMsa` and MUST NOT enter the affix
+  slot/template skeleton builder. The stem dependency walk is: `MoStemMsa.PartOfSpeechRA` →
+  POS → `POS.InflectionClassesOC`, `POS.StemNamesOC`, `POS.InflectableFeatsRC`; plus
+  `MoStemMsa.MsFeaturesOA` for exception/inflection features. Any MSA arm that is not a
+  `MoStemMsa` on a stem-partitioned entry MUST be skipped, not recast.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -211,7 +233,10 @@ single consolidated confirmation.
 - **Stem pick set**: the set of picked stem GUIDs recorded on the wizard selection, sibling to
   the affix pick set, feeding the shared Model-A closure.
 - **Derived grammatical dependency**: a POS / inflection class / stem name / inflection feature
-  / exception feature computed from picked stems and preselected downstream.
+  / exception feature computed from picked stems and preselected downstream. Accessors:
+  `MoStemMsa.PartOfSpeechRA` (POS), `POS.InflectionClassesOC` (inflection classes),
+  `IPartOfSpeech.StemNamesOC` (stem names), `POS.InflectableFeatsRC` (inflectable features),
+  `MoStemMsa.MsFeaturesOA` (exception/inflection features).
 - **Missing-reference warning**: a (kept-stem, stranded-dependency) pair produced when a needed
   dependency is deselected and absent from the target; aggregated for the shared Move gate.
 
