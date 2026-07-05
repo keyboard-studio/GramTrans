@@ -52,3 +52,7 @@ The next session's blocking task is **T-Spike** in
 refactor `gramtrans.py.transfer_verb_vertical()` into the `Lib/preview.py` +
 `Lib/transfer.py` Preview/Move split required by constitution v5.1.0 Principle III
 closing clause before Layer 3 begins.
+
+## Rules
+
+When working and referencing flexicon or liblcm, ALWAYS use FLExToolsMCP instead of using direct code inspection. This allows lookup and testing.

@@ -40,12 +40,12 @@ Project+WS  →  Phonology  →  Affixes  →  Skeleton  →  Grammatical deps  
 | 15 | Inflection Classes | `POS.InflectionClassesOC` | Grammatical deps | A (derived, preselected) | **CURRENT SLICE** |
 | 16 | Stem Names | `POS.StemNamesOC` | Grammatical deps | A (derived, preselected) | **CURRENT SLICE** |
 | 17 | Exception Features | `POS.ExceptionFeaturesOC` (IFsSymFeatVal refs) | Grammatical deps | A (derived, preselected) | **CURRENT SLICE** |
-| 18 | Variant Types | `LexDbOA.VariantEntryTypesOA` | Lexical-entry types | B | LATER (engine done) |
-| 19 | Complex Form Types | `LexDbOA.ComplexEntryTypesOA` | Lexical-entry types | B | LATER (engine done) |
-| 20 | Ad Hoc Rules | `MorphologicalDataOA.AdhocCoProhibitionsOS` | Rules | B | LATER |
-| 21 | Compound Rules | `MorphologicalDataOA.CompoundRulesOS` | Rules | B | LATER |
-| 22 | Custom Fields | metadata cache | Custom Fields | B (detect + report) | LATER (creation blocked at flexicon layer; detect-only) |
-| 23 | Stems (LexEntry, stem morphtype) | `LexDbOA.Entries` | Stems | A (item picker) | LATER (pane stubbed/disabled) |
+| 18 | Variant Types | `LexDbOA.VariantEntryTypesOA` | Lexical-entry types | B | SPEC 021 (engine done; UI page specced) |
+| 19 | Complex Form Types | `LexDbOA.ComplexEntryTypesOA` | Lexical-entry types | B | SPEC 021 (engine done; UI page specced) |
+| 20 | Ad Hoc Rules | `MorphologicalDataOA.AdhocCoProhibitionsOS` | Rules | B | SPEC 018 (engine STUBBED — spec covers engine + UI) |
+| 21 | Compound Rules | `MorphologicalDataOA.CompoundRulesOS` | Rules | B | SPEC 018 (engine STUBBED — spec covers engine + UI) |
+| 22 | Custom Fields | metadata cache | Custom Fields | B (detect + report) | SPEC 016 (in progress) |
+| 23 | Stems (LexEntry, stem morphtype) | `LexDbOA.Entries` | Stems | A (item picker) | SPEC 019 (un-stub disabled Stems tab on Item-picker page) |
 
 ## Undecided / to revisit
 
@@ -55,7 +55,8 @@ Project+WS  →  Phonology  →  Affixes  →  Skeleton  →  Grammatical deps  
 - **Conflict mode UI** (ADD_NEW / MERGE / OVERWRITE): deferred for all pages this phase;
   Layer-1 category defaults apply automatically and the target-status column
   (NEW / IN TARGET / SIMILAR) carries the informational weight. Real per-category conflict
-  UI lands in the phase that implements field-level merge.
+  UI lands in the phase that implements field-level merge — now **SPEC 020** (model/defaults
+  and field-merge machinery already exist; 020 surfaces + wires them).
 
 ## Cross-cutting (every selection page)
 
@@ -69,7 +70,8 @@ Project+WS  →  Phonology  →  Affixes  →  Skeleton  →  Grammatical deps  
 
 1. **Current slice** — preselect affixes + Skeleton page + Grammatical-deps page
    (spec `009-skeleton-deps-selectors`).
-2. Phonology page (Model-B block; engine from spec 005).
-3. Lexical-entry types + Rules + Custom Fields (Model-B blocks).
-4. Stems item picker (un-stub).
-5. Conflict-mode UI + field-level merge (its own phase).
+2. Phonology page (Model-B block; engine from spec 005) — **spec 010**.
+3. Lexical-entry types (**spec 021**, engine done) + Rules (**spec 018**, engine + UI) +
+   Custom Fields (**spec 016**, in progress) — Model-B blocks.
+4. Stems item picker (un-stub) — **spec 019**.
+5. Conflict-mode UI + field-level merge (its own phase) — **spec 020**.
