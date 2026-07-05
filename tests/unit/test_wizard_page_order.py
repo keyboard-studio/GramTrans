@@ -41,7 +41,8 @@ _ACCESSORS = [
     ("page_items",        "_page_items"),
     ("page_skeleton",     "_page_skeleton"),
     ("page_gram_deps",    "_page_gram_deps"),
-    ("page_rules",        "_page_rules"),
+    ("page_entry_types",  "_page_entry_types"),   # spec 021: idx 6
+    ("page_rules",        "_page_rules"),          # 018-rules-page: idx 7
     ("page_preview",      "_page_preview"),
     ("page_finish",       "_page_finish"),
 ]

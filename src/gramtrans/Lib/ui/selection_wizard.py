@@ -50,6 +50,7 @@ if __package__:
         SourceAffixInventory,
         affix_label_runs,
         build_deps_inventory,
+        build_entry_types_inventory,
         build_excluded_lossy_warnings,
         build_phonology_excluded_lossy,
         build_phonology_inventory,
@@ -57,8 +58,10 @@ if __package__:
         build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
+        collapse_entry_types,
         collapse_phonology,
         collapse_pos_grouped,
+        entry_types_missing_ref_warnings,
         mirror_check_state,
         phonology_uses_untraversed_rules,
     )
@@ -91,6 +94,7 @@ else:
         SourceAffixInventory,
         affix_label_runs,
         build_deps_inventory,
+        build_entry_types_inventory,
         build_excluded_lossy_warnings,
         build_phonology_excluded_lossy,
         build_phonology_inventory,
@@ -98,8 +102,10 @@ else:
         build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
+        collapse_entry_types,
         collapse_phonology,
         collapse_pos_grouped,
+        entry_types_missing_ref_warnings,
         mirror_check_state,
         phonology_uses_untraversed_rules,
     )
@@ -247,7 +253,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
 
-        self.setTitle("Step 1 of 7: Project + Writing Systems")
+        self.setTitle("Step 1 of 8: Project + Writing Systems")
         self.setSubTitle(
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
@@ -636,7 +642,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 7: Item Picker")
+        self.setTitle("Step 4 of 8: Item Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are not yet supported (coming in a later phase)."
@@ -1371,7 +1377,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 5 of 7: Morphology Skeleton")
+        self.setTitle("Step 5 of 8: Morphology Skeleton")
         self.setSubTitle(
             "Review the parts of speech, slots, and templates the picked affixes require. "
             "Pre-checked items are derived from your affix selection. "
@@ -1868,7 +1874,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 6 of 7: Grammatical Dependencies")
+        self.setTitle("Step 6 of 8: Grammatical Dependencies")
         self.setSubTitle(
             "Review the inflection features, classes, and stem names "
             "that the picked affixes' parts of speech require. All are preselected. "
@@ -2172,7 +2178,7 @@ class _PageCustomFields(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 7: Custom Fields")
+        self.setTitle("Step 2 of 8: Custom Fields")
         self.setSubTitle(
             "Review the source project's custom fields. All fields are preselected. "
             "Untick the block to skip custom fields, or deselect individual fields. "
@@ -2782,7 +2788,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 7: Phonology")
+        self.setTitle("Step 3 of 8: Phonology")
         self.setSubTitle(
             "Review the source's phonology. The whole block is preselected. "
             "Untick the block to skip phonology, untick a category to trim it, "
@@ -3208,6 +3214,376 @@ def _phonology_excluded_lossy_for(wizard) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Page 7 -- Lexical-Entry Types (spec 021, Model-B independent block)
+# ---------------------------------------------------------------------------
+
+# Data roles for _PageEntryTypes
+_ET_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 70  # source GUID (item rows)
+_ET_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 71  # "group" | "item"
+_ET_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 72  # GrammarCategory
+_ET_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 73  # "new" | "in_target" | ""
+
+# SC-008: module-level mode aliases used inside _PageEntryTypes (no ConflictMode refs).
+_ET_MODE_OVERWRITE = OVERWRITE
+_ET_MODE_NEW = NEW
+
+
+class _PageEntryTypes(QtWidgets.QWizardPage):
+    """Page 7: Lexical-Entry Types block (spec 021 -- the second Model-B selector).
+
+    A grouped tree of two entry-type categories (Variant Types, Complex Form Types),
+    each with a count on its header, ALL user-defined rows preselected.  The user may
+    toggle the whole block off, trim a whole category, or deselect individual types.
+    Trimmed categories emit a ``leaf_item_picks`` subset at collapse time (fully-
+    checked categories omit the key => transfer-all).
+
+    Hierarchy: sub-types (SubPossibilitiesOS children) appear as nested tree children
+    under their parent item.
+
+    GOLD types are shown as IN TARGET (cross-referencing device per spec 021 FR-009
+    clarification; the engine's plan_action will Skip(GOLD_INVIOLABLE) at Move time).
+
+    Deliberately renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode control
+    (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically when
+    the Preview page builds the Selection.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Step 7 of 8: Lexical-Entry Types")
+        self.setSubTitle(
+            "Review the source's lexical-entry types (variant types and complex form "
+            "types). The whole block is preselected. Untick the block to skip, untick "
+            "a category to trim it, or deselect individual types."
+        )
+        self._inventory: Optional[object] = None  # EntryTypesInventory
+        self._mirroring: bool = False
+        self._preview_service = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        self._whole_block = QtWidgets.QCheckBox(
+            "Transfer lexical-entry types block", self
+        )
+        self._whole_block.setTristate(True)
+        self._whole_block.clicked.connect(self._on_whole_block_clicked)
+        layout.addWidget(self._whole_block)
+
+        self._tree = QtWidgets.QTreeWidget(self)
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Item", "Target"])
+        self._tree.header().setStretchLastSection(True)
+        self._tree.setAlternatingRowColors(True)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
+
+    # ------------------------------------------------------------------
+    def initializePage(self) -> None:
+        """Build the inventory from the bound source+target; ALL preselected."""
+        if self._tree.receivers(self._tree.itemChanged) > 0:
+            self._tree.itemChanged.disconnect(self._on_item_changed)
+        self._tree.clear()
+        self._inventory = None
+
+        source = self._get_source()
+        if source is None:
+            empty = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No source project bound)", ""]
+            )
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self._refresh_whole_block()
+            return
+
+        target = self._get_target()
+        try:
+            inventory = build_entry_types_inventory(source, target=target)
+        except Exception:  # noqa: BLE001
+            inventory = None
+
+        if inventory is None:
+            self._refresh_whole_block()
+            return
+
+        self._inventory = inventory
+        attach_ws_font_delegate(
+            self._tree, [0], WsFontRegistry.from_project(source)
+        )
+        self._populate_tree(inventory)
+        self._tree.expandAll()
+        for col in range(2):
+            self._tree.resizeColumnToContents(col)
+        self._tree.itemChanged.connect(self._on_item_changed)
+        self._refresh_whole_block()
+
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service,
+            WsFontRegistry.from_project(source),
+            [],  # no candidates for entry types
+        )
+        self._pane.clear()
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+
+    def _populate_tree(self, inventory) -> None:
+        """One tristate group per category (count on header); item rows checked."""
+        from PyQt6 import QtGui  # noqa: F401
+        for group in inventory.groups:
+            header = QtWidgets.QTreeWidgetItem(
+                self._tree, [f"{group.label} ({group.count})", ""]
+            )
+            header.setData(0, _ET_KIND_ROLE, "group")
+            header.setData(0, _ET_CAT_ROLE, group.category)
+            header.setFlags(
+                header.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            header.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            bold = header.font(0)
+            bold.setBold(True)
+            header.setFont(0, bold)
+
+            if not group.rows:
+                none_item = QtWidgets.QTreeWidgetItem(header, ["(none)", ""])
+                none_item.setFlags(
+                    none_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled
+                )
+                continue
+
+            # Build tree hierarchy: maintain a stack of (depth, tree_item).
+            # Rows are in depth-first order from _walk_entry_type_nodes so a
+            # depth increase always means the row is a child of the preceding.
+            parent_stack = [(- 1, header)]  # sentinel (-1 depth, group header)
+            for row in group.rows:
+                # Find the appropriate parent: the nearest ancestor whose depth < row.depth
+                while len(parent_stack) > 1 and parent_stack[-1][0] >= row.depth:
+                    parent_stack.pop()
+                tree_parent = parent_stack[-1][1]
+
+                item = QtWidgets.QTreeWidgetItem(
+                    tree_parent,
+                    [row.label, _STATUS_LABELS.get(row.status or "", "")]
+                )
+                set_ws_runs(item, 0, row.runs)
+                item.setData(0, _ET_GUID_ROLE, row.guid)
+                item.setData(0, _ET_KIND_ROLE, "item")
+                item.setData(0, _ET_CAT_ROLE, row.category)
+                item.setData(0, _ET_STATUS_ROLE, row.status or "")
+                item.setFlags(
+                    item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                )
+                cs = (QtCore.Qt.CheckState.Checked if row.preselected
+                      else QtCore.Qt.CheckState.Unchecked)
+                item.setCheckState(0, cs)
+                parent_stack.append((row.depth, item))
+
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """Build PreviewRequest from selected entry-type row (display-only)."""
+        if current is None:
+            self._pane.clear()
+            return
+        kind = current.data(0, _ET_KIND_ROLE)
+        if kind == "group":
+            self._pane.clear()
+            return
+
+        source_guid = current.data(0, _ET_GUID_ROLE) or ""
+        category = current.data(0, _ET_CAT_ROLE)
+        status = current.data(0, _ET_STATUS_ROLE) or ""
+
+        if status == "in_target":
+            target_guid = source_guid
+            mode = _ET_MODE_OVERWRITE
+        else:
+            target_guid = ""
+            mode = _ET_MODE_NEW
+
+        cat_str = (category.value if category is not None
+                   else GrammarCategory.VARIANT_TYPES.value)
+        request = PreviewRequest(
+            category=cat_str,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
+
+    # -- whole-block toggle (mirrors _PagePhonology) ------------------
+    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
+        if not self._has_any_item():
+            self._refresh_whole_block()
+            return
+        want_checked = not self._all_items_checked()
+        self._set_all_items(want_checked)
+        self._refresh_whole_block()
+
+    def _set_all_items(self, checked: bool) -> None:
+        state = (QtCore.Qt.CheckState.Checked if checked
+                 else QtCore.Qt.CheckState.Unchecked)
+        self._mirroring = True
+        try:
+            for _g, item in self._iter_item_rows():
+                item.setCheckState(0, state)
+        finally:
+            self._mirroring = False
+
+    def _refresh_whole_block(self) -> None:
+        """Reflect the aggregate item state on the whole-block tristate box.
+
+        Empty block (no items) => unchecked + disabled (NOT vacuously checked).
+        """
+        self._mirroring = True
+        try:
+            if not self._has_any_item():
+                self._whole_block.setEnabled(False)
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+                return
+            self._whole_block.setEnabled(True)
+            checked = sum(
+                1 for _g, it in self._iter_item_rows()
+                if it.checkState(0) == QtCore.Qt.CheckState.Checked
+            )
+            total = sum(1 for _ in self._iter_item_rows())
+            if checked == 0:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            elif checked == total:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
+            else:
+                self._whole_block.setCheckState(
+                    QtCore.Qt.CheckState.PartiallyChecked
+                )
+        finally:
+            self._mirroring = False
+
+    def _on_item_changed(self, item, column) -> None:
+        if self._mirroring or column != 0:
+            return
+        self._refresh_whole_block()
+
+    # -- tree walking helpers ------------------------------------------
+    def _iter_item_rows(self):
+        """Yield (group_item, item) for every checkable entry-type item row.
+
+        Walks the full tree depth (groups -> items -> sub-items) so that
+        nested child types are included in the whole-block count.
+        """
+        root = self._tree.invisibleRootItem()
+
+        def _walk(parent, in_group_item):
+            for i in range(parent.childCount()):
+                child = parent.child(i)
+                kind = child.data(0, _ET_KIND_ROLE)
+                if kind == "group":
+                    # Recurse into group header's children
+                    _walk(child, False)
+                elif kind == "item":
+                    if in_group_item or True:  # always yield items
+                        yield (parent, child)
+                    # Also walk children of this item (sub-types)
+                    for j in range(child.childCount()):
+                        grandchild = child.child(j)
+                        if grandchild.data(0, _ET_KIND_ROLE) == "item":
+                            yield (child, grandchild)
+
+        for i in range(root.childCount()):
+            group = root.child(i)
+            if group.data(0, _ET_KIND_ROLE) != "group":
+                continue
+            for pair in _walk(group, False):
+                yield pair
+
+    def _has_any_item(self) -> bool:
+        for _ in self._iter_item_rows():
+            return True
+        return False
+
+    def _all_items_checked(self) -> bool:
+        any_item = False
+        for _g, item in self._iter_item_rows():
+            any_item = True
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                return False
+        return any_item
+
+    # -- state API -----------------------------------------------------
+    def collect_entry_type_picks(self) -> dict:
+        """Return {GrammarCategory: set[str checked guids]} for both categories."""
+        picks: dict = {}
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                continue
+            cat = item.data(0, _ET_CAT_ROLE)
+            guid = item.data(0, _ET_GUID_ROLE)
+            if cat is None or not guid:
+                continue
+            picks.setdefault(cat, set()).add(guid)
+        return picks
+
+    def whole_block_on(self) -> bool:
+        """True iff any category has >= 1 checked row."""
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                return True
+        return False
+
+    def deselected_needed_guids(self) -> frozenset:
+        """Preselected-but-unchecked guids (input to missing-ref warning)."""
+        out = set()
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                guid = item.data(0, _ET_GUID_ROLE)
+                if guid:
+                    out.add(guid)
+        return frozenset(out)
+
+    def inventory(self):
+        return self._inventory
+
+    # -- source/target accessors (mirror _PagePhonology pattern) ------
+    def _get_source(self):
+        wizard = self.wizard()
+        if wizard is None:
+            return None
+        return getattr(wizard, "_host", None)
+
+    def _get_target(self):
+        wizard = self.wizard()
+        if wizard is None:
+            return None
+        page0 = wizard.page_project_ws() if hasattr(wizard, "page_project_ws") else None
+        if page0 is None:
+            return None
+        ctx = page0.context() if hasattr(page0, "context") else None
+        if ctx is None:
+            return None
+        return getattr(ctx, "target_handle", None)
+
+
+def _entry_types_missing_ref_for(wizard) -> list:
+    """Entry-types inflection-feature missing-ref warnings for the current page state.
+
+    Shared by Finish (Move gate) so the count is aggregated into the single
+    consolidated dialog (FR-011). Returns a list of warning dicts; empty when
+    there is no entry-types page / inventory.
+    """
+    et_page = (wizard.page_entry_types()
+               if hasattr(wizard, "page_entry_types") else None)
+    if et_page is None or et_page.inventory() is None:
+        return []
+    inventory = et_page.inventory()
+    checked = et_page.collect_entry_type_picks()
+    target = et_page._get_target()
+    return entry_types_missing_ref_warnings(inventory, checked, target=target)
+
+
+# ---------------------------------------------------------------------------
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
@@ -3351,7 +3727,25 @@ def _compute_wizard_plan(wizard) -> tuple:
                 leaf_item_picks=merged_leaf,
             )
 
-    # Step 5c: rules block collapse-merge (018-rules-page T019).
+    # Step 5c: entry-types collapse-merge (spec 021, applied after phonology).
+    et_page = (wizard.page_entry_types()
+               if hasattr(wizard, "page_entry_types") else None)
+    if et_page is not None and et_page.inventory() is not None:
+        collapsed = collapse_entry_types(
+            et_page.inventory(), et_page.collect_entry_type_picks()
+        )
+        if collapsed["categories"]:
+            merged_categories = dict(selection.categories)
+            merged_categories.update(collapsed["categories"])
+            merged_leaf = dict(selection.leaf_item_picks)
+            merged_leaf.update(collapsed["leaf_item_picks"])
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                leaf_item_picks=merged_leaf,
+            )
+
+    # Step 5d: rules block collapse-merge (018-rules-page T019).
     # collect_rules_picks() returns:
     #   None         => key absent (transfer ALL, SC-004 untouched default)
     #   frozenset()  => whole block OFF, zero rules transferred (SC-005)
@@ -3415,7 +3809,7 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._move_done = False
         # DR-1: cached plan is the sole freshness gate for the dry-run flow.
         self._cached_plan = None
-        self.setTitle("Step 7 of 7: Finish / Move")
+        self.setTitle("Step 8 of 8: Finish / Move")
         self.setSubTitle(
             "Click 'Execute Move' to write all planned actions to the target project. "
             "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
@@ -3524,6 +3918,11 @@ class _PageFinish(QtWidgets.QWizardPage):
         # covers skeleton/deps AND phonology (FR-011 — no second dialog).
         el_count += len(_phonology_excluded_lossy_for(wizard))
 
+        # Extra entry-types missing-ref warnings (spec 021 T024 / FR-010/FR-011).
+        # Kept ILexEntryInflType whose infl-feat ref is absent from target; counted
+        # into the SAME consolidated dialog -- never a separate prompt.
+        el_count += len(_entry_types_missing_ref_for(wizard))
+
         # Consolidated single confirmation dialog (FR-011 / T017).
         if el_count > 0:
             answer = QtWidgets.QMessageBox.question(
@@ -3609,13 +4008,15 @@ class SelectionWizard(QtWidgets.QWizard):
         )
 
         # Create pages.
-        # Page order (spec 010 FR-001 / SC-007 — Phonology inserted at index 1):
+        # Page order (spec 021 FR-001 / SC-007 — Lexical-Entry Types at index 6):
         #   0 = Project + WS
-        #   1 = Phonology (Model-B independent block)
-        #   2 = Affixes (item picker)
-        #   3 = Skeleton
-        #   4 = Grammatical deps
-        #   5 = Finish / Move
+        #   1 = Custom Fields (Model-B)
+        #   2 = Phonology (Model-B independent block)
+        #   3 = Affixes (item picker)
+        #   4 = Skeleton
+        #   5 = Grammatical deps
+        #   6 = Lexical-Entry Types (Model-B independent block)
+        #   7 = Finish / Move
         # _PagePreview retained (not added) for back-compat via page_preview().
         # Cross-page lookups go through named accessors (P-1) so this insertion
         # does not silently mis-resolve any literal page index.
@@ -3626,6 +4027,7 @@ class SelectionWizard(QtWidgets.QWizard):
         self._page_items = _PageItemPicker()
         self._page_skeleton = _PageSkeleton()
         self._page_gram_deps = _PageGramDeps()
+        self._page_entry_types = _PageEntryTypes()   # spec 021 idx 6
         # _PageScopeConflict kept but NOT added to the wizard (conflict UI deferred FR-012).
         self._page_scope = _PageScopeConflict()
         # 018-rules-page: Rules page sits after Lexical-entry types (021, not yet added)
@@ -3640,8 +4042,9 @@ class SelectionWizard(QtWidgets.QWizard):
         self.addPage(self._page_items)         # index 3
         self.addPage(self._page_skeleton)      # index 4
         self.addPage(self._page_gram_deps)     # index 5
-        self.addPage(self._page_rules)         # index 6  (018-rules-page)
-        self.addPage(self._page_finish)        # index 7
+        self.addPage(self._page_entry_types)   # index 6  (spec 021 lexical-entry types)
+        self.addPage(self._page_rules)         # index 7  (018-rules-page)
+        self.addPage(self._page_finish)        # index 8
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
@@ -3670,6 +4073,9 @@ class SelectionWizard(QtWidgets.QWizard):
 
     def page_gram_deps(self):
         return self._page_gram_deps
+
+    def page_entry_types(self):
+        return self._page_entry_types
 
     def page_rules(self):
         """Named accessor for _PageRules (018-rules-page P-1 pattern)."""

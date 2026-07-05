@@ -148,3 +148,119 @@ class FakeContext:
     def __init__(self, source=None, target=None):
         self.source_handle = source
         self.target_handle = target
+
+
+# ---------------------------------------------------------------------------
+# Spec 021 -- Lexical-Entry Types fakes
+# ---------------------------------------------------------------------------
+
+class FakeInflFeatSpec:
+    """Stand-in for IFsFeatureSpecification: `.ValueRA` points to a value obj."""
+
+    def __init__(self, value_ref):
+        self.ValueRA = value_ref
+
+
+class FakeInflFeatStruc:
+    """Stand-in for IFsFeatStruc: `.FeatureSpecsOC` is a list of specs.
+
+    Used as `InflFeatsOA` on FakeInflEntryType.
+    """
+
+    def __init__(self, specs=()):
+        self.FeatureSpecsOC = list(specs)
+
+
+class _SimpleName:
+    """`.BestAnalysisAlternative.Text` mimic for entry-type label reads."""
+
+    def __init__(self, text):
+        self.BestAnalysisAlternative = type("_T", (), {"Text": text})()
+
+
+class FakeEntryType:
+    """Base ILexEntryType stand-in.
+
+    Attributes
+    ----------
+    guid : str
+        Normalized (lower-cased, no braces) GUID -- used by `_guid_str_from`
+        fake fallback.
+    Guid : str
+        Raw form (may be mixed-case, braced) to exercise normalization.
+    Name  : _SimpleName
+    CatalogSourceId : str or None
+        Non-empty => `_is_gold` returns True; None or "" => user-defined.
+    SubPossibilitiesOS : list
+        Child FakeEntryType objects (nesting mirrors real LCM hierarchy).
+    """
+
+    def __init__(self, guid: str, name: str = "", *,
+                 catalog_source_id=None, raw_guid=None, sub_possibilities=()):
+        self.guid = guid
+        self.Guid = raw_guid if raw_guid is not None else guid
+        self.Name = _SimpleName(name or guid[:8])
+        self.CatalogSourceId = catalog_source_id
+        self.SubPossibilitiesOS = list(sub_possibilities)
+
+
+class FakeInflEntryType(FakeEntryType):
+    """ILexEntryInflType stand-in: adds `.InflFeatsOA`.
+
+    When `infl_feats` is empty, `InflFeatsOA` is None (base variant type).
+    When `infl_feats` is a non-empty sequence of value objects, `InflFeatsOA`
+    is a `FakeInflFeatStruc` wrapping `[FakeInflFeatSpec(v) for v in infl_feats]`.
+    """
+
+    def __init__(self, guid: str, name: str = "", *,
+                 infl_feats=(), catalog_source_id=None, raw_guid=None,
+                 sub_possibilities=()):
+        super().__init__(guid, name, catalog_source_id=catalog_source_id,
+                         raw_guid=raw_guid, sub_possibilities=sub_possibilities)
+        if infl_feats:
+            self.InflFeatsOA = FakeInflFeatStruc(
+                [FakeInflFeatSpec(v) for v in infl_feats]
+            )
+        else:
+            self.InflFeatsOA = None
+
+
+class FakePossibilityList:
+    """Stand-in for CmPossibilityList: `.PossibilitiesOS` is a list.
+
+    `_walk_possibilities` accesses `.PossibilitiesOS` directly (not GetAll()).
+    """
+
+    def __init__(self, items=()):
+        self.PossibilitiesOS = list(items)
+
+
+class _FakeLangProject:
+    def __init__(self, lex_db):
+        self.LexDbOA = lex_db
+
+
+class _FakeCache:
+    def __init__(self, lex_db):
+        self.LangProject = _FakeLangProject(lex_db)
+
+
+class FakeLexDb:
+    """Stand-in for LexDbOA: owns the two entry-type possibility lists."""
+
+    def __init__(self, *, variant_entry_types=(), complex_entry_types=()):
+        self.VariantEntryTypesOA = FakePossibilityList(variant_entry_types)
+        self.ComplexEntryTypesOA = FakePossibilityList(complex_entry_types)
+
+
+class FakeLexDbSource:
+    """Source handle whose `.Cache.LangProject.LexDbOA` resolves to a FakeLexDb.
+
+    Also exposes `.VariantEntryTypesOA` and `.ComplexEntryTypesOA` as direct
+    shortcuts for tests that call the accessors without going through Cache.
+    """
+
+    def __init__(self, lex_db: FakeLexDb):
+        self.Cache = _FakeCache(lex_db)
+        self.VariantEntryTypesOA = lex_db.VariantEntryTypesOA
+        self.ComplexEntryTypesOA = lex_db.ComplexEntryTypesOA

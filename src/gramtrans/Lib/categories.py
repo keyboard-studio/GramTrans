@@ -99,6 +99,27 @@ def _is_gold(obj) -> bool:
         return False
 
 
+def _is_gold_entry_type(node) -> bool:
+    """GOLD detection for ILexEntryType / ILexEntryInflType (spec 021).
+
+    Isolated behind this single helper for easy reswap if `CatalogSourceId`
+    proves unreliable for entry types (a lex-verification probe is running
+    in parallel -- see plan.md GOLD-Detection Gate).
+
+    TODO (spec-021 GOLD-gate): CatalogSourceId may be None for GOLD-shipped
+    ILexEntryType / ILexEntryInflType even when the type was installed from
+    the FW catalog.  Until the probe confirms the attribute is reliable for
+    these types, this delegates to the generic `_is_gold` helper.
+    If the probe shows CatalogSourceId is unreliable, replace this body with
+    an identity-based detection using a pre-populated set of known GOLD GUIDs:
+        obj_guid = _guid_str_from(node)
+        return obj_guid in _KNOWN_GOLD_ENTRY_TYPE_GUIDS
+    The GOLD path uses Skip(GOLD_INVIOLABLE); a redefined-meaning source GOLD
+    type with a differing GUID falls through as a new user-defined type.
+    """
+    return _is_gold(node)
+
+
 def _guid_str_from(obj) -> str:
     """Extract a lower-cased GUID string from an LCM object.
 
@@ -1426,9 +1447,22 @@ def _walk_semantic_domain_list(source):
 # ----- variant_types (Phase 3b memo step 12; FR-327) -----------------------
 
 def variant_types_enumerate_source(context, selection):
-    """Recursive walk of LangProject.LexDbOA.VariantEntryTypesOA."""
-    return _walk_possibilities_via_lexdb(context.source_handle,
-                                          "VariantEntryTypesOA")
+    """Recursive walk of LangProject.LexDbOA.VariantEntryTypesOA.
+
+    Spec 021 per-item trim: when `selection` carries a
+    `leaf_item_picks[VARIANT_TYPES]` frozenset, the returned list is
+    filtered to only those source objects whose GUID is in the subset.
+    A None subset (key absent) => transfer ALL (unchanged behavior for
+    every pre-spec-021 caller). GUIDs on BOTH sides are normalized via
+    `_guid_str_from` (spec 010 GUID-normalization invariant).
+    """
+    records = _walk_possibilities_via_lexdb(context.source_handle,
+                                            "VariantEntryTypesOA")
+    if selection is not None:
+        picks = selection.leaf_picks_for(GrammarCategory.VARIANT_TYPES)
+        if picks is not None:
+            records = [r for r in records if _guid_str_from(r) in picks]
+    return records
 
 
 def variant_types_dependencies(piece):
@@ -1570,9 +1604,22 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
 # ----- complex_form_types (Phase 3b memo step 13) --------------------------
 
 def complex_form_types_enumerate_source(context, selection):
-    """Recursive walk of LangProject.LexDbOA.ComplexEntryTypesOA."""
-    return _walk_possibilities_via_lexdb(context.source_handle,
-                                          "ComplexEntryTypesOA")
+    """Recursive walk of LangProject.LexDbOA.ComplexEntryTypesOA.
+
+    Spec 021 per-item trim: when `selection` carries a
+    `leaf_item_picks[COMPLEX_FORM_TYPES]` frozenset, the returned list is
+    filtered to only those source objects whose GUID is in the subset.
+    A None subset (key absent) => transfer ALL (unchanged behavior for
+    every pre-spec-021 caller). GUIDs on BOTH sides are normalized via
+    `_guid_str_from` (spec 010 GUID-normalization invariant).
+    """
+    records = _walk_possibilities_via_lexdb(context.source_handle,
+                                            "ComplexEntryTypesOA")
+    if selection is not None:
+        picks = selection.leaf_picks_for(GrammarCategory.COMPLEX_FORM_TYPES)
+        if picks is not None:
+            records = [r for r in records if _guid_str_from(r) in picks]
+    return records
 
 
 def complex_form_types_dependencies(piece):

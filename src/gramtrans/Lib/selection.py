@@ -2757,3 +2757,339 @@ def build_phonology_excluded_lossy(
                 _emit(_GC.PHONEMES, ph_guid, _GC.PHONOLOGICAL_FEATURES, feat_guid)
 
     return warnings
+
+
+# ============================================================================
+# Spec 021 -- Lexical-Entry Types inventory builder
+# ============================================================================
+
+@dataclass(frozen=True)
+class EntryTypesRow:
+    """One selectable entry-type item (may be user-defined or GOLD).
+
+    `depth` encodes the nesting level within the possibility hierarchy:
+    0 = top-level entry type, 1 = child, 2 = grandchild, etc.
+    """
+    guid: str
+    label: str
+    category: "GrammarCategory"
+    preselected: bool = True
+    status: Optional[str] = None     # "new" | "in_target" | "similar" | None
+    runs: Tuple[LabelRun, ...] = ()
+    depth: int = 0                   # nesting depth in possibility hierarchy
+
+
+@dataclass(frozen=True)
+class EntryTypesCategoryGroup:
+    """One grouped category (Variant Types or Complex Form Types)."""
+    category: "GrammarCategory"
+    label: str
+    rows: Tuple[EntryTypesRow, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return len(self.rows)
+
+
+@dataclass(frozen=True)
+class EntryTypesInventory:
+    """Result of build_entry_types_inventory.
+
+    `variant_infl_feat_deps` maps each kept ILexEntryInflType GUID to the
+    frozenset of inflection-feature VALUE GUIDs it references via InflFeatsOA
+    -> FeatureSpecsOC -> ValueRA (FR-327 chain).  Used by
+    `entry_types_missing_ref_warnings` to compute the Move-gate aggregated
+    warning count.
+    """
+    groups: Tuple[EntryTypesCategoryGroup, ...] = ()
+    # variant_type_guid -> frozenset[infl_feat_val_guid]
+    variant_infl_feat_deps: Dict[str, FrozenSet[str]] = field(default_factory=dict)
+
+    def group_for(self, category) -> Optional[EntryTypesCategoryGroup]:
+        for g in self.groups:
+            if g.category == category:
+                return g
+        return None
+
+
+def _entry_types_guid(obj) -> str:
+    """Extract a normalized GUID from an entry-type LCM object (fake-safe)."""
+    try:
+        from SIL.LCModel import ICmObject  # noqa: PLC0415
+        return str(ICmObject(obj).Guid).lower()
+    except Exception:
+        return str(getattr(obj, "guid", "")).lower()
+
+
+def _et_label(obj) -> str:
+    """Extract the best-analysis-alternative label from an entry-type object."""
+    try:
+        return obj.Name.BestAnalysisAlternative.Text or ""
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _entry_types_target_sets(target, accessor_name: str) -> Set[str]:
+    """Return the set of normalized GUIDs present in the target's entry-type list.
+
+    Mirrors `_phon_target_sets` (simplified: no label-SIMILAR for entry types in
+    this phase; only GUID-based IN TARGET detection).  Returns empty set when
+    target is None or the accessor is unavailable.
+    """
+    guids: Set[str] = set()
+    if target is None:
+        return guids
+    try:
+        lex_db = target.Cache.LangProject.LexDbOA
+    except Exception:
+        return guids
+    list_obj = getattr(lex_db, accessor_name, None)
+    if list_obj is None:
+        return guids
+    # Walk flat list via PossibilitiesOS + SubPossibilitiesOS
+    stack = list(getattr(list_obj, "PossibilitiesOS", []) or [])
+    while stack:
+        node = stack.pop(0)
+        g = _entry_types_guid(node)
+        if g:
+            guids.add(g)
+        subs = getattr(node, "SubPossibilitiesOS", None)
+        if subs:
+            for child in subs:
+                stack.append(child)
+    return guids
+
+
+def _collect_infl_feat_deps(node) -> FrozenSet[str]:
+    """Return the frozenset of IFsSymFeatVal GUIDs referenced by InflFeatsOA.
+
+    Implements the FR-327 dependency chain:
+      InflFeatsOA -> FeatureSpecsOC[] -> ValueRA -> _entry_types_guid(val)
+
+    Returns an empty frozenset for base ILexEntryType (no InflFeatsOA) or when
+    the structure is not present / has no specs.
+    """
+    struct = getattr(node, "InflFeatsOA", None)
+    if struct is None:
+        return frozenset()
+    specs = getattr(struct, "FeatureSpecsOC", None)
+    if not specs:
+        return frozenset()
+    val_guids: Set[str] = set()
+    for spec in specs:
+        val = getattr(spec, "ValueRA", None)
+        if val is None:
+            continue
+        try:
+            g = _entry_types_guid(val)
+        except Exception:
+            continue
+        if g:
+            val_guids.add(g)
+    return frozenset(val_guids)
+
+
+def _walk_entry_type_nodes(list_obj) -> List[tuple]:
+    """Flat walk of a CmPossibilityList; yield (node, depth) pairs.
+
+    Depth 0 = top-level, 1 = child, etc.  Mirrors `_walk_possibilities` in
+    categories.py but returns (node, depth) for tree rendering.
+    """
+    out: List[tuple] = []
+    if list_obj is None:
+        return out
+    stack = [(node, 0) for node in (getattr(list_obj, "PossibilitiesOS", []) or [])]
+    while stack:
+        node, depth = stack.pop(0)
+        out.append((node, depth))
+        subs = getattr(node, "SubPossibilitiesOS", None)
+        if subs:
+            for child in subs:
+                stack.append((child, depth + 1))
+    return out
+
+
+_ET_CATEGORY_ACCESSORS = [
+    (GrammarCategory.VARIANT_TYPES, "VariantEntryTypesOA", "Variant Types"),
+    (GrammarCategory.COMPLEX_FORM_TYPES, "ComplexEntryTypesOA", "Complex Form Types"),
+]
+
+
+def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
+    """Enumerate the two entry-type categories + inflection-feat dep maps.
+
+    Pure/read-only. All user-defined items preselected. Target-status is by-GUID
+    (in_target) or None when no target bound. GOLD types (catalog_source_id set)
+    are shown as in_target -- they are cross-referencing devices that link to the
+    target's GOLD by identity (spec 021 clarification / FR-009).
+
+    Reference maps:
+      variant_infl_feat_deps: variant_type_guid -> frozenset[infl_feat_val_guid]
+      (for FR-010 missing-ref derivation at Move gate).
+    """
+    if __package__:
+        from .categories import _is_gold_entry_type  # noqa: PLC0415
+    else:
+        from categories import _is_gold_entry_type  # type: ignore  # noqa: PLC0415
+
+    groups: List[EntryTypesCategoryGroup] = []
+    infl_feat_deps: Dict[str, FrozenSet[str]] = {}
+
+    for category, accessor, group_label in _ET_CATEGORY_ACCESSORS:
+        # Gather target GUID set for status comparison.
+        tgt_guids = _entry_types_target_sets(target, accessor)
+
+        # Enumerate source nodes.
+        try:
+            lex_db = source.Cache.LangProject.LexDbOA
+        except Exception:
+            lex_db = None
+        list_obj = getattr(lex_db, accessor, None) if lex_db is not None else None
+        nodes = _walk_entry_type_nodes(list_obj)
+
+        rows: List[EntryTypesRow] = []
+        for node, depth in nodes:
+            g = _entry_types_guid(node)
+            if not g:
+                continue
+
+            # Determine target status.
+            if target is None:
+                status = None
+            elif _is_gold_entry_type(node):
+                # GOLD types are cross-referenced to the target's GOLD by identity.
+                # Show as in_target (the engine's plan_action will Skip(GOLD_INVIOLABLE)
+                # or match by identity -- spec 021 FR-009 clarification).
+                status = "in_target"
+            elif g in tgt_guids:
+                status = "in_target"
+            else:
+                status = "new"
+
+            label = _et_label(node)
+            run: LabelRun = (label or g[:8], WsRole.ANALYSIS)
+            rows.append(EntryTypesRow(
+                guid=g,
+                label=label or g[:8],
+                category=category,
+                preselected=True,
+                status=status,
+                runs=(run,),
+                depth=depth,
+            ))
+
+            # Collect infl-feat deps for variant types.
+            if category == GrammarCategory.VARIANT_TYPES:
+                deps = _collect_infl_feat_deps(node)
+                if deps:
+                    infl_feat_deps[g] = deps
+
+        groups.append(EntryTypesCategoryGroup(
+            category=category,
+            label=group_label,
+            rows=tuple(rows),
+        ))
+
+    return EntryTypesInventory(
+        groups=tuple(groups),
+        variant_infl_feat_deps=infl_feat_deps,
+    )
+
+
+def collapse_entry_types(inventory: EntryTypesInventory,
+                         checked_by_category: Dict[object, Set[str]]) -> dict:
+    """Fold the page's checked GUIDs into Selection fragments.
+
+    Returns ``{"categories": {...}, "leaf_item_picks": {...}}``:
+      - categories[cat] = True for each category with >= 1 checked row.
+      - leaf_item_picks[cat] = frozenset(checked) ONLY when the category is
+        trimmed (checked is a proper subset of its rows); omitted when all
+        rows are checked (=> transfer-all) or none are.
+    Mirrors collapse_phonology.
+    """
+    categories: Dict[object, bool] = {}
+    leaf_item_picks: Dict[object, FrozenSet[str]] = {}
+    for group in inventory.groups:
+        checked = {g for g in checked_by_category.get(group.category, set())}
+        all_guids = {r.guid for r in group.rows}
+        checked &= all_guids  # ignore stray guids
+        if not checked:
+            continue
+        categories[group.category] = True
+        if checked != all_guids:  # trimmed -> record the subset
+            leaf_item_picks[group.category] = frozenset(checked)
+    return {"categories": categories, "leaf_item_picks": leaf_item_picks}
+
+
+def entry_types_missing_ref_warnings(
+    inventory: EntryTypesInventory,
+    checked_by_category: Dict[object, Set[str]],
+    target=None,
+    target_infl_feat_guids: Optional[FrozenSet[str]] = None,
+) -> List[dict]:
+    """Entry-centric missing-reference warnings for inflection-feat deps (FR-010).
+
+    For each kept ILexEntryInflType in checked VARIANT_TYPES whose InflFeatsOA
+    references a value that is absent from the target, emit one warning dict.
+    Aggregated into the shared Move-gate ``el_count`` (FR-011).
+
+    Parameters
+    ----------
+    inventory : EntryTypesInventory
+        Built by ``build_entry_types_inventory``.
+    checked_by_category : dict
+        {GrammarCategory -> set[str guid]} from ``_PageEntryTypes.collect_entry_type_picks()``.
+    target : optional project handle
+        Used to check whether the referenced inflection-feature value is already
+        present in the target (in which case no warning is emitted).
+    target_infl_feat_guids : optional frozenset[str]
+        Pre-computed set of inflection-feature value GUIDs present in the target.
+        Overrides target-based lookup (used in unit tests).  When both are None,
+        treats the target as lacking all references (safe default per spec assumption).
+    """
+    # Gather target infl-feat GUID set (lazy lookup).
+    if target_infl_feat_guids is None:
+        target_infl_feat_guids = _gather_target_infl_feat_guids(target)
+
+    kept_variant_guids = set(
+        checked_by_category.get(GrammarCategory.VARIANT_TYPES, set())
+    )
+    warnings: List[dict] = []
+    for vt_guid, val_guids in inventory.variant_infl_feat_deps.items():
+        if vt_guid not in kept_variant_guids:
+            continue
+        for val_guid in val_guids:
+            if val_guid not in target_infl_feat_guids:
+                warnings.append({
+                    "kept_type_guid": vt_guid,
+                    "missing_val_guid": val_guid,
+                    "category": GrammarCategory.VARIANT_TYPES,
+                })
+                break  # one warning per kept type (entry-centric)
+    return warnings
+
+
+def _gather_target_infl_feat_guids(target) -> FrozenSet[str]:
+    """Return the frozenset of inflection-feature VALUE GUIDs in target.
+
+    Walks MsFeatureSystemOA (phonology features system) and any
+    InflectionFeatures operations that expose them.  Falls back to empty
+    frozenset on any failure (safe default -- raises a warning, never crashes).
+    """
+    guids: Set[str] = set()
+    if target is None:
+        return frozenset()
+    # Primary path: target.InflectionFeatures.GetAll() (flexicon accessor)
+    try:
+        for feat in target.InflectionFeatures.GetAll():
+            # Each feature has sub-values (IFsClosedValue -> IFsSymFeatVal)
+            vals = getattr(feat, "ValuesOC", None)
+            if vals is None:
+                continue
+            for v in vals:
+                g = _entry_types_guid(v)
+                if g:
+                    guids.add(g)
+    except (AttributeError, TypeError, Exception):  # noqa: BLE001
+        pass
+    return frozenset(guids)
