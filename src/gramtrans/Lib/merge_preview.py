@@ -774,11 +774,17 @@ def _find_target_gram_cat_by_guid(target: Any, guid: str) -> Any:
 def _find_target_inflection_feature_by_guid(target: Any, guid: str) -> Any:
     """T023 — locate an InflectionClass (IMoInflClass) in target by GUID.
 
-    NOTE: targets IMoInflClass (inflection *classes*), NOT IFsClosedFeature.
+    CONFIRMED DEFECT FIX: target.InflectionFeatures.GetAll() does NOT exist
+    (AttributeError, silently swallowed -> blank).  The correct accessor is
+    InflectionFeatures.InflectionClassGetAll() which returns IMoInflClass objects.
+    GetAll() is intentionally NOT called here.
     """
-    for inf in target.InflectionFeatures.GetAll():
-        if _guid_eq(_obj_guid(inf), guid):
-            return _unwrap(inf)
+    try:
+        for inf in target.InflectionFeatures.InflectionClassGetAll():
+            if _guid_eq(_obj_guid(inf), guid):
+                return _unwrap(inf)
+    except Exception:
+        pass
     return None
 
 
@@ -897,13 +903,62 @@ _PROPS_TABLE: dict[str, tuple[Any, ...]] = {
         False,
         False,
     ),
-    # Two-level owner-POS-dependent finder (T024)
-    "template": (None, _find_target_template_by_guid, True, False),
+    # Two-level owner-POS-dependent finder (T024) — GAP: no GetSyncableProperties.
+    # IMoInflAffixTemplate exposes Name + Description only; direct-read via _find_gap_object.
+    "template": (None, _find_target_template_by_guid, True, True),
     # Gap categories — direct-read fallback (T026)
     "slot": (None, None, True, True),
     "phon_feature": (None, None, False, True),
     "stem_name": (None, None, False, True),
 }
+
+
+# Maps GrammarCategory.value (enum-value form the wizard emits) to the singular
+# ops-key form used by _PROPS_TABLE. Values NOT in this map are assumed to already
+# BE table keys (pos/entry/sense/allomorph pass through as identity). Values mapped
+# to None have no standalone per-item preview (crew-validated: msa is an entry
+# sub-object; inflection_classes/exception_features/variant_types/complex_form_types/
+# adhoc_compound_rules/semantic_domains/custom_fields/writing_systems_check have no
+# per-item diff path). None-mapped values return None gracefully (intended blank pane),
+# which is now EXPLICIT rather than an accidental table-miss fallthrough.
+_CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
+    "affixes": "entry",
+    "stems": "entry",
+    "phonemes": "phoneme",
+    "natural_classes": "natural_class",
+    "phonological_rules": "phon_rule",
+    "inflection_features": "inflection_feature",
+    "slots": "slot",
+    "affix_templates": "template",
+    "gram_categories": "gram_cat",
+    "strata": "stratum",
+    "ph_environment": "environment",
+    "phonological_features": "phon_feature",
+    "stem_names": "stem_name",
+    # explicit None — no standalone per-item preview:
+    "msa": None,
+    "writing_systems_check": None,
+    "inflection_classes": None,
+    "exception_features": None,
+    "variant_types": None,
+    "complex_form_types": None,
+    "adhoc_compound_rules": None,
+    "semantic_domains": None,
+    "custom_fields": None,
+}
+
+
+def _resolve_category_key(category: str) -> "str | None":
+    """Translate a GrammarCategory.value to its _PROPS_TABLE key.
+
+    - Value present in _CATEGORY_VALUE_TO_KEY -> mapped key (may be None:
+      the category has no standalone per-item preview).
+    - Value absent from the map -> assumed already a table key (identity);
+      pos/entry/sense/allomorph and the singular finder keys pass through.
+    """
+    if category in _CATEGORY_VALUE_TO_KEY:
+        return _CATEGORY_VALUE_TO_KEY[category]
+    return category
 
 
 # ============================================================================
@@ -939,7 +994,10 @@ def props_for(
     - Never raises to the caller.
     """
     table = ops_table if ops_table is not None else _PROPS_TABLE
-    entry = table.get(category)
+    resolved = _resolve_category_key(category)
+    if resolved is None:
+        return None
+    entry = table.get(resolved)
     if entry is None:
         return None
 
@@ -947,16 +1005,21 @@ def props_for(
 
     # -- Gap category: direct-read fallback -----------------------------------
     if is_gap:
-        include_bool = category == "slot"
+        include_bool = resolved == "slot"
         try:
-            obj = _find_gap_object(handle, category, guid, owner_guid)
-            return _direct_read_gap(obj, include_optional_bool=include_bool)
+            obj = _find_gap_object(handle, resolved, guid, owner_guid)
+            raw = _direct_read_gap(obj, include_optional_bool=include_bool)
+            if raw is None:
+                return None
+            # R-b + R-c filtering applied after direct-read; custom fields not
+            # applicable to gap categories (no GetAllFields equivalent).
+            return _filter_props(raw)
         except Exception:
             return None
 
     # -- Covered / finder-needed categories via GetSyncableProperties ---------
     try:
-        if needs_owner and category == "template":
+        if needs_owner and resolved == "template":
             obj = finder_fn(handle, guid, owner_guid)
         elif needs_owner:
             obj = finder_fn(handle, guid, owner_guid) if owner_guid else finder_fn(handle, guid)
@@ -968,11 +1031,21 @@ def props_for(
 
         # GetSyncableProperties is on the ops accessor, not the object itself.
         # Resolve the ops wrapper from the handle.
-        ops = _get_ops(handle, ops_attr, category)
+        ops = _get_ops(handle, ops_attr, resolved)
         if ops is None:
             return None
 
-        return ops.GetSyncableProperties(obj)
+        raw = ops.GetSyncableProperties(obj)
+        if raw is None:
+            return None
+
+        # R-a: append custom fields (never replaces standard fields; exception-safe)
+        _append_custom_fields(handle, obj, resolved, raw)
+
+        # R-b + R-c: suppress empty fields and exclude bookkeeping keys.
+        # Custom-field keys always pass R-c (_is_excluded_key never matches
+        # "CustomField.*" / "Sense.*" / "Allomorph.*" / "Example.*" prefixes).
+        return _filter_props(raw)
     except Exception:
         return None
 
@@ -989,6 +1062,23 @@ def _find_gap_object(handle: Any, category: str, guid: str, owner_guid: str) -> 
     # For duck-typed fakes in tests, try direct GUID lookup on a dict-like handle
     if hasattr(handle, "get_gap_object"):
         return handle.get_gap_object(category, guid)
+    # Template: locate via owner POS then AffixTemplatesOS (T024 gap path)
+    if category == "template":
+        try:
+            owner_pos = _find_target_pos_by_guid(handle, owner_guid) if owner_guid else None
+            if owner_pos is None:
+                # Fallback: scan all POS
+                for pos in handle.POS.GetAll(recursive=True):
+                    for tmpl in getattr(pos, "AffixTemplatesOS", ()):
+                        if _guid_eq(_obj_guid(tmpl), guid):
+                            return _unwrap(tmpl)
+            else:
+                for tmpl in getattr(owner_pos, "AffixTemplatesOS", ()):
+                    if _guid_eq(_obj_guid(tmpl), guid):
+                        return _unwrap(tmpl)
+        except Exception:
+            pass
+        return None
     # For real LCM: traverse appropriate collection
     if category == "slot":
         # Slots are owned by templates within a POS; owner_guid is template or POS GUID
@@ -1026,6 +1116,190 @@ def _find_gap_object(handle: Any, category: str, guid: str, owner_guid: str) -> 
             pass
         return None
     return None
+
+
+# ============================================================================
+# R-c: User-editable field filter — system/bookkeeping key exclusion
+# ============================================================================
+# Justification per key (or pattern):
+#  - Keys ending "Guid" (FeaturesGuid, PhonemeGuids, StratumGuid, etc.):
+#    internal object-reference handles — not user-editable text.
+#  - "Hvo", "Guid": raw database identity values — not user-facing.
+#  - "DateCreated", "DateModified", and any key containing "DateModified":
+#    system timestamps maintained by LCM.
+#  - "HomographNumber": auto-assigned homograph disambiguator — not user-edited.
+#  - "DoNotPublishInRC", "DoNotShowMainEntryInRC": publishing flags —
+#    bookkeeping, not displayable content.
+#  - "ImportResidue": raw import artifact string — not user-edited content.
+#  - "Direction": for phonological rules this is an internal enum int
+#    (0/1/2) with no user-meaningful label in the diff pane; excluded.
+#    (If a future category exposes Direction as a user string, revisit here.)
+
+_EXCLUDED_KEYS_EXACT: frozenset[str] = frozenset(
+    {
+        "Hvo",
+        "Guid",
+        "DateCreated",
+        "DateModified",
+        "HomographNumber",
+        "DoNotPublishInRC",
+        "DoNotShowMainEntryInRC",
+        "ImportResidue",
+        "Direction",
+    }
+)
+
+
+def _is_excluded_key(key: str) -> bool:
+    """Return True if the field key is a system/bookkeeping key (R-c)."""
+    if key in _EXCLUDED_KEYS_EXACT:
+        return True
+    # Pattern: any key ending in "Guid" (covers FeaturesGuid, PhonemeGuids,
+    # StratumGuid, etc.) — these are internal object-reference handles.
+    if key.endswith("Guid") or key.endswith("Guids"):
+        return True
+    # Pattern: any key containing "DateModified" (timestamp variants)
+    if "DateModified" in key:
+        return True
+    return False
+
+
+# R-b: Empty-value suppression helpers
+def _is_empty_value(v: Any) -> bool:
+    """Return True if v is None, empty string, empty dict, or all-whitespace multistring."""
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return v.strip() == ""
+    if isinstance(v, dict):
+        if len(v) == 0:
+            return True
+        # multistring: all ws values empty/whitespace
+        return all(
+            (val is None or (isinstance(val, str) and val.strip() == ""))
+            for val in v.values()
+        )
+    return False
+
+
+def _filter_props(props: dict[str, Any]) -> dict[str, Any]:
+    """Apply R-b (suppress empty) and R-c (exclude bookkeeping) to a props dict.
+
+    Custom fields always pass R-c; R-b suppression still applies to them.
+    """
+    return {
+        k: v
+        for k, v in props.items()
+        if not _is_excluded_key(k) and not _is_empty_value(v)
+    }
+
+
+# ============================================================================
+# R-a: Custom-field extraction
+# ============================================================================
+# Namespacing scheme:
+#   - Object-level custom fields (e.g. LexEntry): key = "CustomField.<FieldName>"
+#     (prefixed to avoid collisions with standard props such as "Name")
+#   - Child-object custom fields:
+#       LexSense children  -> "Sense.<FieldName>"
+#       MoForm children    -> "Allomorph.<FieldName>"
+#       LexExampleSentence -> "Example.<FieldName>"
+# Custom fields always pass R-c (user-editable by definition); R-b still applies.
+
+# Maps category key -> owner_class string for GetAllFields
+_CUSTOM_FIELD_OWNER_CLASS: dict[str, str] = {
+    "entry": "LexEntry",
+    "sense": "LexSense",
+    "allomorph": "MoForm",
+    "phoneme": "PhPhoneme",
+    "natural_class": "PhNaturalClass",
+    "environment": "PhEnvironment",
+    "phon_rule": "PhRegularRule",
+    "gram_cat": "FsFeatStrucType",
+    "inflection_feature": "MoInflClass",
+    "pos": "PartOfSpeech",
+}
+
+
+def _read_custom_fields(handle: Any, obj: Any, owner_class: str, prefix: str) -> dict[str, Any]:
+    """Read custom fields for one object, returning namespaced dict entries.
+
+    Never raises — all exceptions are caught and logged at DEBUG.
+    """
+    result: dict[str, Any] = {}
+    try:
+        cf_ops = getattr(handle, "CustomFields", None)
+        if cf_ops is None:
+            return result
+        fields_iter = cf_ops.GetAllFields(owner_class)
+        if fields_iter is None:
+            return result
+        for item in fields_iter:
+            try:
+                # GetAllFields may return (flid, field_name) tuples or just names
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    _flid, field_name = item[0], item[1]
+                else:
+                    field_name = str(item)
+                value = cf_ops.GetValue(obj, field_name)
+                if not _is_empty_value(value):
+                    result[prefix + field_name] = value
+            except Exception as _e:
+                logging.debug("_read_custom_fields: skipping field %r: %s", item, _e)
+    except Exception as _exc:
+        logging.debug(
+            "_read_custom_fields: failed reading custom fields for %r/%r: %s",
+            owner_class, obj, _exc
+        )
+    return result
+
+
+def _append_custom_fields(handle: Any, obj: Any, category: str, props: dict[str, Any]) -> None:
+    """Append custom fields (and child custom fields for entry) to props in-place.
+
+    Never raises. Silently skips if the category has no known owner_class.
+    """
+    try:
+        owner_class = _CUSTOM_FIELD_OWNER_CLASS.get(category)
+        if owner_class is None:
+            return
+
+        # Object-level custom fields — prefix "CustomField."
+        obj_cf = _read_custom_fields(handle, obj, owner_class, "CustomField.")
+        props.update(obj_cf)
+
+        # Child walks: only for "entry" (LexEntry children)
+        if category == "entry":
+            # Senses -> "Sense.<FieldName>"
+            try:
+                for sense in getattr(obj, "SensesOS", ()):
+                    cf = _read_custom_fields(handle, sense, "LexSense", "Sense.")
+                    for k, v in cf.items():
+                        if k not in props:  # first sense wins on collision
+                            props[k] = v
+            except Exception as _e:
+                logging.debug("_append_custom_fields: SensesOS walk error: %s", _e)
+            # AlternateForms -> "Allomorph.<FieldName>"
+            try:
+                for form in getattr(obj, "AlternateFormsOS", ()):
+                    cf = _read_custom_fields(handle, form, "MoForm", "Allomorph.")
+                    for k, v in cf.items():
+                        if k not in props:
+                            props[k] = v
+            except Exception as _e:
+                logging.debug("_append_custom_fields: AlternateFormsOS walk error: %s", _e)
+            # Examples (via senses) -> "Example.<FieldName>"
+            try:
+                for sense in getattr(obj, "SensesOS", ()):
+                    for ex in getattr(sense, "ExamplesOS", ()):
+                        cf = _read_custom_fields(handle, ex, "LexExampleSentence", "Example.")
+                        for k, v in cf.items():
+                            if k not in props:
+                                props[k] = v
+            except Exception as _e:
+                logging.debug("_append_custom_fields: ExamplesOS walk error: %s", _e)
+    except Exception as _exc:
+        logging.debug("_append_custom_fields: outer failure: %s", _exc)
 
 
 # ============================================================================

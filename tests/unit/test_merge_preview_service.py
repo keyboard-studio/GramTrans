@@ -266,3 +266,433 @@ class TestNoRetainedHandles:
         svc = MergePreviewService(src_handle, tgt_handle)
         assert svc._source is src_handle
         assert svc._target is tgt_handle
+
+
+# ============================================================================
+# T040-T043 — Value->key translation wired to the real _PROPS_TABLE (016-fix)
+# ============================================================================
+
+from gramtrans.Lib.merge_preview import (  # noqa: E402
+    _CATEGORY_VALUE_TO_KEY,
+    _PROPS_TABLE,
+    _resolve_category_key,
+    props_for,
+)
+
+_NINE_LIVE_VALUES_AND_EXPECTED_KEYS = [
+    ("affixes", "entry"),
+    ("stems", "entry"),
+    ("phonemes", "phoneme"),
+    ("natural_classes", "natural_class"),
+    ("phonological_rules", "phon_rule"),
+    ("inflection_features", "inflection_feature"),
+    ("slots", "slot"),
+    ("affix_templates", "template"),
+    ("stem_names", "stem_name"),
+]
+
+
+class TestValueToKeyTranslation:
+    """Regression guard: GrammarCategory.value -> _PROPS_TABLE key wiring."""
+
+    # A) ------------------------------------------------------------------
+    def test_all_nine_live_values_resolve_or_none(self):
+        """Each live wizard value resolves to None OR an existing _PROPS_TABLE key."""
+        for value, expected_key in _NINE_LIVE_VALUES_AND_EXPECTED_KEYS:
+            resolved = _resolve_category_key(value)
+            assert resolved is not None, f"{value!r} resolved to None unexpectedly"
+            assert resolved in _PROPS_TABLE, (
+                f"{value!r} -> {resolved!r} is not a key in _PROPS_TABLE"
+            )
+            assert resolved == expected_key, (
+                f"{value!r} expected -> {expected_key!r}, got {resolved!r}"
+            )
+
+        # inflection_classes maps to None (no standalone preview — by design)
+        assert _resolve_category_key("inflection_classes") is None
+
+    # B) ------------------------------------------------------------------
+    def test_every_mapped_nonNone_key_is_in_real_table(self):
+        """Every non-None mapping in _CATEGORY_VALUE_TO_KEY targets a real table key."""
+        for value, key in _CATEGORY_VALUE_TO_KEY.items():
+            if key is not None:
+                assert key in _PROPS_TABLE, (
+                    f"_CATEGORY_VALUE_TO_KEY[{value!r}] = {key!r} "
+                    f"but {key!r} is not in _PROPS_TABLE"
+                )
+
+    # C) ------------------------------------------------------------------
+    def test_identity_passthrough(self):
+        """Values absent from the map pass through as-is and exist in _PROPS_TABLE."""
+        for identity_value in ("pos", "entry", "sense", "allomorph"):
+            resolved = _resolve_category_key(identity_value)
+            assert resolved == identity_value, (
+                f"Identity value {identity_value!r} should pass through unchanged"
+            )
+            assert resolved in _PROPS_TABLE, (
+                f"Identity value {identity_value!r} is not a real _PROPS_TABLE key"
+            )
+
+    # D) ------------------------------------------------------------------
+    def test_props_for_translates_before_real_table_lookup(self):
+        """props_for with category='affixes' uses real table via value->key translation."""
+
+        _FAKE_GUID = "aaaabbbb-cccc-dddd-eeee-ffffaaaabbbb"
+        _FAKE_PROPS = {"Gloss": {"en": "test_gloss"}}
+
+        class _FakeEntry:
+            guid = _FAKE_GUID
+
+            def GetSyncableProperties(self, _obj):
+                return _FAKE_PROPS
+
+            def GetAll(self):
+                return [self]
+
+        class _FakeHandle:
+            LexEntry = _FakeEntry()
+
+        result = props_for(_FakeHandle(), category="affixes", guid=_FAKE_GUID)
+        assert result == _FAKE_PROPS, (
+            f"props_for('affixes', ...) should return props dict via entry path, got {result!r}"
+        )
+
+        # Bogus category: neither in map nor in table -> graceful None
+        result_bogus = props_for(_FakeHandle(), category="definitely_not_a_category", guid=_FAKE_GUID)
+        assert result_bogus is None, (
+            f"Unmapped/unknown category should return None, got {result_bogus!r}"
+        )
+
+
+# ============================================================================
+# T044 — DEFECT FIX: inflection_feature finder uses InflectionClassGetAll (not GetAll)
+# ============================================================================
+
+from gramtrans.Lib.merge_preview import (  # noqa: E402
+    _find_target_inflection_feature_by_guid,
+    _filter_props,
+    _is_excluded_key,
+    _append_custom_fields,
+    _find_gap_object,
+    _direct_read_gap,
+)
+
+
+class TestInflectionFeatureFinderFix:
+    """Regression: finder must call InflectionClassGetAll(), never GetAll()."""
+
+    def test_finder_uses_InflectionClassGetAll(self):
+        """Finder resolves object via InflectionClassGetAll, not GetAll."""
+
+        class _FakeInflClass:
+            guid = "aabb-ccdd"
+
+        class _FakeInflFeatures:
+            _getall_called = False
+            _getall_inflclass_called = False
+
+            def GetAll(self):
+                self._getall_called = True
+                raise AttributeError("GetAll does not exist on InflectionFeatures")
+
+            def InflectionClassGetAll(self):
+                self._getall_inflclass_called = True
+                return [_FakeInflClass()]
+
+        class _FakeTarget:
+            InflectionFeatures = _FakeInflFeatures()
+
+        result = _find_target_inflection_feature_by_guid(_FakeTarget(), "aabb-ccdd")
+        assert result is not None, "Finder should resolve the matching InflectionClass"
+        assert _FakeTarget.InflectionFeatures._getall_inflclass_called, (
+            "InflectionClassGetAll() must be called"
+        )
+        assert not _FakeTarget.InflectionFeatures._getall_called, (
+            "GetAll() must NOT be called — it does not exist on InflectionFeatures"
+        )
+
+    def test_finder_returns_None_when_guid_not_found(self):
+        """Finder returns None gracefully when no matching GUID exists."""
+
+        class _FakeInflFeatures:
+            def InflectionClassGetAll(self):
+                return []
+
+        class _FakeTarget:
+            InflectionFeatures = _FakeInflFeatures()
+
+        result = _find_target_inflection_feature_by_guid(_FakeTarget(), "no-such-guid")
+        assert result is None
+
+
+# ============================================================================
+# T045 — DEFECT FIX: affix_template is a gap category — direct-read Name+Description
+# ============================================================================
+
+
+class TestTemplateGapPath:
+    """Template is now is_gap=True; direct-read returns Name+Description."""
+
+    def test_template_gap_returns_name_description(self):
+        """props_for with category='affix_templates' reads Name+Description via gap path."""
+
+        class _FakeTemplate:
+            guid = "tmpl-guid-1234"
+            Name = {"en": "Noun Template"}
+            Description = {"en": "Template for nominal affixes"}
+
+        class _FakePOS:
+            guid = "pos-guid-5678"
+            AffixTemplatesOS = [_FakeTemplate()]
+
+        class _FakeHandle:
+            class POS:
+                @staticmethod
+                def GetAll(recursive=False):
+                    return [_FakePOS()]
+
+            def get_gap_object(self, category, guid):
+                if category == "template" and guid == "tmpl-guid-1234":
+                    return _FakeTemplate()
+                return None
+
+        result = props_for(
+            _FakeHandle(), category="affix_templates", guid="tmpl-guid-1234",
+            owner_guid="pos-guid-5678"
+        )
+        assert result is not None, "Should return a dict for template gap path"
+        assert "Name" in result, f"Name expected in result, got {result}"
+        assert "Description" in result, f"Description expected in result, got {result}"
+        # Abbreviation not present on templates — should not be required
+        assert result["Name"] == {"en": "Noun Template"}
+
+    def test_template_no_abbreviation_required(self):
+        """Template gap-read succeeds even when Abbreviation is absent."""
+
+        class _FakeTemplateNoAbbr:
+            guid = "tmpl-no-abbr"
+            Name = {"en": "Simple Template"}
+            # no Abbreviation attribute
+
+        class _FakeHandleNoAbbr:
+            def get_gap_object(self, category, guid):
+                return _FakeTemplateNoAbbr()
+
+        result = props_for(
+            _FakeHandleNoAbbr(), category="affix_templates", guid="tmpl-no-abbr"
+        )
+        assert result is not None
+        assert "Name" in result
+        assert "Abbreviation" not in result
+
+
+# ============================================================================
+# T046 — R-a: Custom-field extraction with namespaced child keys
+# ============================================================================
+
+
+class TestCustomFieldExtraction:
+    """Custom fields appear in props dict with correct namespace prefixes."""
+
+    def _make_handle_with_custom_fields(self):
+        """Build a fake handle + entry with custom fields on object and children."""
+
+        class _FakeExample:
+            pass
+
+        class _FakeSense:
+            ExamplesOS = [_FakeExample()]
+
+        class _FakeEntry:
+            guid = "entry-guid-cf"
+            SensesOS = [_FakeSense()]
+            AlternateFormsOS = []
+
+        class _FakeCFOps:
+            def GetAllFields(self, owner_class):
+                mapping = {
+                    "LexEntry": [("1", "MyEntryField")],
+                    "LexSense": [("2", "MySenseField")],
+                    "MoForm": [],
+                    "LexExampleSentence": [("3", "MyExampleField")],
+                }
+                return mapping.get(owner_class, [])
+
+            def GetValue(self, obj, field_name):
+                if field_name == "MyEntryField":
+                    return {"en": "entry custom value"}
+                if field_name == "MySenseField":
+                    return {"en": "sense custom value"}
+                if field_name == "MyExampleField":
+                    return {"en": "example custom value"}
+                return None
+
+        class _FakeHandle:
+            CustomFields = _FakeCFOps()
+
+        return _FakeHandle(), _FakeEntry()
+
+    def test_entry_custom_field_prefixed(self):
+        """Object-level custom fields have 'CustomField.' prefix."""
+        handle, entry = self._make_handle_with_custom_fields()
+        props: dict = {}
+        _append_custom_fields(handle, entry, "entry", props)
+        assert "CustomField.MyEntryField" in props, f"Got keys: {list(props)}"
+        assert props["CustomField.MyEntryField"] == {"en": "entry custom value"}
+
+    def test_sense_custom_field_prefixed(self):
+        """Child sense custom fields have 'Sense.' prefix."""
+        handle, entry = self._make_handle_with_custom_fields()
+        props: dict = {}
+        _append_custom_fields(handle, entry, "entry", props)
+        assert "Sense.MySenseField" in props, f"Got keys: {list(props)}"
+        assert props["Sense.MySenseField"] == {"en": "sense custom value"}
+
+    def test_example_custom_field_prefixed(self):
+        """Grandchild example custom fields have 'Example.' prefix."""
+        handle, entry = self._make_handle_with_custom_fields()
+        props: dict = {}
+        _append_custom_fields(handle, entry, "entry", props)
+        assert "Example.MyExampleField" in props, f"Got keys: {list(props)}"
+
+    def test_no_custom_fields_ops_graceful(self):
+        """Handle without CustomFields attribute returns empty dict gracefully."""
+
+        class _FakeHandleNoCF:
+            pass
+
+        props: dict = {}
+        _append_custom_fields(_FakeHandleNoCF(), object(), "entry", props)
+        assert props == {}
+
+    def test_unknown_category_skipped_gracefully(self):
+        """Category with no known owner_class produces no custom fields."""
+
+        class _FakeHandleWithCF:
+            class CustomFields:
+                @staticmethod
+                def GetAllFields(owner_class):
+                    return []
+
+        props: dict = {}
+        _append_custom_fields(_FakeHandleWithCF(), object(), "slot", props)
+        assert props == {}
+
+
+# ============================================================================
+# T047 — R-b: Empty-field suppression in _filter_props
+# ============================================================================
+
+from gramtrans.Lib.merge_preview import _is_empty_value  # noqa: E402
+
+
+class TestRbEmptySuppression:
+    """Fields with empty values are suppressed after filtering."""
+
+    def test_none_value_suppressed(self):
+        props = {"Name": None, "Description": {"en": "valid"}}
+        result = _filter_props(props)
+        assert "Name" not in result
+        assert "Description" in result
+
+    def test_empty_string_suppressed(self):
+        props = {"Name": "", "Abbreviation": "  "}
+        result = _filter_props(props)
+        assert "Name" not in result
+        assert "Abbreviation" not in result
+
+    def test_empty_dict_suppressed(self):
+        props = {"Name": {}, "Description": {"en": "has value"}}
+        result = _filter_props(props)
+        assert "Name" not in result
+        assert "Description" in result
+
+    def test_all_whitespace_multistring_suppressed(self):
+        """A multistring dict whose every ws value is empty/whitespace is suppressed."""
+        props = {"Name": {"en": "", "fr": "   "}, "Description": {"en": "ok"}}
+        result = _filter_props(props)
+        assert "Name" not in result
+        assert "Description" in result
+
+    def test_genuinely_changed_nonempty_kept(self):
+        """A non-empty field value is never suppressed."""
+        props = {"Name": {"en": "Real Name"}, "BasicIPASymbol": "p"}
+        result = _filter_props(props)
+        assert "Name" in result
+        assert "BasicIPASymbol" in result
+
+    def test_is_empty_value_helpers(self):
+        assert _is_empty_value(None)
+        assert _is_empty_value("")
+        assert _is_empty_value("  ")
+        assert _is_empty_value({})
+        assert _is_empty_value({"en": "", "fr": "  "})
+        assert not _is_empty_value({"en": "hello"})
+        assert not _is_empty_value("x")
+        assert not _is_empty_value(0)
+        assert not _is_empty_value(False)
+
+
+# ============================================================================
+# T048 — R-c: Bookkeeping key exclusion
+# ============================================================================
+
+
+class TestRcBookkeepingExclusion:
+    """Confirmed bookkeeping keys are excluded; user-content keys are retained."""
+
+    _EXCLUDED = [
+        "FeaturesGuid",
+        "PhonemeGuids",
+        "StratumGuid",
+        "Guid",
+        "Hvo",
+        "DateCreated",
+        "DateModified",
+        "HomographNumber",
+        "DoNotPublishInRC",
+        "DoNotShowMainEntryInRC",
+        "ImportResidue",
+        "Direction",
+        "SomeOtherGuid",          # ends in "Guid"
+        "LastModifiedDateModified",  # contains "DateModified"
+    ]
+
+    _RETAINED = [
+        "Name",
+        "Description",
+        "BasicIPASymbol",
+        "Abbreviation",
+        "CustomField.MyField",
+        "Sense.MySense",
+        "Allomorph.MyForm",
+        "Example.MyEx",
+        "LiteralMeaning",
+        "Bibliography",
+        "Comment",
+    ]
+
+    def test_excluded_keys_filtered(self):
+        props = {k: {"en": "value"} for k in self._EXCLUDED}
+        result = _filter_props(props)
+        for k in self._EXCLUDED:
+            assert k not in result, f"Bookkeeping key {k!r} should be excluded"
+
+    def test_retained_keys_kept(self):
+        props = {k: {"en": "value"} for k in self._RETAINED}
+        result = _filter_props(props)
+        for k in self._RETAINED:
+            assert k in result, f"User-editable key {k!r} should be retained"
+
+    def test_is_excluded_key_patterns(self):
+        assert _is_excluded_key("FeaturesGuid")
+        assert _is_excluded_key("PhonemeGuids")
+        assert _is_excluded_key("StratumGuid")
+        assert _is_excluded_key("HomographNumber")
+        assert _is_excluded_key("DoNotPublishInRC")
+        assert _is_excluded_key("ImportResidue")
+        assert _is_excluded_key("Direction")
+        assert _is_excluded_key("DateCreated")
+        assert not _is_excluded_key("Name")
+        assert not _is_excluded_key("Description")
+        assert not _is_excluded_key("CustomField.MyGuidField")  # prefix not ending pattern
