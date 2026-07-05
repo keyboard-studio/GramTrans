@@ -47,9 +47,11 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
+        ConflictMode,
         CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
+        PlannedOverwrite,
         RunContext,
         Selection,
         Skip,
@@ -57,12 +59,15 @@ if __package__:
         WSKind,
         WSMapping,
     )
+    from .protection import apply_isprotected_layer2
     from .residue import ImportResidueTag
 else:
     from models import (  # type: ignore
+        ConflictMode,
         CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
+        PlannedOverwrite,
         RunContext,
         Selection,
         Skip,
@@ -70,6 +75,7 @@ else:
         WSKind,
         WSMapping,
     )
+    from protection import apply_isprotected_layer2  # type: ignore
     from residue import ImportResidueTag  # type: ignore
 
 
@@ -112,6 +118,178 @@ def _target_has_guid(target_iter, src_guid: str) -> bool:
         if _guid_str_from(obj) == src_guid:
             return True
     return False
+
+
+def _find_target_obj_by_guid(target_iter, src_guid: str):
+    """Return the first target object whose GUID matches `src_guid`, or None."""
+    for obj in target_iter:
+        if _guid_str_from(obj) == src_guid:
+            return obj
+    return None
+
+
+
+def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
+    """Compare source vs target multistring per writing system.
+
+    Returns (gaps, conflicts) where:
+      gaps      = list of (ws_handle, src_text) — target slot empty, source non-empty
+      conflicts = list of (ws_handle, src_text, tgt_text) — both non-empty but differ
+    """
+    gaps = []
+    conflicts = []
+    for _ws_id, ws_handle in ws_list:
+        src_text = None
+        tgt_text = None
+        try:
+            src_ts = src_ms.get_String(ws_handle)
+            src_text = getattr(src_ts, "Text", None) or None
+        except Exception:
+            src_text = None
+        try:
+            tgt_ts = tgt_ms.get_String(ws_handle)
+            tgt_text = getattr(tgt_ts, "Text", None) or None
+        except Exception:
+            tgt_text = None
+
+        if src_text is None:
+            continue  # source empty -> skip
+        if tgt_text is None:
+            gaps.append((ws_handle, src_text))
+        elif src_text != tgt_text:
+            conflicts.append((ws_handle, src_text, tgt_text))
+        # else: equal -> no-op
+    return gaps, conflicts
+
+
+def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
+    """Shared GOLD_RESERVED plan_action helper (spec 017 FR-E10).
+
+    Guard chain (FR-E01 to FR-E03):
+    1. _is_gold -> Skip(GOLD_INVIOLABLE) if GOLD.
+    2. target_iter_fn(context.target_handle) -> scan for GUID.
+    3. If absent -> return None (caller emits PlannedAction).
+    4. apply_isprotected_layer2 -> if MERGE, Skip(ALREADY_PRESENT_BY_GUID)
+       with IsProtected note.
+    5. MERGE-per-WS edit detection on Name, Abbreviation, Description.
+       - Any gaps -> PlannedOverwrite(write_mode="merge").
+       - All equal -> Skip(ALREADY_PRESENT_BY_GUID).
+       - All conflicts (no gaps) -> Skip(ALREADY_PRESENT_BY_GUID) + conflict detail.
+       - Mixed gaps+conflicts -> PlannedOverwrite for gaps; conflicts in summary.
+
+    Returns a Skip, PlannedOverwrite, or None.
+    - None means "not present in target" -> caller emits PlannedAction.
+    """
+    if _is_gold(piece):
+        return Skip(
+            category=category,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Item is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
+                "not transferred per FR-022 / Principle I."
+            ),
+        )
+
+    src_guid = _guid_str_from(piece)
+    target_iter = target_iter_fn(context.target_handle)
+    tgt_obj = _find_target_obj_by_guid(target_iter, src_guid)
+
+    if tgt_obj is None:
+        return None  # absent -> caller emits PlannedAction
+
+    # IsProtected guard (FR-E02): downgrade to MERGE = link-only, no edit.
+    mode = apply_isprotected_layer2(category, tgt_obj, ConflictMode.OVERWRITE)
+    if mode == ConflictMode.MERGE:
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=(
+                f"GUID {src_guid[:8]}... present in target; "
+                "edit copy suppressed by IsProtected=True."
+            ),
+        )
+
+    # MERGE-per-WS edit detection (FR-E04 to FR-E07).
+    # Enumerate writing systems from source side.
+    source = context.source_handle
+    ws_list = []
+    try:
+        for ws_obj in source.WritingSystems.GetAll():
+            ws_list.append((getattr(ws_obj, "Id", str(ws_obj)), ws_obj.Handle))
+    except Exception:
+        pass
+
+    if not ws_list:
+        # No WS info available -> conservative skip (cannot prove edit).
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"GUID {src_guid[:8]}... present in target (no WS info for comparison).",
+        )
+
+    all_gaps = []    # (field_name, ws_handle, src_text)
+    all_conflicts = []  # (field_name, ws_handle, src_text, tgt_text)
+
+    for field_name in ("Name", "Abbreviation", "Description"):
+        src_ms = getattr(piece, field_name, None)
+        tgt_ms = getattr(tgt_obj, field_name, None)
+        if src_ms is None or tgt_ms is None:
+            continue
+        gaps, conflicts = _compare_multistring_per_ws(src_ms, tgt_ms, ws_list)
+        for ws_handle, src_text in gaps:
+            all_gaps.append((field_name, ws_handle, src_text))
+        for ws_handle, src_text, tgt_text in conflicts:
+            all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
+
+    if not all_gaps:
+        # No empty-in-target slots. Either all equal or all conflicts.
+        if all_conflicts:
+            conflict_lines = "; ".join(
+                f"{f}@ws={wh}: src={s!r} vs tgt={t!r}"
+                for f, wh, s, t in all_conflicts
+            )
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=(
+                    f"GUID {src_guid[:8]}... present; per-WS conflicts (not overwritten): "
+                    f"{conflict_lines}"
+                ),
+            )
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
+        )
+
+    # Gaps exist -> emit merge action.
+    gap_summary = ", ".join(
+        f"{f}@ws={wh}: +{s!r}" for f, wh, s in all_gaps
+    )
+    conflict_note = ""
+    if all_conflicts:
+        conflict_note = " | conflicts (not written): " + "; ".join(
+            f"{f}@ws={wh}: src={s!r} vs tgt={t!r}"
+            for f, wh, s, t in all_conflicts
+        )
+    summary = (
+        f"Edit-copy GUID {src_guid[:8]}... [{category.value}]: "
+        f"fill gaps {gap_summary}{conflict_note}"
+    )
+    return PlannedOverwrite(
+        category=category,
+        source_guid=src_guid,
+        target_guid=src_guid,
+        match_via="guid",
+        write_mode="merge",
+        summary=summary,
+    )
 
 
 # ============================================================================
@@ -160,28 +338,24 @@ def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKin
 
 
 def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """GOLD-aware: skip if the POS IS a GOLD object; else plan Add."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.GRAM_CATEGORIES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"POS is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
+    """GOLD-aware: skip GOLD; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    POS is ALIASED to gram_categories (shares execute at gram_categories L193+,
+    Phase 0 routing) — this function handles both.
+    """
+    def _target_iter(target):
+        if hasattr(target, "POS"):
+            return target.POS.GetAll(recursive=True)
+        return ()
+
+    result = _plan_gold_reserved_edit(
+        piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter
+    )
+    if result is not None:
+        return result
+    # Absent -> PlannedAction (add)
     src_guid = _guid_str_from(piece)
-    target = context.target_handle
-    if hasattr(target, "POS"):
-        if _target_has_guid(target.POS.GetAll(recursive=True), src_guid):
-            return Skip(
-                category=GrammarCategory.GRAM_CATEGORIES,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"POS GUID {src_guid[:8]}... already present in target.",
-            )
     return PlannedAction(
         category=GrammarCategory.GRAM_CATEGORIES,
         source_guid=src_guid,
@@ -325,28 +499,21 @@ def inflection_features_required_writing_systems(piece) -> Iterable[Tuple[str, W
 
 
 def inflection_features_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """GOLD-aware: Skip GOLD features; plan Add for user-defined ones."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.INFLECTION_FEATURES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Inflection feature is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
+    """GOLD-aware: Skip GOLD features; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    """
+    def _target_iter(target):
+        if hasattr(target, "InflectionFeatures"):
+            return target.InflectionFeatures.FeatureGetAll()
+        return ()
+
+    result = _plan_gold_reserved_edit(
+        piece, GrammarCategory.INFLECTION_FEATURES, context, _target_iter
+    )
+    if result is not None:
+        return result
     src_guid = _guid_str_from(piece)
-    target = context.target_handle
-    if hasattr(target, "InflectionFeatures"):
-        if _target_has_guid(target.InflectionFeatures.FeatureGetAll(), src_guid):
-            return Skip(
-                category=GrammarCategory.INFLECTION_FEATURES,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"Inflection feature GUID {src_guid[:8]}... already present in target.",
-            )
     return PlannedAction(
         category=GrammarCategory.INFLECTION_FEATURES,
         source_guid=src_guid,
@@ -1295,28 +1462,19 @@ def variant_types_required_writing_systems(piece):
 
 
 def variant_types_plan_action(piece, context, ws_mapping):
-    """GOLD-aware: skip GOLD variant types; PlannedAction for user-defined."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.VARIANT_TYPES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Variant type is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r})."
-            ),
-        )
-    src_guid = _guid_str_from(piece)
-    target_existing = _walk_possibilities_via_lexdb(
-        context.target_handle, "VariantEntryTypesOA"
+    """GOLD-aware: skip GOLD variant types; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    """
+    def _target_iter(target):
+        return _walk_possibilities_via_lexdb(target, "VariantEntryTypesOA")
+
+    result = _plan_gold_reserved_edit(
+        piece, GrammarCategory.VARIANT_TYPES, context, _target_iter
     )
-    if _target_has_guid(target_existing, src_guid):
-        return Skip(
-            category=GrammarCategory.VARIANT_TYPES,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"Variant type GUID {src_guid[:8]}... already present in target.",
-        )
+    if result is not None:
+        return result
+    src_guid = _guid_str_from(piece)
     return PlannedAction(
         category=GrammarCategory.VARIANT_TYPES,
         source_guid=src_guid,
@@ -1426,28 +1584,19 @@ def complex_form_types_required_writing_systems(piece):
 
 
 def complex_form_types_plan_action(piece, context, ws_mapping):
-    """GOLD-aware: skip GOLD complex form types; PlannedAction for user-defined."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.COMPLEX_FORM_TYPES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Complex form type is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r})."
-            ),
-        )
-    src_guid = _guid_str_from(piece)
-    target_existing = _walk_possibilities_via_lexdb(
-        context.target_handle, "ComplexEntryTypesOA"
+    """GOLD-aware: skip GOLD complex form types; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    """
+    def _target_iter(target):
+        return _walk_possibilities_via_lexdb(target, "ComplexEntryTypesOA")
+
+    result = _plan_gold_reserved_edit(
+        piece, GrammarCategory.COMPLEX_FORM_TYPES, context, _target_iter
     )
-    if _target_has_guid(target_existing, src_guid):
-        return Skip(
-            category=GrammarCategory.COMPLEX_FORM_TYPES,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"Complex form type GUID {src_guid[:8]}... already present.",
-        )
+    if result is not None:
+        return result
+    src_guid = _guid_str_from(piece)
     return PlannedAction(
         category=GrammarCategory.COMPLEX_FORM_TYPES,
         source_guid=src_guid,
@@ -1546,28 +1695,19 @@ def semantic_domains_required_writing_systems(piece):
 
 
 def semantic_domains_plan_action(piece, context, ws_mapping):
-    """FR-326: skip the ~1700-entry GOLD catalog; PlannedAction for
-    project-specific custom additions."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.SEMANTIC_DOMAINS,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Semantic domain is a GOLD catalog object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "ships with FieldWorks."
-            ),
-        )
+    """FR-326: skip the ~1700-entry GOLD catalog; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    """
+    def _target_iter(target):
+        return _walk_semantic_domain_list(target)
+
+    result = _plan_gold_reserved_edit(
+        piece, GrammarCategory.SEMANTIC_DOMAINS, context, _target_iter
+    )
+    if result is not None:
+        return result
     src_guid = _guid_str_from(piece)
-    target_existing = _walk_semantic_domain_list(context.target_handle)
-    if _target_has_guid(target_existing, src_guid):
-        return Skip(
-            category=GrammarCategory.SEMANTIC_DOMAINS,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"Semantic domain GUID {src_guid[:8]}... already present.",
-        )
     return PlannedAction(
         category=GrammarCategory.SEMANTIC_DOMAINS,
         source_guid=src_guid,
@@ -1811,8 +1951,46 @@ def _phonology_simple_enumerate(context, ops_attr, selection=None, category=None
     return items
 
 
+_GOLD_RESERVED_PHONOLOGY_CATEGORIES = frozenset({
+    GrammarCategory.PHONOLOGICAL_FEATURES,
+})
+"""Phonology categories that are GOLD_RESERVED and participate in edit-detection.
+
+Spec 017 scope: only PHONOLOGICAL_FEATURES among the 5 simple phonology
+categories is GOLD_RESERVED. PHONEMES, NATURAL_CLASSES, PH_ENVIRONMENT, and
+PHONOLOGICAL_RULES are MULTI_INSTANCE and are NOT in scope for the edit-copy
+helper — their skip branch in _phonology_simple_plan is unchanged.
+"""
+
+
 def _phonology_simple_plan(piece, context, category, ops_attr, label):
-    """Shared plan_action helper for the 5 simple phonology categories."""
+    """Shared plan_action helper for the 5 simple phonology categories.
+
+    For PHONOLOGICAL_FEATURES (the only GOLD_RESERVED member of this group),
+    routes through _plan_gold_reserved_edit for edit-detection before falling
+    back to the standard skip/add path.  The other 4 categories (PHONEMES,
+    NATURAL_CLASSES, PH_ENVIRONMENT, PHONOLOGICAL_RULES) keep the existing
+    ALREADY_PRESENT_BY_GUID skip unchanged (spec 017 scope guard).
+    """
+    if category in _GOLD_RESERVED_PHONOLOGY_CATEGORIES:
+        def _target_iter(target):
+            if target is not None and hasattr(target, ops_attr):
+                try:
+                    return getattr(target, ops_attr).GetAll()
+                except (AttributeError, TypeError):
+                    return ()
+            return ()
+        result = _plan_gold_reserved_edit(piece, category, context, _target_iter)
+        if result is not None:
+            return result
+        src_guid = _guid_str_from(piece)
+        return PlannedAction(
+            category=category,
+            source_guid=src_guid,
+            intended_target_guid=src_guid,
+            summary=f"{label} guid={src_guid[:8]}...",
+        )
+
     src_guid = _guid_str_from(piece)
     target = context.target_handle
     if target is not None and hasattr(target, ops_attr):

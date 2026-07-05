@@ -760,29 +760,37 @@ def _find_target_stratum_by_guid(target: Any, guid: str) -> Any:
 
 
 def _find_target_gram_cat_by_guid(target: Any, guid: str) -> Any:
-    """T023 — locate a GrammaticalCategory (IFsFeatStrucType) in target by GUID.
+    """T023 — locate a GrammaticalCategory (IPartOfSpeech) in target by GUID.
 
-    Accessor confirmed: ``GramCat`` (GrammarCategory.GRAM_CATEGORIES).
-    Uses recursive=True because gram categories have subcategories.
+    Accessor: ``POS`` (IPartOfSpeech), NOT ``GramCat`` (IFsFeatStrucType).
+    categories.py:gram_categories_enumerate_source (L343-348) and
+    gram_categories_plan_action (L367-370) both use target.POS.GetAll();
+    the transfer path creates/enumerates IPartOfSpeech objects, so the
+    preview finder must use the same subsystem or GUIDs will never match
+    and the preview pane will be blank for every GRAM_CATEGORIES edit-copy.
+    Uses recursive=True because POS has SubPossibilitiesOS sub-categories.
     """
-    for gc in target.GramCat.GetAll(recursive=True):
+    for gc in target.POS.GetAll(recursive=True):
         if _guid_eq(_obj_guid(gc), guid):
             return _unwrap(gc)
     return None
 
 
 def _find_target_inflection_feature_by_guid(target: Any, guid: str) -> Any:
-    """T023 — locate an InflectionClass (IMoInflClass) in target by GUID.
+    """Locate an IFsClosedFeature (inflection feature) in target by GUID.
 
-    CONFIRMED DEFECT FIX: target.InflectionFeatures.GetAll() does NOT exist
-    (AttributeError, silently swallowed -> blank).  The correct accessor is
-    InflectionFeatures.InflectionClassGetAll() which returns IMoInflClass objects.
-    GetAll() is intentionally NOT called here.
+    DEFECT FIX (spec 017): previously called InflectionClassGetAll() which
+    returns IMoInflClass objects (inflection CLASSES), not IFsClosedFeature
+    objects (inflection FEATURES).  The correct accessor is FeatureGetAll(),
+    consistent with inflection_features_enumerate_source in categories.py.
+
+    categories.py:inflection_features_enumerate_source uses FeatureGetAll();
+    merge-preview must use the same iterator or the GUID lookup always misses.
     """
     try:
-        for inf in target.InflectionFeatures.InflectionClassGetAll():
-            if _guid_eq(_obj_guid(inf), guid):
-                return _unwrap(inf)
+        for feat in target.InflectionFeatures.FeatureGetAll():
+            if _guid_eq(_obj_guid(feat), guid):
+                return _unwrap(feat)
     except Exception:
         pass
     return None
@@ -1216,7 +1224,7 @@ _CUSTOM_FIELD_OWNER_CLASS: dict[str, str] = {
     "environment": "PhEnvironment",
     "phon_rule": "PhRegularRule",
     "gram_cat": "FsFeatStrucType",
-    "inflection_feature": "MoInflClass",
+    "inflection_feature": "FsClosedFeature",
     "pos": "PartOfSpeech",
 }
 

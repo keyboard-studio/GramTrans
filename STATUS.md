@@ -1,5 +1,32 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 017 — GOLD_RESERVED Edit-Copy (MERGE-per-WS fill-gaps) CREW-APPROVED (2026-07-05)
+
+**Spec**: [specs/017-gold-reserved-edit-copy/spec.md](specs/017-gold-reserved-edit-copy/spec.md)
+**LEX crew**: 4 review cycles, APPROVED (spec+domain+sweep → implement → verify/QC/domain → remediate).
+**Tests**: full unit suite **964 passed / 7 skipped / 13 xfailed / 1 xpassed / 0 failed** (+53 new).
+
+### What shipped
+- **Shared helper** `_plan_gold_reserved_edit()` in `categories.py` — guard chain: GOLD_INVIOLABLE
+  first, then IsProtected layer-2, then MERGE-per-WS comparison on Name/Abbreviation/Description.
+  Gaps (empty-in-target) -> `PlannedOverwrite(write_mode="merge")`. All-equal -> Skip(APBG).
+  All-conflict -> Skip(APBG) + detail. Mixed -> PlannedOverwrite for gap slots, conflict in summary.
+- **6 plan_action functions updated** via the helper: `gram_categories`, `inflection_features`,
+  `variant_types`, `complex_form_types`, `semantic_domains`, and `phonological_features` (via
+  `_phonology_simple_plan` filtered to `_GOLD_RESERVED_PHONOLOGY_CATEGORIES`; other 4 phonology
+  cats unchanged).
+- **Executor**: `_execute_gold_reserved_merge()` in `transfer.py` — fills empty-in-target WS slots
+  via direct `tgt_ms.set_String()` (not ApplySyncableProperties which overwrites non-empty slots).
+  Routed from `_execute_overwrite` for GOLD_RESERVED categories with `write_mode="merge"`.
+- **Defect fix**: `merge_preview._find_target_inflection_feature_by_guid` corrected from
+  `InflectionClassGetAll()` (returned inflection CLASSES) to `FeatureGetAll()` (inflection FEATURES).
+- **merge-preview wiring**: `variant_types`, `complex_form_types`, `semantic_domains` keep their
+  `None` mapping in `_CATEGORY_VALUE_TO_KEY` (FR-E13 fallback: summary text rendered without
+  per-field before/after columns). Noted as non-blocking follow-up for proper diff-key wiring.
+- **Tests**: 53 new in `test_017_gold_reserved_edit_copy.py` covering all 7 cases (a-g) x 6
+  categories parametrized; plus phoneme MULTI_INSTANCE guard, helper isolation, merge_preview
+  defect regression. Pre-existing `TestInflectionFeatureFinderFix` updated to match corrected behavior.
+
 ## ▶▶▶ Feature 016 — Custom Fields Wizard Tab (create-early, fill-later) CREW-APPROVED (2026-07-05)
 
 **Spec**: [specs/016-custom-fields-wizard-tab/](specs/016-custom-fields-wizard-tab/) — spec + plan
@@ -47,9 +74,14 @@
 3. **List-field runtime path unproven on a list-bearing source** — the 7-arg path is implemented +
    reasoned but not yet exercised against a real list-backed custom field (Ejagham corpus has none).
 
-### Next blocking task (unchanged)
-**T-Spike** in [specs/001-phase0-additive-transfer/tasks.md](specs/001-phase0-additive-transfer/tasks.md):
-the `transfer_verb_vertical()` → `Lib/preview.py` + `Lib/transfer.py` Preview/Move split before Layer 3.
+### Next blocking task
+**None outstanding from Phase 0.** The prior handoff carried "T-Spike" forward as the next
+blocking task — that was **stale**. T-Spike (`transfer_verb_vertical()` → `Lib/preview.py` +
+`Lib/transfer.py` Preview/Move split) was **CLOSED 2026-06-19**; Layer 3 was unblocked and
+delivered across Phase 3a/3b/3c, and features 010/013/015/016 all built on top of the split.
+The only surviving `transfer_verb_vertical` references are historical comments/docstrings in
+`Lib/models.py` and `Lib/transfer.py`. Next work is the non-blocking follow-ups listed under
+feature 016 above (checkState sibling, G-1 stub harness, list-field runtime path).
 
 ---
 

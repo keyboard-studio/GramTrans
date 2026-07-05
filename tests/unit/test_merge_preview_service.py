@@ -365,7 +365,13 @@ class TestValueToKeyTranslation:
 
 
 # ============================================================================
-# T044 — DEFECT FIX: inflection_feature finder uses InflectionClassGetAll (not GetAll)
+# T044 — DEFECT FIX: inflection_feature finder uses FeatureGetAll (not InflectionClassGetAll)
+#
+# Spec 017 MUST-FIX: InflectionClassGetAll() returns IMoInflClass objects
+# (inflection CLASSES), not IFsClosedFeature objects (inflection FEATURES).
+# The correct accessor is FeatureGetAll(), consistent with
+# inflection_features_enumerate_source in categories.py.
+# The previous test here was documenting the BUG — updated per spec 017.
 # ============================================================================
 
 from gramtrans.Lib.merge_preview import (  # noqa: E402
@@ -379,33 +385,46 @@ from gramtrans.Lib.merge_preview import (  # noqa: E402
 
 
 class TestInflectionFeatureFinderFix:
-    """Regression: finder must call InflectionClassGetAll(), never GetAll()."""
+    """Regression: finder must call FeatureGetAll(), never InflectionClassGetAll() or GetAll().
 
-    def test_finder_uses_InflectionClassGetAll(self):
-        """Finder resolves object via InflectionClassGetAll, not GetAll."""
+    Spec 017 MUST-FIX DEFECT: the finder previously called InflectionClassGetAll()
+    which returns inflection CLASSES (IMoInflClass), not inflection FEATURES
+    (IFsClosedFeature).  Corrected to FeatureGetAll() per categories.py pattern.
+    """
 
-        class _FakeInflClass:
+    def test_finder_uses_FeatureGetAll(self):
+        """Finder resolves object via FeatureGetAll(), not InflectionClassGetAll()."""
+
+        class _FakeInflFeat:
             guid = "aabb-ccdd"
 
         class _FakeInflFeatures:
             _getall_called = False
-            _getall_inflclass_called = False
+            _feature_getall_called = False
+            _inflclass_getall_called = False
 
             def GetAll(self):
                 self._getall_called = True
                 raise AttributeError("GetAll does not exist on InflectionFeatures")
 
+            def FeatureGetAll(self):
+                self._feature_getall_called = True
+                return [_FakeInflFeat()]
+
             def InflectionClassGetAll(self):
-                self._getall_inflclass_called = True
-                return [_FakeInflClass()]
+                self._inflclass_getall_called = True
+                return []  # returns inflection CLASSES, not features
 
         class _FakeTarget:
             InflectionFeatures = _FakeInflFeatures()
 
         result = _find_target_inflection_feature_by_guid(_FakeTarget(), "aabb-ccdd")
-        assert result is not None, "Finder should resolve the matching InflectionClass"
-        assert _FakeTarget.InflectionFeatures._getall_inflclass_called, (
-            "InflectionClassGetAll() must be called"
+        assert result is not None, "Finder should resolve the matching inflection feature"
+        assert _FakeTarget.InflectionFeatures._feature_getall_called, (
+            "FeatureGetAll() must be called to locate inflection features"
+        )
+        assert not _FakeTarget.InflectionFeatures._inflclass_getall_called, (
+            "InflectionClassGetAll() must NOT be called — it returns inflection CLASSES, not features"
         )
         assert not _FakeTarget.InflectionFeatures._getall_called, (
             "GetAll() must NOT be called — it does not exist on InflectionFeatures"
@@ -415,7 +434,7 @@ class TestInflectionFeatureFinderFix:
         """Finder returns None gracefully when no matching GUID exists."""
 
         class _FakeInflFeatures:
-            def InflectionClassGetAll(self):
+            def FeatureGetAll(self):
                 return []
 
         class _FakeTarget:
