@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Inflection Prep Block",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:57:11.550Z"
+    }
+  ],
+  "telemetryInstanceId": "39c2e9fb-71ba-4588-aee1-b16dd8060433"
+}

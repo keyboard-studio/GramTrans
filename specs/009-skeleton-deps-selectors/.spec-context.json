@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Skeleton Deps Selectors",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:56:57.861Z"
+    }
+  ],
+  "telemetryInstanceId": "11c36e4d-8f75-4671-8edd-b9cd7f2bccc1"
+}

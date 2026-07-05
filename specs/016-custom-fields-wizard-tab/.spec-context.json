@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Custom Fields Wizard Tab",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:56:29.346Z"
+    }
+  ],
+  "telemetryInstanceId": "6b19e430-36ed-4fdb-8eaa-0885e37562cf"
+}

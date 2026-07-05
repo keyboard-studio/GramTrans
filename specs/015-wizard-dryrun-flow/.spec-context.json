@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Wizard Dryrun Flow",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:56:38.620Z"
+    }
+  ],
+  "telemetryInstanceId": "964f661f-c251-4f0d-8370-e232d861ecbf"
+}

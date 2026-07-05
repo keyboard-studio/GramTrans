@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Affixes Stems",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:57:05.721Z"
+    }
+  ],
+  "telemetryInstanceId": "6c74a075-914f-431a-858b-06822d0a3927"
+}

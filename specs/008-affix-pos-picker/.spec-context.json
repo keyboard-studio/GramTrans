@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Affix Pos Picker",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:57:01.690Z"
+    }
+  ],
+  "telemetryInstanceId": "78f200bf-656a-4b09-9deb-8345f8d1800d"
+}

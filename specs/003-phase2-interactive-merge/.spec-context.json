@@ -4,6 +4,15 @@
   "branch": "003-phase2-interactive-merge",
   "selectedAt": "2026-06-22T04:27:56.459Z",
   "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-05T19:57:19.733Z"
+    }
+  ],
+  "telemetryInstanceId": "de2a4250-cdf6-4a80-b351-132d1c7142b0"
 }
