@@ -62,6 +62,27 @@ regardless of the chosen mode.
   `Selection.category_conflict_modes`. The merge-preview pane (US5) remains the roll-up review
   surface.
 
+### Session 2026-07-05 (plan verification — live FLExTools MCP + LEX crew)
+
+Resolved during `/speckit-plan` against live probes (Ejagham Full + Esperanto) and
+recorded here so the spec matches buildable reality. See
+[plan.md](./plan.md), [research.md](./research.md), [probe-results.md](./probe-results.md).
+
+- Q: Does field-level resolution fire under `MERGE`? → A: **No — `OVERWRITE`-only.**
+  `ConflictMode.MERGE` is link-if-present (writes nothing); wiring field-merge under
+  MERGE would redefine the mode (FR-011) and is **post-020** (see
+  [amendment-disposition-model.md](./amendment-disposition-model.md)). US2/FR-003 updated.
+- Q: Does the conflict UI truly apply to *every* category uniformly? → A: The
+  **mode selector** does; **field-level detection** applies only where a category
+  exposes a working syncable-scalar surface. FR-012 updated; three tiers in plan.md.
+- Q: Is the per-field conflict set really scalar/text only? → A: **No** — it is what
+  `GetSyncableProperties` returns: scalar/text **plus atomic `*RA` GUID refs**
+  (`MorphTypeRA`, `MorphoSyntaxAnalysisRA`, `SenseTypeRA`, `StatusRA`); only
+  `*RS`/`*OC` multi-valued refs are excluded. FR-013 added.
+- Q: Any category blocked outright? → A: **Phonemes and PH environments** — flexicon
+  `GetSyncableProperties` raises `ITsString.get_String` on both (reproduced on two
+  projects); field-diff for them is deferred until flexicon is fixed. FR-014 added.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Choose a conflict mode per category (Priority: P1)
@@ -92,7 +113,7 @@ for that category switches from create-new to overwrite-existing.
 
 ### User Story 2 - Resolve field-level conflicts for overwritten items (Priority: P1)
 
-When a category runs in `OVERWRITE` (or `MERGE` with divergent fields) and a selected item is IN
+When a category runs in `OVERWRITE` and a selected item is IN
 TARGET / SIMILAR, the user is shown the per-field conflicts and chooses, per field, to take
 source, keep target, merge (where eligible), skip, or edit a custom value.
 
@@ -211,10 +232,11 @@ merge-preview pane; confirm the diff shows the overwrite and exactly the fields 
 - **FR-002**: Changing a category's mode MUST persist into `Selection.category_conflict_modes`
   and MUST be the value returned by `conflict_mode_for(category)`; unset categories MUST continue
   to resolve to the Layer-1 default (no behavior change for untouched categories).
-- **FR-003**: For a selected item that is IN TARGET / SIMILAR under `OVERWRITE` (or `MERGE` with
-  divergent fields), the system MUST present the per-field conflicts via the existing
-  ConflictDialog, one row per conflicting field, with `MergeResolution` options; `MERGE` MUST be
-  hidden for non-mergeable (scalar) fields (`merge_eligible`).
+- **FR-003**: For a selected item that is IN TARGET / SIMILAR under `OVERWRITE`, the system MUST
+  present the per-field conflicts via the existing ConflictDialog, one row per conflicting field,
+  with `MergeResolution` options; `MERGE` MUST be hidden for non-mergeable (scalar / GUID-ref)
+  fields (`merge_eligible`). (Field-level resolution is `OVERWRITE`-only; `MERGE` mode is
+  link-if-present and performs no field update — see Clarifications 2026-07-05.)
 - **FR-004**: The system MUST NOT present as a conflict any field whose source and target values
   are identical (no spurious prompts).
 - **FR-005**: The executed transfer MUST apply per-field decisions individually (TAKE_SOURCE /
@@ -235,16 +257,30 @@ merge-preview pane; confirm the diff shows the overwrite and exactly the fields 
 - **FR-011**: This feature MUST NOT redefine the `ConflictMode` values, the Layer-1 kind gating
   (`_DEFAULT_CONFLICT_MODES`), the field-merge algorithm (`conflict.py`), or `MergeResolution`; it
   surfaces and wires the existing machinery.
-- **FR-012**: The conflict-mode UI MUST apply uniformly across all category pages (phonology,
-  affixes, skeleton, grammatical deps, lexical-entry types, rules, stems, custom fields) — it is
-  cross-cutting, not page-specific.
+- **FR-012**: The conflict-mode **selector** MUST appear uniformly across all category pages
+  (phonology, affixes, skeleton, grammatical deps, lexical-entry types, rules, stems, custom
+  fields) — it is cross-cutting, not page-specific. Field-level conflict **detection** applies
+  only where the category exposes a working syncable-scalar surface (per FR-013/FR-014):
+  categories without one show the selector but present no field-diff (a documented no-op), never
+  an error.
+- **FR-013**: The per-field conflict set MUST be exactly the properties returned by
+  `GetSyncableProperties` for the object — scalar/text fields PLUS atomic `*RA` GUID references
+  (e.g. `MorphTypeRA`, `MorphoSyntaxAnalysisRA`, `SenseTypeRA`, `StatusRA`). Multi-valued `*RS` /
+  `*OC` references are excluded (not enumerated by flexicon) and MUST NOT be presented as field
+  conflicts; the `MERGE` field option is offered only for text/list-valued fields (`merge_eligible`).
+- **FR-014**: Categories whose `GetSyncableProperties` currently raises the flexicon
+  `ITsString.get_String` defect — **Phonemes** and **PH environments** (reproduced on Ejagham
+  Full and Esperanto, 2026-07-05) — MUST ship with the mode selector only; field-level detection
+  for them is deferred until the flexicon defect is fixed, and the system MUST NOT attempt (and
+  error on) field-diff for them.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Per-category conflict mode**: the `ConflictMode` chosen (or Layer-1-defaulted) for a
   `GrammarCategory`, stored in `Selection.category_conflict_modes`.
 - **Field conflict**: a (object, field, source-value, target-value, merge_eligible) tuple
-  detected by `conflict.py` for an IN TARGET / SIMILAR item under overwrite/merge.
+  detected by `conflict.py` for an IN TARGET / SIMILAR item under `OVERWRITE`. The field set is
+  the `GetSyncableProperties` keys — scalar/text plus atomic `*RA` GUID refs; `*RS`/`*OC` excluded.
 - **Field resolution**: the `MergeResolution` chosen per field (with optional custom value);
   recorded for prior-run recall.
 - **Layer gating**: the Layer-1 kind rule (which modes are offered/forbidden) and Layer-2
@@ -275,8 +311,19 @@ merge-preview pane; confirm the diff shows the overwrite and exactly the fields 
 - The `ConflictMode` enum, `_DEFAULT_CONFLICT_MODES` Layer-1 gating,
   `Selection.category_conflict_modes` + `conflict_mode_for`, the `conflict.py` field-merge
   machinery, the `ConflictDialog` / `MergeResolution` UI, prior-decision recall, and Layer-2
-  `protection.py` all already exist and are correct; this feature surfaces and wires them and
-  does not re-specify them.
+  `protection.py` largely exist and are surfaced/wired by this feature — it does not re-specify
+  or redefine them. Plan verification (2026-07-05) found three surfaces still to **add/adjust**
+  as wiring (not model redefinition): a read-only `allowed_modes_for(category)` (surfacing the
+  existing Layer-1 gating, FR-001), `_OW_OPS` coverage for the field-diff categories (FR-012),
+  and a **fail-closed** `_is_protected` with an `ICmPossibility` cast (FR-007). See plan.md.
+- **Field-diff scope** (verified via live MCP probes): the per-field conflict set is what
+  `GetSyncableProperties` returns — scalar/text PLUS atomic `*RA` GUID refs; `*RS`/`*OC`
+  multi-valued refs are excluded upstream by flexicon (FR-013). Allomorph phonological
+  environments and POS template slot-lists are reference *collections* users may expect to
+  merge; they are out of scope for 020 and flagged as future scope.
+- **`MERGE` stays link-only** in this feature; field-level resolution is `OVERWRITE`-only. A
+  `MERGE`-with-field-resolution path and the broader IGNORE/SKIP/UPDATE/OVERWRITE disposition
+  model are post-020 (see [amendment-disposition-model.md](./amendment-disposition-model.md)).
 - The merge-preview pane (spec 014) is the review surface this feature feeds; its diff rendering
   is extended to reflect user-chosen modes/decisions, not redesigned.
 - **Where the mode selector lives** is resolved (2026-07-05): **inline per-category on each
