@@ -6,7 +6,7 @@
 
 ---
 
-## Constitution Check (v5.0.0)
+## Constitution Check (v5.1.0)
 
 | Principle | Row | Status |
 |---|---|---|

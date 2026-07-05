@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: Constitution v5.0.0 Principle IV (Phase 1 scope); Phase 0 spec
+**Input**: Constitution v5.1.0 Principle IV (Phase 1 scope); Phase 0 spec
 (`specs/001-phase0-additive-transfer/spec.md`) as reference shape.
 
 ---
@@ -214,9 +214,11 @@ updates.
 - **Residue tag schema**: The `[GT-Tag]:` schema defined in Phase 0 (FR-010) is
   reused unchanged. Phase 1 extends it with an optional `snap=` suffix field;
   existing Phase 0 tags without `snap=` remain valid.
-- **flexicon fork**: The MattGyverLee/flexicon fork remains the runtime
-  dependency per constitution v5.0.0 Principle II. No additional fork patches
-  are assumed to be required for Phase 1 at spec time.
+- **flexicon dependency**: The direct runtime dependency is the standalone
+  **flexicon** package (dist `pyflexicon>=4.1`), a standalone independent
+  project — NOT the MattGyverLee/flexicon fork — per constitution v5.1.0
+  Principle II. No additional patches are assumed to be required for Phase 1
+  at spec time.
 - **identity_remap availability**: The `identity_remap` dict from a prior Phase 0
   `RunReport` is made available to the Phase 1 planner by the caller (e.g., via
   a persisted JSON snapshot or an in-session cache). If unavailable, the matcher
