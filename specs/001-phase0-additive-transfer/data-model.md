@@ -7,12 +7,15 @@
 This document captures the in-module data model — the Python-level structures the
 engine passes around. It is **not** the LCM data model; LCM object shapes are
 governed by FieldWorks and are accessed via direct flexicon imports per
-constitution v5.0.0 Principle II (no flavor-adapter contract in this repo).
+constitution v5.1.0 Principle II (no flavor-adapter contract in this repo).
+flexicon is the standalone `pyflexicon>=4.1` package (a standalone independent
+project, NOT a fork of stock flexicon) that natively provides the `WritingSystems`
+enumeration fix and the `ApplySyncableProperties` method.
 
 Conventions:
 - Frozen dataclasses unless mutation is intrinsic.
 - Identifiers favor `str` GUIDs (LCM's GUID type → str at the module boundary).
-- There is no `Flavor` enum in v5.0.0: every action in this repo is flexicon
+- There is no `Flavor` enum in v5.1.0: every action in this repo is flexicon
   by construction; the Phase 3 LibLCM-fork sibling repo defines its own runtime
   type if needed.
 

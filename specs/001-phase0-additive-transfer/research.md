@@ -13,7 +13,7 @@ tooling) was performed on 2026-06-19; entries below are post-validation.
 
 ## R1. Per-operation flexicon surface (direct imports; no adapter)
 
-**Decision**: Per constitution v5.0.0 Principle II, **every Phase 0 operation imports
+**Decision**: Per constitution v5.1.0 Principle II, **every Phase 0 operation imports
 flexicon directly**. There is no `flavors/` adapter contract in this repo. The
 LibLCM-direct implementation lives in a **separate post-Phase-2 sibling repository**
 (see Principle IV) that re-implements the same module against raw LCM, sharing only
@@ -30,14 +30,14 @@ authors, not as an in-tree adapter contract.
 | ServiceLocator fallback (when no Operations wrapper) | `project.GetService(IFooFactory)` — flexicon discoverable wrapper around `Cache.ServiceLocator.GetService(...)`. No `clr.GetClrType()` needed. | LibLCM: direct `Cache.ServiceLocator.GetInstance<T>()` / `GetService<T>()`. |
 | GUID-preserving creation | Some flexicon factory wrappers DO accept a `Guid` parameter on `Create()` — validated against `POSOperations`, `MorphRuleOperations.CreateAffixTemplate`, slot factory during the STATUS.md Layer 1+2 spike. Where they don't, the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The helper lives inline at the top of `Lib/transfer.py` (no separate adapter helper). | LibLCM: identical pattern, just without the `GetService` wrapper. |
 | Writing-system inventory + creation (target side) | Read: `project.GetAllAnalysisWSs()`, `project.GetAllVernacularWSs()`, `project.GetWritingSystems()`, `project.WSHandle(tag)`, `project.WSUIName(handle)`. Create: `project.WritingSystem.<Create>` (per Operations accessor). | LibLCM: `Cache.ServiceLocator.WritingSystemManager` directly. |
-| Sync writable properties on existing/new objects | `BaseOperations.ApplySyncableProperties(item, props, ws_map=None)` — the inverse of `GetSyncableProperties`. **Only available in the patched MattGyverLee/flexicon fork** (see [CLAUDE.md](../../CLAUDE.md)); stock flexicon does not expose it. | LibLCM: open-coded multistring/string apply with the same dict shape. |
+| Sync writable properties on existing/new objects | `BaseOperations.ApplySyncableProperties(item, props, ws_map=None)` — the inverse of `GetSyncableProperties`. **Provided natively by the standalone `pyflexicon>=4.1` package** (see [CLAUDE.md](../../CLAUDE.md)) — a standalone independent project, not a fork of stock flexicon. | LibLCM: open-coded multistring/string apply with the same dict shape. |
 | Polymorphic property access (`LiftResidue`, `Description`, `Guid`, etc.) | `CastingOperations.cast_to_concrete(obj)` from flexicon — wraps the pythonnet cast. The MCP polymorphic-casting validator auto-rewrites violations. | LibLCM: explicit `((IConcreteType)obj).Property` casts. |
 | Import Residue tagging — Carrier A (LCM residue field) | For `ILexEntry`, `ILexSense`, `ILexEntryRef`, `ILexEtymology`, `ILexPronunciation`, `ILexReference`, `ILexExampleSentence`, `IMoForm`, `IMoMorphSynAnalysis`: set `LiftResidue` (validated as the residue carrier on these classes). Helper: `Lib/residue.py.apply_carrier_a(obj, tag)`. | LibLCM: identical property, accessed via explicit cast. |
 | Import Residue tagging — Carrier B (Description-append) | For grammar-piece classes lacking a residue field (`IPartOfSpeech`, `IMoInflAffixTemplate`, `IMoInflAffixSlot`, `IFsClosedFeature`, `IFsComplexFeature`, `IFsFeatStrucType`, `IFsSymFeatVal`, `IMoInflClass`, `IMoStemName`, `IMoCompoundRule`, `IMoAdhocProhibGr`, `IPhPhonemeSet`, `IPhEnvironment`, `IPhNaturalClass`, `IPhSegmentRule`, etc.): append `\n[GT-Tag]: GT\|<run_id>\|<source>\|<iso_ts>` to the inherited `Description` multistring (defined on `ICmPossibility`, `ICmMajorObject`, `IFsFeatDefn`, and others — confirmed via `resolve_property` casting index). Append is non-destructive; existing prose preserved. Helper: `Lib/residue.py.apply_carrier_b(obj, tag)`. | LibLCM: identical strategy; same inherited interfaces. |
 | Undo wrapping | The FlexTools runner already wraps each `MainFunction` invocation in an `UndoableUnitOfWork` (verified per STATUS.md "MCP validator quirks": nesting your own raises "Nested tasks are not supported"). Module code does NOT open its own UOW. | LibLCM-fork repo: same constraint applies under FlexTools. Stand-alone LibLCM tools open their own UOW via `UndoableUnitOfWorkHelper.Do(...)` from `SIL.LCModel.Infrastructure`. |
 
 **Rationale**: The v4.0.0 adapter-contract experiment added overhead with no payoff
-during a single-flavor build. v5.0.0 retires it. Direct flexicon imports keep module
+during a single-flavor build. v5.1.0 retires it. Direct flexicon imports keep module
 code idiomatic; the LibLCM-fork repo is free to pick natural raw-LCM idioms in its own
 codebase, sharing the spec artifacts above as the contract instead of a Python-shaped
 adapter base class.
@@ -188,7 +188,7 @@ which simplifies role assignment. The picker only needs to list candidate target
 ## R6. GUID preservation across projects
 
 **Decision** (revised 2026-06-19 against STATUS.md Layer 1+2 spike): Several flexicon
-Operations wrappers in the patched MattGyverLee fork DO accept a `Guid` parameter on
+Operations wrappers in the standalone `pyflexicon>=4.1` package DO accept a `Guid` parameter on
 their `Create()` overloads (validated against POS, affix template, and slot factories
 during the Layer 1+2 spike — source GUIDs were preserved end-to-end, see STATUS.md
 "Layer 2 — Template + 4 Slots"). Where the wrapper does not accept a Guid, the
@@ -205,7 +205,7 @@ standard pattern is:
    section per FR-012.
 
 Phase 0 implementation keeps this pattern inline in `Lib/transfer.py` (no adapter
-indirection per constitution v5.0.0). Category functions either call the
+indirection per constitution v5.1.0). Category functions either call the
 `Create(Guid, ...)` overload directly when available, or fall through to the
 `Create()` + `obj.Guid = ...` pattern; the choice is documented per-category in
 [contracts/category-transfer.md](contracts/category-transfer.md).
@@ -323,7 +323,7 @@ re-disabled until they preview again.
 
 The STATUS.md Layer 1+2 work currently lives inline in
 `src/gramtrans/gramtrans.py.transfer_verb_vertical()`; **tasks.md T-Spike** refactors
-it into the Preview/Move pair per constitution v5.0.0 Principle III closing clause
+it into the Preview/Move pair per constitution v5.1.0 Principle III closing clause
 before Layer 3 begins.
 
 **Rationale**: Principle III is a hard gate. Making "current preview is for current
@@ -402,7 +402,8 @@ baked into R1, R6, R7, R10 above. Status:
 
 - ~~**D1**: per-operation flavor mapping~~ → resolved in R1; constitution bumped
   to v4.0.0 (flexicon-primary) on 2026-06-19, then to v5.0.0 (no adapter contract;
-  LibLCM port = separate sibling repo) on the same date.
+  LibLCM port = separate sibling repo) on the same date, then to v5.1.0 (flexicon is
+  the standalone `pyflexicon>=4.1` package, not a fork) on 2026-07-05.
 - ~~**D2**: FlexTools module entry shape~~ → resolved; the FLExTrans-style
   convention is `docs = {...}` dict + `MainFunction(project, report, modifyAllowed)`
   in a flat entry file (`src/gramtrans/gramtrans.py`) with helpers under `Lib/`
