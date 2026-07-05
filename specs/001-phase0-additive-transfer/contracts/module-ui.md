@@ -6,7 +6,7 @@
 The PyQt UI layer (`src/gramtrans/Lib/ui/`) MUST NOT import flexicon directly or
 reach into the engine internals. Its only window onto the engine is the small
 surface declared here, exposed as module-level functions in `src/gramtrans/Lib/api.py`.
-Per constitution v5.0.0 Principle II there is no `flavors/` or `categories/`
+Per constitution v5.1.0 Principle II there is no `flavors/` or `categories/`
 subpackage to ban — the prohibition is simply "no `from flexicon ...` imports in
 `Lib/ui/`; call `Lib/api.py` instead".
 

@@ -2,7 +2,7 @@
 
 **Plan**: [../plan.md](../plan.md)
 **Data Model**: [../data-model.md](../data-model.md)
-**Constitution**: v5.0.0 (no flavor-adapter contract — flexicon imported directly)
+**Constitution**: v5.1.0 (no flavor-adapter contract — flexicon imported directly; flexicon is the standalone `pyflexicon>=4.1` package)
 
 Every category implementation under `src/gramtrans/Lib/` MUST expose the following
 interface — either as module-level functions sharing the same signatures or as a class
@@ -119,7 +119,7 @@ class CategoryTransfer(Protocol):
 
 ## Wiring conventions
 
-- Categories call flexicon directly. No adapter indirection. Per constitution v5.0.0
+- Categories call flexicon directly. No adapter indirection. Per constitution v5.1.0
   Principle II there is no `flavors/` directory in this repo.
 - The FlexTools runner already wraps each `MainFunction` invocation in an
   `UndoableUnitOfWork` (per [research.md R10](../research.md) + STATUS.md MCP-validator

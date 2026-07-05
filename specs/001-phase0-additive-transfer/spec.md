@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-15
 
-**Status**: In Implementation (Layer 1+2 validation spike complete per STATUS.md; reconciled with constitution v5.0.0 on 2026-06-19)
+**Status**: In Implementation (Layer 1+2 validation spike complete per STATUS.md; reconciled with constitution v5.1.0 on 2026-07-05)
 
 **Input**: Project description: "Transfer FLEx Grammar Module — first deliverable, scoped to
 Phase 0 (Additive) per constitution Principle IV. A FlexTools-compatible module that copies
@@ -364,10 +364,11 @@ not transferred unless they were pulled in as dependencies of the selected affix
   open in the same FLEx instance, running against the same FLEx / LCM / flexlibs
   versions — same-version compatibility between source and target is a precondition
   guaranteed by the host environment, not something the module verifies at runtime.
-- **API surface (informational)**: Per constitution v5.0.0 Principle II, Phase 0 imports
+- **API surface (informational)**: Per constitution v5.1.0 Principle II, Phase 0 imports
   flexicon **directly** (no flavor-adapter contract in this repo). The runtime depends
-  on the patched MattGyverLee/flexicon fork carrying the `WritingSystems` enumeration
-  fix and the new `ApplySyncableProperties` method. The LibLCM-direct implementation is
+  on the standalone `pyflexicon>=4.1` package — a standalone independent project, NOT a
+  fork of stock flexicon — which natively provides the `WritingSystems` enumeration
+  fix and the `ApplySyncableProperties` method. The LibLCM-direct implementation is
   a **separate post-Phase-2 sibling repository**, not an in-tree deliverable. flexlibs1
   is not used (superseded by v4.0.0). This is reiterated here as scope context; the
   per-operation surface choice is a planning concern, not a spec concern.
