@@ -294,15 +294,30 @@ def _ensure_custom_fields(target_project_name: str,
         cf_ops = proj.CustomFields
 
         def _do_creates():
+            # CellarPropertyType values for list-backed reference fields.
+            _LIST_FIELD_TYPES = frozenset((24, 26))  # ReferenceAtomic=24, ReferenceCollection=26
+            _CM_POSSIBILITY_CLASS_ID = 7  # CmPossibility.ClassID in LCM
             for act in create_actions:
                 # Idempotency: skip if already present (re-run safety).
                 existing = cf_ops.FindField(act.owner_class, act.field_name)
                 if existing:
                     continue
-                # 4-arg overload: (className, fieldName, fieldType, destinationClass=0)
-                flid = mdc_managed.AddCustomField(
-                    act.owner_class, act.field_name, act.field_type, 0
-                )
+                if act.field_type in _LIST_FIELD_TYPES:
+                    # 7-arg overload for list-backed reference fields:
+                    #   (className, fieldName, fieldType, destinationClass=CmPossibility,
+                    #    fieldHelp, fieldWs, fieldListRoot: Guid)
+                    from System import Guid as DotNetGuid  # noqa: PLC0415
+                    list_root_guid = DotNetGuid.Parse(act.list_root_guid)
+                    flid = mdc_managed.AddCustomField(
+                        act.owner_class, act.field_name, act.field_type,
+                        _CM_POSSIBILITY_CLASS_ID, "", 0, list_root_guid,
+                    )
+                else:
+                    # 4-arg overload for value types:
+                    #   (className, fieldName, fieldType, destinationClass=0)
+                    flid = mdc_managed.AddCustomField(
+                        act.owner_class, act.field_name, act.field_type, 0
+                    )
                 if not flid:
                     raise RuntimeError(
                         f"AddCustomField returned flid=0 for "

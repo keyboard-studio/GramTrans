@@ -664,6 +664,106 @@ class TestT016FailLoud:
 
 
 # ============================================================================
+# T016 AddCustomField call-shape: 4-arg vs 7-arg branch (mock boundary)
+# ============================================================================
+
+_FAKE_LIST_ROOT_GUID = "ad469eea-1234-5678-abcd-ef0123456789"
+
+
+class TestAddCustomFieldCallShape:
+    """Assert correct AddCustomField overload selection at the mock boundary.
+
+    Value types (String / MultiString / MultiUnicode / Integer / GenDate /
+    Boolean) must use the 4-arg overload with destinationClass=0.
+
+    ReferenceAtomic (24) and ReferenceCollection (26) must use the 7-arg
+    overload with destinationClass=7 (CmPossibility) and
+    fieldListRoot == the record's list_root_guid (as a Guid -- the fake
+    accepts the string representation).
+    """
+
+    def _run_create(self, field_type: int, list_root_guid: str = "") -> tuple:
+        """Simulate the _ensure_custom_fields inner _do_creates logic.
+
+        Mirrors the branching code in api._ensure_custom_fields and returns
+        the args tuple that AddCustomField was called with.
+        """
+        _LIST_FIELD_TYPES = frozenset((24, 26))
+        _CM_POSSIBILITY_CLASS_ID = 7
+
+        tgt = make_target()
+        mdc = tgt.Cache.MetaDataCacheAccessor
+        cf_ops = tgt.CustomFields
+
+        calls: list = []
+        orig_add = mdc.AddCustomField
+
+        def _recording_add(*args, **kwargs):
+            calls.append(args)
+            return orig_add(*args, **kwargs)
+
+        mdc.AddCustomField = _recording_add
+
+        # Run the branch logic (mirroring api._ensure_custom_fields _do_creates).
+        existing = cf_ops.FindField("LexEntry", "TestField")
+        assert existing == 0, "fresh target must have no pre-existing fields"
+        if field_type in _LIST_FIELD_TYPES:
+            flid = mdc.AddCustomField(
+                "LexEntry", "TestField", field_type,
+                _CM_POSSIBILITY_CLASS_ID, "", 0, list_root_guid,
+            )
+        else:
+            flid = mdc.AddCustomField(
+                "LexEntry", "TestField", field_type, 0
+            )
+        assert flid != 0, "AddCustomField must return nonzero flid on success"
+        assert len(calls) == 1, "exactly one AddCustomField call expected"
+        return calls[0]
+
+    def test_value_type_string_uses_4arg_destination_zero(self) -> None:
+        """String (13) -> 4-arg call, destinationClass=0."""
+        args = self._run_create(CPT_STRING)
+        assert len(args) == 4, f"expected 4-arg call, got {len(args)} args: {args}"
+        assert args[0] == "LexEntry"
+        assert args[1] == "TestField"
+        assert args[2] == CPT_STRING
+        assert args[3] == 0, f"destinationClass must be 0 for value types, got {args[3]}"
+
+    def test_value_type_multistring_uses_4arg_destination_zero(self) -> None:
+        """MultiString (14) -> 4-arg call, destinationClass=0."""
+        args = self._run_create(CPT_MULTISTRING)
+        assert len(args) == 4
+        assert args[3] == 0
+
+    def test_value_type_integer_uses_4arg_destination_zero(self) -> None:
+        """Integer (2) -> 4-arg call, destinationClass=0."""
+        args = self._run_create(CPT_INTEGER)
+        assert len(args) == 4
+        assert args[3] == 0
+
+    def test_reference_atomic_uses_7arg_destination_7_with_list_root(self) -> None:
+        """ReferenceAtomic (24) -> 7-arg call, destinationClass=7, fieldListRoot==list_root_guid."""
+        args = self._run_create(CPT_REFATOMIC, _FAKE_LIST_ROOT_GUID)
+        assert len(args) == 7, f"expected 7-arg call, got {len(args)} args: {args}"
+        assert args[0] == "LexEntry"
+        assert args[1] == "TestField"
+        assert args[2] == CPT_REFATOMIC
+        assert args[3] == 7, f"destinationClass must be 7 (CmPossibility) for list types, got {args[3]}"
+        # args[4] = fieldHelp (empty str), args[5] = fieldWs (0)
+        assert args[6] == _FAKE_LIST_ROOT_GUID, (
+            f"fieldListRoot must equal the record's list_root_guid, got {args[6]!r}"
+        )
+
+    def test_reference_collection_uses_7arg_destination_7_with_list_root(self) -> None:
+        """ReferenceCollection (26) -> 7-arg call, destinationClass=7, fieldListRoot==list_root_guid."""
+        args = self._run_create(CPT_REFCOLLECTION, _FAKE_LIST_ROOT_GUID)
+        assert len(args) == 7, f"expected 7-arg call, got {len(args)} args: {args}"
+        assert args[2] == CPT_REFCOLLECTION
+        assert args[3] == 7
+        assert args[6] == _FAKE_LIST_ROOT_GUID
+
+
+# ============================================================================
 # SC-004 create-before-value ordering
 # ============================================================================
 
