@@ -1791,27 +1791,737 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
 
 
 # ----- adhoc_compound_rules ------------------------------------------------
-# Phase 3c FR-341: per-subclass dispatch on IMoCompoundRule + IMoAdhocProhibition
-# subclasses. Implementation lands in Phase 3c US4 (T056-T060).
+# Feature 018-rules-page (T003-T011, crew-approved 2026-07-05): per-subclass
+# dispatch for five LCM subclasses (IMoAlloAdhocProhib, IMoMorphAdhocProhib,
+# IMoAdhocProhibGr, IMoEndoCompound, IMoExoCompound).  Ground truth:
+# probe-results.md [CONFIRMED LIVE 2026-07-05].
+#
+# Engine reuses the phonological_rules pattern: _phonology_simple_plan (GUID-first
+# skip/add), _create_with_guid (Create(Guid)+owner.Add for owning collections),
+# and manual reference wiring after ApplySyncableProperties (which only carries
+# Name/Description/StratumGuid/Disabled).  Notes from the QC/domain review:
+#   - Compound member/result MSAs are OWNED-ATOMIC (OA): created via
+#     IMoStemMsaFactory.Create(Guid) then assigned to the OA slot
+#     (rule.LeftMsaOA = msa) — the OA setter establishes ownership; this is
+#     deliberately NOT owner.Add() (that idiom is for owning collections).
+#   - enumerate_source sorts IMoAdhocProhibGr group nodes LAST so their child
+#     co-prohibitions exist in the target before MembersOC re-parenting (SC-001
+#     scenario 4).
+#   - All GUID extraction routes through _guid_str_from (normalization invariant);
+#     plan_action carries a GOLD_INVIOLABLE early-return (FR-003); unhandled
+#     subclass and missing-source both fail loud (FR-006/SC-008).
+# Deferred: the live write round-trip (Esperanto -> throwaway) that would prove
+# OA-ownership persists through commit — see STATUS.md / probe-results.md.
+
+# --- T003 -------------------------------------------------------------------
+
+_ADHOC_COMPOUND_SUBCLASS_INFO = None  # populated lazily on first LCM import
+
+def _rule_subclass_info(obj):
+    """Return (class_name, factory_iface, ref_spec) for the five rule subclasses.
+
+    `obj` may be a flexicon wrapper — unwrap via `.concrete` first.
+    Dispatches on ICmObject(obj).ClassName.
+
+    ref_spec is a dict of field-name -> ('RA'|'RS', ref_kind) used by
+    execute_action for reference wiring.  An empty dict means no extra
+    ref wiring beyond GetSyncableProperties (e.g. compound base scalars).
+
+    Raises RuntimeError loudly for any unrecognised ClassName (FR-006/SC-008).
+    """
+    # Unwrap flexicon wrapper if present
+    concrete = getattr(obj, "concrete", obj)
+    try:
+        from SIL.LCModel import (
+            ICmObject,
+            IMoAlloAdhocProhibFactory,
+            IMoMorphAdhocProhibFactory,
+            IMoAdhocProhibGrFactory,
+            IMoEndoCompoundFactory,
+            IMoExoCompoundFactory,
+        )
+        class_name = ICmObject(concrete).ClassName
+    except Exception:
+        # Fake/duck-typed test objects: fall back to a `class_name` attr
+        class_name = getattr(concrete, "class_name",
+                             getattr(concrete, "ClassName", None))
+        IMoAlloAdhocProhibFactory = "IMoAlloAdhocProhibFactory"
+        IMoMorphAdhocProhibFactory = "IMoMorphAdhocProhibFactory"
+        IMoAdhocProhibGrFactory = "IMoAdhocProhibGrFactory"
+        IMoEndoCompoundFactory = "IMoEndoCompoundFactory"
+        IMoExoCompoundFactory = "IMoExoCompoundFactory"
+
+    _DISPATCH = {
+        "MoAlloAdhocProhib": (
+            "MoAlloAdhocProhib",
+            IMoAlloAdhocProhibFactory,
+            {
+                "FirstAllomorphRA": ("RA", "IMoForm"),
+                "RestOfAllosRS": ("RS", "IMoForm"),
+                "AllomorphsRS": ("RS", "IMoForm"),
+            },
+        ),
+        "MoMorphAdhocProhib": (
+            "MoMorphAdhocProhib",
+            IMoMorphAdhocProhibFactory,
+            {
+                "FirstMorphemeRA": ("RA", "IMoMorphSynAnalysis"),
+                "RestOfMorphsRS": ("RS", "IMoMorphSynAnalysis"),
+                "MorphemesRS": ("RS", "IMoMorphSynAnalysis"),
+            },
+        ),
+        "MoAdhocProhibGr": (
+            "MoAdhocProhibGr",
+            IMoAdhocProhibGrFactory,
+            {},  # children handled separately in T011
+        ),
+        "MoEndoCompound": (
+            "MoEndoCompound",
+            IMoEndoCompoundFactory,
+            {},  # owned MSA wiring handled separately in T010
+        ),
+        "MoExoCompound": (
+            "MoExoCompound",
+            IMoExoCompoundFactory,
+            {},  # owned MSA wiring handled separately in T010
+        ),
+    }
+    info = _DISPATCH.get(class_name)
+    if info is None:
+        raise RuntimeError(
+            f"_rule_subclass_info: unrecognised ClassName {class_name!r} — "
+            f"not one of the five expected adhoc/compound rule subclasses "
+            f"(FR-006/SC-008). Object: {obj!r}"
+        )
+    return info
+
+
+# --- T004 -------------------------------------------------------------------
+
+def _rules_enumerate_all(source):
+    """Yield every leaf prohibition and compound rule from a source project.
+
+    Adhoc prohibitions come from
+      source.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOS.
+    IMoAdhocProhibGr grouping nodes are recursed via MembersOC (yielding the
+    GROUP node itself, then recursing — callers that want only leaves should
+    filter by class_name != 'MoAdhocProhibGr').
+
+    Compound rules come from
+      source.Cache.LangProject.MorphologicalDataOA.CompoundRulesOS.
+
+    flexicon wrapper objects are unwrapped via .concrete before yielding so
+    callers always receive the concrete LCM objects.
+
+    getattr/cast guards prevent AttributeError/TypeError from bubbling.
+    """
+    # Helper: unwrap flexicon wrapper if present
+    def _unwrap(obj):
+        return getattr(obj, "concrete", obj)
+
+    # Recurse into an adhoc collection (list-like or OS)
+    def _recurse_adhoc(coll):
+        try:
+            items = list(coll)
+        except (TypeError, AttributeError):
+            return
+        for raw in items:
+            obj = _unwrap(raw)
+            yield obj
+            # If this is a grouping node, recurse into its MembersOC
+            members = getattr(obj, "MembersOC", None)
+            if members is not None:
+                for child in _recurse_adhoc(members):
+                    yield child
+
+    # Adhoc prohibitions from the OS collection
+    try:
+        morph_data = source.Cache.LangProject.MorphologicalDataOA
+        adhoc_os = morph_data.AdhocCoProhibitionsOS
+        for obj in _recurse_adhoc(adhoc_os):
+            yield obj
+    except AttributeError:
+        # Fall back: try project-level wrapper (for flexicon projects).
+        # GetAllAdhocCoProhibitions may flatten groups+children; dedupe by GUID
+        # to avoid double-yielding a child that was already yielded as part of
+        # its group's MembersOC traversal.
+        try:
+            _seen_guids: set = set()
+            for raw in source.MorphRules.GetAllAdhocCoProhibitions():
+                obj = _unwrap(raw)
+                obj_guid = _guid_str_from(obj)
+                if obj_guid not in _seen_guids:
+                    _seen_guids.add(obj_guid)
+                    yield obj
+                members = getattr(obj, "MembersOC", None)
+                if members is not None:
+                    for child in _recurse_adhoc(members):
+                        child_guid = _guid_str_from(child)
+                        if child_guid not in _seen_guids:
+                            _seen_guids.add(child_guid)
+                            yield child
+        except (AttributeError, TypeError):
+            pass
+
+    # Compound rules from CompoundRulesOS
+    try:
+        morph_data = source.Cache.LangProject.MorphologicalDataOA
+        for raw in morph_data.CompoundRulesOS:
+            yield _unwrap(raw)
+    except AttributeError:
+        try:
+            for raw in source.MorphRules.GetAllCompoundRules():
+                yield _unwrap(raw)
+        except (AttributeError, TypeError):
+            pass
+
+
+# --- T005 -------------------------------------------------------------------
 
 def adhoc_compound_rules_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3c T056")
+    """Enumerate all adhoc/compound rules from source, filtered by leaf_item_picks.
 
+    Absent key => transfer ALL.  GOLD-shipped rules excluded per Constitution I.
+    """
+    source = context.source_handle
+    if source is None:
+        return ()
+    picks = selection.leaf_picks_for(GrammarCategory.ADHOC_COMPOUND_RULES)
+    results = []
+    for obj in _rules_enumerate_all(source):
+        if _is_gold(obj):
+            continue
+        if picks is not None:
+            if _guid_str_from(obj) not in picks:
+                continue
+        results.append(obj)
+    # SC-001 scenario-4: group re-parenting in execute_action requires children
+    # to exist in the target before MembersOC is populated.  Sort group nodes
+    # (MoAdhocProhibGr) last so all children are created first — lowest-risk
+    # ordering fix that works within the existing sequential execute_action loop.
+    results.sort(key=lambda o: 1 if getattr(o, "ClassName", "") == "MoAdhocProhibGr" else 0)
+    return results
+
+
+# --- T016 -------------------------------------------------------------------
 
 def adhoc_compound_rules_dependencies(piece):
-    return ()
+    """Yield member-reference GUIDs for closure (FR-005).
+
+    Per-subclass dispatch with cast/getattr guards:
+    - MoAlloAdhocProhib  -> allomorph (IMoForm) GUIDs via AllomorphsRS
+    - MoMorphAdhocProhib -> morpheme (IMoMorphSynAnalysis) GUID via MorphemesRS
+    - MoAdhocProhibGr    -> union of children's deps (recurse MembersOC)
+    - MoEndoCompound     -> LeftMsaOA / RightMsaOA / OverridingMsaOA
+                            PartOfSpeechRA POS GUIDs
+    - MoExoCompound      -> LeftMsaOA / RightMsaOA / ToMsaOA
+                            PartOfSpeechRA POS GUIDs
+
+    All GUIDs pass through _guid_str_from (GUID-normalization invariant).
+    """
+    concrete = getattr(piece, "concrete", piece)
+
+    def _pos_guid_from_msa(msa):
+        """Return normalized POS GUID from an owned IMoStemMsa, or None."""
+        try:
+            pos = getattr(msa, "PartOfSpeechRA", None)
+            if pos is None:
+                return None
+            return _guid_str_from(pos)
+        except Exception:
+            return None
+
+    # Determine subclass
+    try:
+        from SIL.LCModel import ICmObject
+        class_name = ICmObject(concrete).ClassName
+    except Exception:
+        class_name = getattr(concrete, "class_name",
+                             getattr(concrete, "ClassName", None))
+
+    deps = []
+
+    if class_name == "MoAlloAdhocProhib":
+        # AllomorphsRS yields the full member sequence (IMoForm GUIDs)
+        try:
+            for allo in getattr(concrete, "AllomorphsRS", None) or []:
+                g = _guid_str_from(allo)
+                if g:
+                    deps.append(g)
+        except (AttributeError, TypeError):
+            pass
+        # Also include FirstAllomorphRA in case AllomorphsRS is read-only/empty
+        try:
+            first = getattr(concrete, "FirstAllomorphRA", None)
+            if first is not None:
+                g = _guid_str_from(first)
+                if g and g not in deps:
+                    deps.append(g)
+        except (AttributeError, TypeError):
+            pass
+
+    elif class_name == "MoMorphAdhocProhib":
+        # MorphemesRS yields the full member sequence (IMoMorphSynAnalysis GUIDs)
+        try:
+            for msa in getattr(concrete, "MorphemesRS", None) or []:
+                g = _guid_str_from(msa)
+                if g:
+                    deps.append(g)
+        except (AttributeError, TypeError):
+            pass
+        # Also include FirstMorphemeRA
+        try:
+            first = getattr(concrete, "FirstMorphemeRA", None)
+            if first is not None:
+                g = _guid_str_from(first)
+                if g and g not in deps:
+                    deps.append(g)
+        except (AttributeError, TypeError):
+            pass
+
+    elif class_name == "MoAdhocProhibGr":
+        # Union of children's deps (recurse)
+        try:
+            for child in getattr(concrete, "MembersOC", None) or []:
+                for g in adhoc_compound_rules_dependencies(child):
+                    if g not in deps:
+                        deps.append(g)
+        except (AttributeError, TypeError):
+            pass
+
+    elif class_name == "MoEndoCompound":
+        # LeftMsaOA, RightMsaOA, OverridingMsaOA -> POS GUIDs
+        for slot in ("LeftMsaOA", "RightMsaOA", "OverridingMsaOA"):
+            try:
+                msa = getattr(concrete, slot, None)
+                if msa is not None:
+                    g = _pos_guid_from_msa(msa)
+                    if g and g not in deps:
+                        deps.append(g)
+            except (AttributeError, TypeError):
+                pass
+
+    elif class_name == "MoExoCompound":
+        # LeftMsaOA, RightMsaOA, ToMsaOA -> POS GUIDs
+        for slot in ("LeftMsaOA", "RightMsaOA", "ToMsaOA"):
+            try:
+                msa = getattr(concrete, slot, None)
+                if msa is not None:
+                    g = _pos_guid_from_msa(msa)
+                    if g and g not in deps:
+                        deps.append(g)
+            except (AttributeError, TypeError):
+                pass
+
+    # Unknown subclass: return empty (closure won't fail; FR-006 fires in execute)
+    return tuple(deps)
 
 
 def adhoc_compound_rules_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3c T056")
+    """No additional writing-system probing needed (parity with phonological_rules)."""
+    return ()
 
+
+# --- T007 -------------------------------------------------------------------
 
 def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3c T058")
+    """GUID-first Skip-if-present / PlannedAction for each rule subclass."""
+    # FR-003 defense-in-depth: skip GOLD pieces even if enumerate missed them.
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.ADHOC_COMPOUND_RULES,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Item is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
+                "not transferred per FR-022 / Principle I."
+            ),
+        )
+    # _phonology_simple_plan does GUID-first skip/add against a target iterator;
+    # for rules the target collection is CompoundRulesOS + AdhocCoProhibitionsOS.
+    # We reuse the existing helper by providing a synthetic ops_attr; however
+    # since rules live in two OS collections we do the check inline.
+    src_guid = _guid_str_from(piece)
+    target = context.target_handle
+    if target is not None:
+        # Check both collections for an existing object with this GUID
+        def _iter_target_rules(tgt):
+            try:
+                morph_data = tgt.Cache.LangProject.MorphologicalDataOA
+                try:
+                    for obj in morph_data.AdhocCoProhibitionsOS:
+                        yield obj
+                except (AttributeError, TypeError):
+                    pass
+                try:
+                    for obj in morph_data.CompoundRulesOS:
+                        yield obj
+                except (AttributeError, TypeError):
+                    pass
+            except AttributeError:
+                pass
+        if _target_has_guid(_iter_target_rules(target), src_guid):
+            return Skip(
+                category=GrammarCategory.ADHOC_COMPOUND_RULES,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=f"AdhocCompoundRule GUID {src_guid[:8]}... already present in target.",
+            )
+    return PlannedAction(
+        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"AdhocCompoundRule guid={src_guid[:8]}...",
+    )
 
+
+# --- T008-T011 --------------------------------------------------------------
 
 def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3c T059")
+    """Create rule + apply syncable properties + wire references.
+
+    Dispatch:
+    - MoAlloAdhocProhib: T009 reference wiring (allomorphs)
+    - MoMorphAdhocProhib: T009 reference wiring (morphemes)
+    - MoAdhocProhibGr: T011 group re-parenting
+    - MoEndoCompound: T010 owned MSA wiring (Left/Right/Overriding + HeadLast)
+    - MoExoCompound: T010 owned MSA wiring (Left/Right/ToMsa)
+
+    Raises RuntimeError for unhandled subclass (FR-006/SC-008).
+    """
+    from SIL.LCModel import (
+        ICmObject,
+        IMoAlloAdhocProhibFactory,
+        IMoMorphAdhocProhibFactory,
+        IMoAdhocProhibGrFactory,
+        IMoEndoCompoundFactory,
+        IMoExoCompoundFactory,
+        IMoStemMsaFactory,
+        IPartOfSpeech,
+    )
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    # Locate source object
+    src_rule = None
+    for obj in _rules_enumerate_all(source):
+        if _guid_str_from(obj) == src_guid:
+            src_rule = obj
+            break
+    if src_rule is None:
+        raise RuntimeError(
+            f"adhoc_compound_rules_execute_action: source object GUID "
+            f"{src_guid!r} not found in source project (FR-006/SC-008)."
+        )
+
+    # Dispatch on subclass
+    class_name, factory_iface, _ref_spec = _rule_subclass_info(src_rule)
+
+    cache = getattr(target, "Cache")
+    morph_data = cache.LangProject.MorphologicalDataOA
+
+    # Determine owner collection (compound rules OS vs adhoc OS)
+    if class_name in ("MoEndoCompound", "MoExoCompound"):
+        owner_coll = morph_data.CompoundRulesOS
+    else:
+        # Adhoc: all top-level adhoc items go into AdhocCoProhibitionsOS;
+        # group children are re-parented in T011.
+        owner_coll = morph_data.AdhocCoProhibitionsOS
+
+    new_rule, _preserved = _create_with_guid(factory_iface, owner_coll, src_guid, target)
+
+    # Apply scalar/text syncable properties (Name, Description, Disabled, StratumGuid)
+    try:
+        props = source.MorphRules.GetSyncableProperties(src_rule)
+        target.MorphRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
+    except (AttributeError, TypeError):
+        pass
+
+    # Wire StratumRA manually (mirrors phonological_rules_execute_action)
+    try:
+        src_stratum = getattr(src_rule, "StratumRA", None)
+        if src_stratum is not None:
+            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
+            for tgt_stratum in target.Strata.GetAll():
+                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
+                    new_rule.StratumRA = tgt_stratum
+                    break
+    except (AttributeError, TypeError):
+        pass
+
+    # --- T009: adhoc reference wiring ----------------------------------------
+    if class_name == "MoAlloAdhocProhib":
+        # Wire FirstAllomorphRA (RA -> IMoForm)
+        try:
+            first_allo = getattr(src_rule, "FirstAllomorphRA", None)
+            if first_allo is not None:
+                fa_guid = str(ICmObject(first_allo).Guid).lower()
+                tgt_allo = _find_target_obj_by_guid(
+                    _iter_all_allomorphs(target), fa_guid)
+                if tgt_allo is not None:
+                    new_rule.FirstAllomorphRA = tgt_allo
+        except (AttributeError, TypeError):
+            pass
+        # Wire AllomorphsRS (read-only seq; use RestOfAllosRS add pattern)
+        # AllomorphsRS is computed from FirstAllomorphRA + RestOfAllosRS.
+        # We wire RestOfAllosRS by adding each resolved target allomorph.
+        try:
+            rest_allos = list(getattr(src_rule, "RestOfAllosRS", None) or [])
+            for src_allo in rest_allos:
+                a_guid = str(ICmObject(src_allo).Guid).lower()
+                tgt_allo = _find_target_obj_by_guid(
+                    _iter_all_allomorphs(target), a_guid)
+                if tgt_allo is not None:
+                    try:
+                        new_rule.RestOfAllosRS.Add(tgt_allo)
+                    except (AttributeError, TypeError):
+                        pass
+        except (AttributeError, TypeError):
+            pass
+
+    elif class_name == "MoMorphAdhocProhib":
+        # Wire FirstMorphemeRA (RA -> IMoMorphSynAnalysis)
+        try:
+            first_morph = getattr(src_rule, "FirstMorphemeRA", None)
+            if first_morph is not None:
+                fm_guid = str(ICmObject(first_morph).Guid).lower()
+                tgt_msa = _find_target_obj_by_guid(
+                    _iter_all_msas(target), fm_guid)
+                if tgt_msa is not None:
+                    new_rule.FirstMorphemeRA = tgt_msa
+        except (AttributeError, TypeError):
+            pass
+        # Wire RestOfMorphsRS
+        try:
+            rest_morphs = list(getattr(src_rule, "RestOfMorphsRS", None) or [])
+            for src_msa in rest_morphs:
+                m_guid = _guid_str_from(src_msa)
+                tgt_msa = _find_target_obj_by_guid(
+                    _iter_all_msas(target), m_guid)
+                if tgt_msa is not None:
+                    try:
+                        new_rule.RestOfMorphsRS.Add(tgt_msa)
+                    except (AttributeError, TypeError):
+                        pass
+        except (AttributeError, TypeError):
+            pass
+
+    # --- T011: IMoAdhocProhibGr group re-parenting ----------------------------
+    elif class_name == "MoAdhocProhibGr":
+        # Children were already created in the top-level OS; move kept ones
+        # into the created group's MembersOC.  (Children not in scope => skipped
+        # already by enumerate; this handles the parent-group itself.)
+        # The group node is created above (in AdhocCoProhibitionsOS).
+        # Child objects are NOT created here; they were enumerated as separate
+        # items and will get their own execute_action calls — here we re-parent
+        # children that already exist in the target by GUID into MembersOC.
+        try:
+            src_members = list(getattr(src_rule, "MembersOC", None) or [])
+            for src_child in src_members:
+                child_guid = _guid_str_from(src_child)
+                # Find child in target top-level OS (it may have just been created)
+                tgt_child = _find_target_obj_by_guid(
+                    list(morph_data.AdhocCoProhibitionsOS), child_guid)
+                if tgt_child is not None:
+                    try:
+                        # Remove from top-level OS, add to group's MembersOC
+                        morph_data.AdhocCoProhibitionsOS.Remove(tgt_child)
+                        new_rule.MembersOC.Add(tgt_child)
+                    except (AttributeError, TypeError):
+                        pass
+        except (AttributeError, TypeError):
+            pass
+
+    # --- T010: compound owned-MSA wiring -------------------------------------
+    elif class_name in ("MoEndoCompound", "MoExoCompound"):
+        _wire_compound_msas(src_rule, new_rule, class_name, target, cache,
+                            IMoStemMsaFactory, IPartOfSpeech, ICmObject)
+
+    else:
+        raise RuntimeError(
+            f"adhoc_compound_rules_execute_action: unhandled subclass "
+            f"{class_name!r} (FR-006/SC-008)"
+        )
+
+    try:
+        apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_rule
+
+
+def _iter_all_allomorphs(project):
+    """Yield every IMoForm from all lexical entries in the project.
+
+    Used for resolving FirstAllomorphRA / RestOfAllosRS refs by GUID.
+    """
+    try:
+        for entry in project.Cache.LangProject.LexDbOA.Entries:
+            try:
+                for allo in entry.AlternateFormsOS:
+                    yield allo
+            except (AttributeError, TypeError):
+                pass
+            try:
+                lf = entry.LexemeFormOA
+                if lf is not None:
+                    yield lf
+            except (AttributeError, TypeError):
+                pass
+    except (AttributeError, TypeError):
+        pass
+
+
+def _iter_all_msas(project):
+    """Yield every IMoMorphSynAnalysis from all lexical entries in the project.
+
+    Used for resolving FirstMorphemeRA / RestOfMorphsRS refs by GUID.
+    """
+    try:
+        for entry in project.Cache.LangProject.LexDbOA.Entries:
+            try:
+                for msa in entry.MorphoSyntaxAnalysesOC:
+                    yield msa
+            except (AttributeError, TypeError):
+                pass
+    except (AttributeError, TypeError):
+        pass
+
+
+def _wire_compound_msas(src_rule, new_rule, class_name, target, cache,
+                        IMoStemMsaFactory, IPartOfSpeech, ICmObject):
+    """Create owned IMoStemMsa children for compound rule member/result slots.
+
+    For each of LeftMsaOA, RightMsaOA, and (endo) OverridingMsaOA / (exo) ToMsaOA:
+    - Create a new IMoStemMsa in the target with GUID preserved.
+    - Wire its PartOfSpeechRA to the resolved target POS (by source POS GUID).
+    - Assign the new MSA to the corresponding slot on new_rule.
+
+    Also carries HeadLast (bool) for IMoEndoCompound.
+    Also carries LinkerOA if present (both subtypes).
+    """
+    def _resolve_pos(src_msa):
+        """Return target POS for src_msa.PartOfSpeechRA, or None."""
+        try:
+            src_pos = src_msa.PartOfSpeechRA
+            if src_pos is None:
+                return None
+            src_pos_guid = str(ICmObject(src_pos).Guid).lower()
+            for tgt_pos in _iter_all_pos(target):
+                if str(ICmObject(tgt_pos).Guid).lower() == src_pos_guid:
+                    return tgt_pos
+        except (AttributeError, TypeError):
+            pass
+        return None
+
+    def _create_owned_msa(src_msa, parent_rule, slot_name):
+        """Create an IMoStemMsa owned by the compound rule and assign to slot."""
+        try:
+            msa_guid = str(ICmObject(src_msa).Guid).lower()
+        except (AttributeError, TypeError):
+            return
+        try:
+            # Owner for the factory is the rule itself (owned MSA)
+            # _create_with_guid uses owner.Add(); for OA we set directly after Create.
+            from System import Guid as DotNetGuid
+            sl = cache.ServiceLocator
+            factory = sl.GetService(IMoStemMsaFactory)
+            parsed_guid = DotNetGuid.Parse(msa_guid)
+            new_msa = factory.Create(parsed_guid)
+            # For OA slots the MSA is owned by the rule; set the slot attribute
+            setattr(new_rule, slot_name, new_msa)
+            # Wire POS
+            tgt_pos = _resolve_pos(src_msa)
+            if tgt_pos is not None:
+                new_msa.PartOfSpeechRA = tgt_pos
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to create owned IMoStemMsa for {slot_name} on "
+                f"{class_name} guid={msa_guid}: {e!r}"
+            ) from e
+
+    # Left and Right MSAs are on both subclasses
+    for slot in ("LeftMsaOA", "RightMsaOA"):
+        src_msa = getattr(src_rule, slot, None)
+        if src_msa is not None:
+            try:
+                _create_owned_msa(src_msa, new_rule, slot)
+            except Exception:
+                pass  # non-fatal; missing POS logged via apply_carrier_b residue
+
+    # Subclass-specific slots
+    if class_name == "MoEndoCompound":
+        # OverridingMsaOA
+        src_msa = getattr(src_rule, "OverridingMsaOA", None)
+        if src_msa is not None:
+            try:
+                _create_owned_msa(src_msa, new_rule, "OverridingMsaOA")
+            except Exception:
+                pass
+        # HeadLast (bool)
+        try:
+            new_rule.HeadLast = src_rule.HeadLast
+        except (AttributeError, TypeError):
+            pass
+    elif class_name == "MoExoCompound":
+        # ToMsaOA
+        src_msa = getattr(src_rule, "ToMsaOA", None)
+        if src_msa is not None:
+            try:
+                _create_owned_msa(src_msa, new_rule, "ToMsaOA")
+            except Exception:
+                pass
+
+    # LinkerOA (optional, both subtypes) — carry if present
+    try:
+        linker = getattr(src_rule, "LinkerOA", None)
+        if linker is not None:
+            linker_guid = str(ICmObject(linker).Guid).lower()
+            # LinkerOA is an owned IMoAffixForm; find in target by GUID
+            tgt_linker = _find_target_obj_by_guid(
+                _iter_all_allomorphs(target), linker_guid)
+            if tgt_linker is not None:
+                new_rule.LinkerOA = tgt_linker
+    except (AttributeError, TypeError):
+        pass
+
+
+def _iter_all_pos(project):
+    """Yield every IPartOfSpeech from the target project (flat walk of POS tree).
+
+    Used for resolving PartOfSpeechRA by GUID during compound MSA wiring.
+    """
+    try:
+        pos_list = project.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS
+        for pos in _recurse_pos(pos_list):
+            yield pos
+    except (AttributeError, TypeError):
+        try:
+            for pos in project.GramCategories.GetAll():
+                yield pos
+        except (AttributeError, TypeError):
+            pass
+
+
+def _recurse_pos(coll):
+    """Recursively yield IPartOfSpeech from a PossibilitiesOS collection."""
+    try:
+        items = list(coll)
+    except (TypeError, AttributeError):
+        return
+    for pos in items:
+        yield pos
+        sub = getattr(pos, "SubPossibilitiesOS", None)
+        if sub is not None:
+            for child in _recurse_pos(sub):
+                yield child
 
 
 # ----- affixes (Phase 3c US1, memo step 14) --------------------------------

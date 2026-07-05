@@ -83,6 +83,50 @@ Enumerate via `project.MorphRules.GetAllCompoundRules()`.
 > the POS reference path with a live `run_module` probe against the bound
 > project before wiring. Do not hardcode from memory.
 
+### [CONFIRMED LIVE 2026-07-05] Compound member wiring (R3a/R4a resolved)
+
+Confirmed by .NET reflection (full inherited walk) + live dump of **Esperanto**'s
+5 compound rules (the rule-bearing test source — Ejagham Mini/Full, GT-Test, and
+the FLExTrans/HC parser projects all have ZERO rules):
+
+- The left/right members live on the **subclasses** (`IMoEndoCompound` /
+  `IMoExoCompound`), NOT on base `IMoCompoundRule`. Base has only
+  `Name/Description/Disabled/StratumRA/ToProdRestrictRC`.
+- **`IMoEndoCompound`**: `LeftMsaOA`, `RightMsaOA`, `OverridingMsaOA` (all owned
+  `IMoStemMsa`), `LinkerOA` (owned `IMoAffixForm`, optional), `HeadLast` (bool).
+- **`IMoExoCompound`**: `LeftMsaOA`, `RightMsaOA`, `ToMsaOA` (all owned
+  `IMoStemMsa`), `LinkerOA` (optional).
+- Each member/result MSA is an **owned** `MoStemMsa` with its own GUID whose
+  `PartOfSpeechRA` → `IPartOfSpeech`. Engine must CREATE each owned MSA in the
+  target (GUID-preserved via `IMoStemMsaFactory`) and set its `PartOfSpeechRA` to
+  the POS resolved by GUID. The POS is the cross-category dependency (FR-005);
+  the owned MSA travels as a child of the rule.
+- `IMoStemMsaFactory`, `IMoEndoCompoundFactory`, `IMoExoCompoundFactory` all
+  confirmed importable from `SIL.LCModel`.
+- Live example ("Noun Combo", MoEndoCompound): LeftMsaOA POS=Nominal Root,
+  RightMsaOA POS=Nominal Root, OverridingMsaOA POS=Nominal Root; StratumRA None.
+- **Test-data gaps**: no project surveyed has ad hoc prohibitions or exo
+  compounds. Adhoc + exo live coverage needs authored fixtures in a throwaway
+  target; Esperanto covers endo-compound live transfer.
+
+### [CONFIRMED LIVE 2026-07-05] IMoStemMsaFactory signature (P0 resolution data)
+
+Full inherited method walk (Esperanto) of `IMoStemMsaFactory`:
+- `IMoStemMsaFactory.Create(ILexEntry entry, SandboxGenericMSA sandboxMsa) -> IMoStemMsa` (entry-owned convenience)
+- `ILcmFactory<IMoStemMsa>.Create() -> IMoStemMsa`  (inherited)
+- `ILcmFactory<IMoStemMsa>.Create(Guid guid) -> IMoStemMsa`  (inherited)
+
+=> `factory.Create(parsed_guid)` IS a valid overload (inherited from ILcmFactory).
+The QC/domain "P0" (missing overload / orphan risk) is NOT a missing-signature bug.
+For an **owned-atomic (OA)** slot the correct idiom is `Create(Guid)` then assign the
+property (`rule.LeftMsaOA = msa`) — the LCM-generated OA setter sets the owner
+back-ref + OwningFlid. This is legitimately DIFFERENT from `_create_with_guid`
+(which does `owner.Add()` for owning COLLECTIONS OS/OC). Live-confirmed that a
+populated rule's `LeftMsaOA.Owner` is the MoEndoCompound (ownership via OA slot
+holds in existing data). REMAINING unproven-without-write: that the OA setter
+persists ownership through a fresh Move-commit — covered by the deferred
+write-enabled integration test (Esperanto -> throwaway).
+
 ### IMoEndoCompound (endocentric)
 | Field | Kind | Target | Notes |
 |---|---|---|---|
@@ -115,6 +159,18 @@ hand-wires `StratumRA` after `ApplySyncableProperties`.
 > `GetSyncableProperties`/`ApplySyncableProperties`/`CompareTo` are declared on
 > `MorphRuleOperations` (matches the 8-engine pattern; CLAUDE.md lists
 > `Grammar/MorphRuleOperations.py` as one of the 8 override-declaring classes).
+
+## [DEFERRED FOLLOW-UP GATE] Live write round-trip (T013/T028)
+
+Crew-approved 2026-07-05 with this one item explicitly deferred (does NOT gate merge):
+the live Move-mode write round-trip (source **Esperanto** → fresh throwaway target) is
+not yet run. Blockers: (1) needs a write-enabled FLExTools MCP session; (2) no surveyed
+project has live **exo-compound** or **ad hoc prohibition** data — Esperanto has 5
+MoEndoCompound only. The sole unproven point is whether an owned-atomic MSA's ownership
+(`Create(Guid)` + OA-slot assign) **persists through a Move commit** (read-side ownership
+is live-confirmed above; all engine logic is covered by fake-handle unit tests). Action:
+run in a write-enabled session; if feasible seed the target with exo + adhoc rules so all
+five subclasses get live coverage (SC-001/002/008).
 
 ## Engine pattern to reuse (from categories.py)
 

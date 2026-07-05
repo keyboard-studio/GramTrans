@@ -105,14 +105,17 @@ def test_for_category_raises_keyerror_for_heavy_categories() -> None:
             categories.for_category(cat)
 
 
-def test_unimplemented_body_raises_not_implemented_with_task_pointer() -> None:
-    """Still-unimplemented bodies raise NotImplementedError with the task ID.
+def test_adhoc_compound_rules_is_fully_implemented() -> None:
+    """Feature 018-rules-page T003-T011: ADHOC_COMPOUND_RULES callbacks are
+    no longer stubs — they must NOT raise NotImplementedError.
 
-    Phase 3b shipped detect-and-skip for custom_fields (US2) and full
-    implementations for variant_types / complex_form_types /
-    semantic_domains (US3). The remaining stub category is
-    adhoc_compound_rules (Phase 3c US4 — implementation lands at T056-T060).
+    enumerate_source is a real callable now; it raises AttributeError (not
+    NotImplementedError) when given a bare object() context because the
+    real implementation accesses context.source_handle.
     """
+    from gramtrans.Lib.models import RunContext, Selection, WSMapping
     bundle = categories.for_category(GrammarCategory.ADHOC_COMPOUND_RULES)
-    with pytest.raises(NotImplementedError, match="Phase 3c T056"):
-        bundle["enumerate_source"](context=object(), selection=object())
+    # required_writing_systems returns () with any piece — no NotImplementedError
+    assert bundle["required_writing_systems"](piece=object()) == ()
+    # dependencies returns () — confirmed by test_dependencies_returns_empty_for_pure_leaves
+    assert tuple(bundle["dependencies"](piece=object())) == ()

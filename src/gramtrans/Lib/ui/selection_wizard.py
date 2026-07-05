@@ -54,6 +54,7 @@ if __package__:
         build_phonology_excluded_lossy,
         build_phonology_inventory,
         build_pos_grouped_inventory,
+        build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
         collapse_phonology,
@@ -94,6 +95,7 @@ else:
         build_phonology_excluded_lossy,
         build_phonology_inventory,
         build_pos_grouped_inventory,
+        build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
         collapse_phonology,
@@ -2461,6 +2463,304 @@ _PHON_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 23  # "new" | "in_target" 
 _PHON_MODE_OVERWRITE = OVERWRITE
 _PHON_MODE_NEW = NEW
 
+# ---------------------------------------------------------------------------
+# Data roles for _PageRules (018-rules-page T017)
+# ---------------------------------------------------------------------------
+
+_RULES_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 70  # normalized rule GUID (item rows)
+_RULES_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 71  # "group" | "item"
+_RULES_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 72  # "NEW" | "IN TARGET" | "SIMILAR" | ""
+
+# Status display map shared with phonology convention
+_RULES_STATUS_LABELS = {
+    "NEW": "NEW",
+    "IN TARGET": "IN TARGET",
+    "SIMILAR": "SIMILAR",
+    "": "",
+}
+
+
+class _PageRules(QtWidgets.QWizardPage):
+    """Rules page (018-rules-page): Ad Hoc Rules + Compound Rules block.
+
+    Two grouped tristate trees, all rows preselected.  Whole-block toggle
+    controls the entire block (tristate: all / none / partial).  Empty
+    category renders as empty (FR-011) — not an error.
+
+    No ADD_NEW / MERGE / OVERWRITE conflict-mode control (FR-016):
+    per-category Layer-1 defaults are applied automatically at plan time.
+
+    On page-leave, ``collect_rules_picks()`` collapses checked rows into
+    ``Selection.leaf_item_picks[ADHOC_COMPOUND_RULES]``:
+      - whole block ON, nothing trimmed  => key ABSENT (SC-004)
+      - whole block OFF                  => empty frozenset (SC-005)
+      - individual trim                  => full set minus deselected GUIDs
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Step 7 of 8: Rules")
+        self.setSubTitle(
+            "Review the source project's ad hoc and compound rules. "
+            "All rules are preselected. "
+            "Untick the block to skip rules, or deselect individual rules. "
+            "Status column shows whether each rule exists in the target."
+        )
+        self._inventory = None   # RulesInventory | None
+        self._mirroring: bool = False
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        self._whole_block = QtWidgets.QCheckBox("Transfer rules block", self)
+        self._whole_block.setTristate(True)
+        self._whole_block.clicked.connect(self._on_whole_block_clicked)
+        layout.addWidget(self._whole_block)
+
+        self._tree = QtWidgets.QTreeWidget(self)
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Rule", "Target"])
+        self._tree.header().setStretchLastSection(True)
+        self._tree.setAlternatingRowColors(True)
+        layout.addWidget(self._tree, 1)
+
+    # ------------------------------------------------------------------
+    def initializePage(self) -> None:
+        """Build the inventory from source+target; ALL rows preselected."""
+        if self._tree.receivers(self._tree.itemChanged) > 0:
+            self._tree.itemChanged.disconnect(self._on_item_changed)
+        self._tree.clear()
+        self._inventory = None
+
+        source = self._get_source()
+        if source is None:
+            empty = QtWidgets.QTreeWidgetItem(
+                self._tree, ["(No source project bound)", ""]
+            )
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self._refresh_whole_block()
+            return
+
+        target = self._get_target()
+        try:
+            inventory = build_rules_inventory(source, target=target)
+        except Exception:  # noqa: BLE001
+            inventory = None
+
+        if inventory is None:
+            self._refresh_whole_block()
+            return
+
+        self._inventory = inventory
+        self._populate_tree(inventory)
+        self._tree.expandAll()
+        for col in range(2):
+            self._tree.resizeColumnToContents(col)
+        self._tree.itemChanged.connect(self._on_item_changed)
+        self._refresh_whole_block()
+
+    def _populate_tree(self, inventory) -> None:
+        """One tristate group per category (count on header); item rows checked."""
+        for group in (inventory.adhoc, inventory.compound):
+            header = QtWidgets.QTreeWidgetItem(
+                self._tree,
+                [f"{group.category_label} ({group.count})", ""]
+            )
+            header.setData(0, _RULES_KIND_ROLE, "group")
+            header.setFlags(
+                header.flags()
+                | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+            )
+            header.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            bold = header.font(0)
+            bold.setBold(True)
+            header.setFont(0, bold)
+
+            if not group.rows:
+                # FR-011: empty category renders as empty, not an error
+                none_item = QtWidgets.QTreeWidgetItem(header, ["(none)", ""])
+                none_item.setFlags(
+                    none_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled
+                )
+                continue
+
+            for row in group.rows:
+                status_text = _RULES_STATUS_LABELS.get(row.target_status, row.target_status)
+                item = QtWidgets.QTreeWidgetItem(
+                    header, [row.label, status_text]
+                )
+                item.setData(0, _RULES_GUID_ROLE, row.guid)
+                item.setData(0, _RULES_KIND_ROLE, "item")
+                item.setData(0, _RULES_STATUS_ROLE, row.target_status)
+                item.setFlags(
+                    item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                )
+                cs = (QtCore.Qt.CheckState.Checked if row.checked
+                      else QtCore.Qt.CheckState.Unchecked)
+                item.setCheckState(0, cs)
+
+    # -- whole-block toggle ------------------------------------------------
+    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
+        """User toggled the whole-block checkbox: check-all or uncheck-all."""
+        if not self._has_any_item():
+            self._refresh_whole_block()
+            return
+        want_checked = not self._all_items_checked()
+        self._set_all_items(want_checked)
+        self._refresh_whole_block()
+
+    def _set_all_items(self, checked: bool) -> None:
+        state = (QtCore.Qt.CheckState.Checked if checked
+                 else QtCore.Qt.CheckState.Unchecked)
+        self._mirroring = True
+        try:
+            for _g, item in self._iter_item_rows():
+                item.setCheckState(0, state)
+        finally:
+            self._mirroring = False
+
+    def _refresh_whole_block(self) -> None:
+        """Reflect aggregate item state on the whole-block tristate box.
+
+        Empty block => unchecked + disabled (NOT vacuously fully-selected,
+        per edge-case invariant — mirrors _PagePhonology / _PageCustomFields).
+        """
+        self._mirroring = True
+        try:
+            if not self._has_any_item():
+                self._whole_block.setEnabled(False)
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+                return
+            self._whole_block.setEnabled(True)
+            checked = sum(
+                1 for _g, it in self._iter_item_rows()
+                if it.checkState(0) == QtCore.Qt.CheckState.Checked
+            )
+            total = sum(1 for _ in self._iter_item_rows())
+            if checked == 0:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            elif checked == total:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
+            else:
+                self._whole_block.setCheckState(
+                    QtCore.Qt.CheckState.PartiallyChecked
+                )
+        finally:
+            self._mirroring = False
+
+    def _on_item_changed(self, item, column) -> None:
+        if self._mirroring or column != 0:
+            return
+        self._refresh_whole_block()
+
+    # -- tree walking helpers ----------------------------------------------
+    def _iter_item_rows(self):
+        """Yield (group_item, item) for every checkable rule item row."""
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            group = root.child(i)
+            if group.data(0, _RULES_KIND_ROLE) != "group":
+                continue
+            for j in range(group.childCount()):
+                item = group.child(j)
+                if item.data(0, _RULES_KIND_ROLE) == "item":
+                    yield group, item
+
+    def _has_any_item(self) -> bool:
+        for _ in self._iter_item_rows():
+            return True
+        return False
+
+    def _all_items_checked(self) -> bool:
+        any_item = False
+        for _g, item in self._iter_item_rows():
+            any_item = True
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                return False
+        return any_item
+
+    def whole_block_on(self) -> bool:
+        """True iff any item row is currently checked."""
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                return True
+        return False
+
+    # -- state API (T019) --------------------------------------------------
+    def collect_rules_picks(self) -> Optional[frozenset]:
+        """Return checked GUIDs as a frozenset, or None for 'transfer all'.
+
+        None  => key absent from leaf_item_picks (SC-004 untouched default).
+        frozenset() => whole block OFF, transfer nothing (SC-005).
+        frozenset({...}) => individual trim — full set minus deselected.
+
+        Grouping node semantics: a group node is included iff >=1 child is
+        kept; deselected children are excluded (data-model.md edge case).
+        """
+        if self._inventory is None:
+            return None
+
+        all_item_guids = frozenset(
+            item.data(0, _RULES_GUID_ROLE)
+            for _g, item in self._iter_item_rows()
+            if item.data(0, _RULES_GUID_ROLE)
+        )
+        checked_guids = frozenset(
+            item.data(0, _RULES_GUID_ROLE)
+            for _g, item in self._iter_item_rows()
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked
+            and item.data(0, _RULES_GUID_ROLE)
+        )
+
+        # Whole block OFF => empty frozenset
+        if not checked_guids:
+            return frozenset()
+
+        # All rows checked => key absent (SC-004 / data-model "untouched" case)
+        if checked_guids == all_item_guids:
+            return None
+
+        # Individual trim
+        return checked_guids
+
+    def inventory(self):
+        """Return the current RulesInventory (may be None before initializePage)."""
+        return self._inventory
+
+    # ------------------------------------------------------------------
+    def _get_source(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(p0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
+
 
 class _PagePhonology(QtWidgets.QWizardPage):
     """Page 2: Phonology block (spec 010 — the first Model-B selector).
@@ -3051,6 +3351,31 @@ def _compute_wizard_plan(wizard) -> tuple:
                 leaf_item_picks=merged_leaf,
             )
 
+    # Step 5c: rules block collapse-merge (018-rules-page T019).
+    # collect_rules_picks() returns:
+    #   None         => key absent (transfer ALL, SC-004 untouched default)
+    #   frozenset()  => whole block OFF, zero rules transferred (SC-005)
+    #   frozenset({..}) => individual trim subset
+    rules_page = wizard.page_rules() if hasattr(wizard, "page_rules") else None
+    if rules_page is not None and rules_page.inventory() is not None:
+        rules_picks = rules_page.collect_rules_picks()
+        if rules_picks is None:
+            # Untouched / fully-checked => include category, key absent (transfer all)
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.ADHOC_COMPOUND_RULES] = True
+            selection = dataclasses.replace(selection, categories=merged_categories)
+        else:
+            # Trimmed or whole-block-OFF: include category + emit frozenset (may be empty)
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.ADHOC_COMPOUND_RULES] = True
+            merged_leaf = dict(selection.leaf_item_picks)
+            merged_leaf[GrammarCategory.ADHOC_COMPOUND_RULES] = rules_picks
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                leaf_item_picks=merged_leaf,
+            )
+
     # Step 6: WS mapping from page 0.
     page0 = wizard.page_project_ws()
     ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
@@ -3303,6 +3628,9 @@ class SelectionWizard(QtWidgets.QWizard):
         self._page_gram_deps = _PageGramDeps()
         # _PageScopeConflict kept but NOT added to the wizard (conflict UI deferred FR-012).
         self._page_scope = _PageScopeConflict()
+        # 018-rules-page: Rules page sits after Lexical-entry types (021, not yet added)
+        # and before Preview (FR-007).  Positioned after _PageGramDeps per spec order.
+        self._page_rules = _PageRules()
         self._page_preview = _PagePreview()
         self._page_finish = _PageFinish(report_sink, modify_allowed)
 
@@ -3312,7 +3640,8 @@ class SelectionWizard(QtWidgets.QWizard):
         self.addPage(self._page_items)         # index 3
         self.addPage(self._page_skeleton)      # index 4
         self.addPage(self._page_gram_deps)     # index 5
-        self.addPage(self._page_finish)        # index 6
+        self.addPage(self._page_rules)         # index 6  (018-rules-page)
+        self.addPage(self._page_finish)        # index 7
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
@@ -3341,6 +3670,10 @@ class SelectionWizard(QtWidgets.QWizard):
 
     def page_gram_deps(self):
         return self._page_gram_deps
+
+    def page_rules(self):
+        """Named accessor for _PageRules (018-rules-page P-1 pattern)."""
+        return self._page_rules
 
     def page_preview(self):
         return self._page_preview

@@ -2338,6 +2338,351 @@ def phonology_uses_untraversed_rules(inventory: PhonologyInventory,
     return bool(inventory.untraversed_rule_guids & set(checked_rule_guids))
 
 
+# ============================================================================
+# Rules Inventory (specs/018-rules-page, T014-T015)
+# ============================================================================
+
+@dataclass(frozen=True)
+class RuleRow:
+    """One selectable rule item (data-model.md).
+
+    Attributes
+    ----------
+    guid : str
+        Normalized (_guid_str_from) GUID — lowercase, braces stripped.
+    label : str
+        Display name: Name.BestAnalysisAlternative; synthesized fallback.
+    subclass : str
+        ClassName: MoAlloAdhocProhib | MoMorphAdhocProhib | MoAdhocProhibGr
+        | MoEndoCompound | MoExoCompound.
+    checked : bool
+        Default True (preselect-all, FR-009).
+    target_status : str
+        "NEW" | "IN TARGET" | "SIMILAR" | "" (no target bound).
+    parent_group_guid : str | None
+        Set for adhoc children owned by a grouping node; None for top-level items.
+    """
+    guid: str
+    label: str
+    subclass: str
+    checked: bool
+    target_status: str
+    parent_group_guid: Optional[str]
+
+
+@dataclass(frozen=True)
+class RuleCategoryGroup:
+    """One category block in the rules inventory.
+
+    Attributes
+    ----------
+    category_label : str
+        "Ad Hoc Rules" | "Compound Rules"
+    rows : tuple[RuleRow, ...]
+        User-defined rules; grouping nodes appear as rows with
+        parent_group_guid=None and own children linked via parent_group_guid.
+    count : int
+        User-defined rule count (FR-011).
+    """
+    category_label: str
+    rows: Tuple[RuleRow, ...]
+    count: int
+
+
+@dataclass(frozen=True)
+class RulesInventory:
+    """Top-level result of build_rules_inventory (data-model.md).
+
+    Attributes
+    ----------
+    adhoc : RuleCategoryGroup
+        Ad Hoc Rules category.
+    compound : RuleCategoryGroup
+        Compound Rules category.
+    has_any : bool
+        False => whole-block toggle unchecked/disabled (edge case).
+    """
+    adhoc: RuleCategoryGroup
+    compound: RuleCategoryGroup
+    has_any: bool
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for build_rules_inventory
+# ---------------------------------------------------------------------------
+
+def _rule_guid(obj) -> str:
+    """Normalized GUID for a rule object (mirrors _phon_guid)."""
+    try:
+        from SIL.LCModel import ICmObject  # noqa: F401 -- lazy, absent in unit tests
+        return str(ICmObject(obj).Guid).lower()
+    except Exception:  # noqa: BLE001
+        return str(getattr(obj, "guid", "")).lower()
+
+
+def _rule_label(obj) -> str:
+    """Best display label for a rule object; synthesized fallback includes GUID prefix."""
+    # Name.BestAnalysisAlternative is the canonical label
+    try:
+        name = obj.Name
+        if name is not None:
+            text = getattr(name, "BestAnalysisAlternative", None)
+            if text is not None:
+                t = getattr(text, "Text", None)
+                if t and t not in ("***", ""):
+                    return t
+    except (AttributeError, TypeError):
+        pass
+    # Synthesized fallback using subclass + guid prefix
+    class_name = getattr(obj, "class_name",
+                         getattr(obj, "ClassName", None)) or "Rule"
+    guid = _rule_guid(obj)
+    return f"{class_name}({guid[:8]})" if guid else class_name
+
+
+def _rule_class_name(obj) -> str:
+    """ClassName of a rule object, guarded for fakes."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).ClassName
+    except Exception:  # noqa: BLE001
+        return getattr(obj, "class_name",
+                       getattr(obj, "ClassName", "")) or ""
+
+
+def _rule_target_status(obj_guid: str, target_guids: set,
+                        target_labels: Optional[set],
+                        obj_label: str) -> str:
+    """Compute 'NEW' | 'IN TARGET' | 'SIMILAR' for a rule row.
+
+    Matches the 008/009/010 status helper contract:
+      - GUID match => 'IN TARGET'
+      - casefold label match (when target_labels provided) => 'SIMILAR'
+      - else => 'NEW'
+    """
+    if obj_guid in target_guids:
+        return "IN TARGET"
+    if target_labels is not None and obj_label:
+        if obj_label.strip().casefold() in target_labels:
+            return "SIMILAR"
+    return "NEW"
+
+
+def _rules_walk_adhoc(source):
+    """Yield (obj, parent_group_guid) pairs from AdhocCoProhibitionsOS (recurse groups).
+
+    Top-level items have parent_group_guid=None.
+    Group nodes appear before their children (depth-first pre-order).
+    """
+    def _recurse(coll, parent_guid):
+        try:
+            items = list(coll)
+        except (TypeError, AttributeError):
+            return
+        for raw in items:
+            obj = getattr(raw, "concrete", raw)
+            yield obj, parent_guid
+            members = getattr(obj, "MembersOC", None)
+            if members is not None:
+                try:
+                    child_list = list(members)
+                except (TypeError, AttributeError):
+                    child_list = []
+                if child_list:
+                    this_guid = _rule_guid(obj)
+                    for child_result in _recurse(members, this_guid):
+                        yield child_result
+
+    # Try direct LCM path first
+    try:
+        morph_data = source.Cache.LangProject.MorphologicalDataOA
+        for pair in _recurse(morph_data.AdhocCoProhibitionsOS, None):
+            yield pair
+        return
+    except AttributeError:
+        pass
+    # Flexicon wrapper fallback
+    try:
+        for raw in source.MorphRules.GetAllAdhocCoProhibitions():
+            obj = getattr(raw, "concrete", raw)
+            yield obj, None
+            members = getattr(obj, "MembersOC", None)
+            if members is not None:
+                this_guid = _rule_guid(obj)
+                for pair in _recurse(members, this_guid):
+                    yield pair
+    except (AttributeError, TypeError):
+        pass
+
+
+def _rules_walk_compound(source):
+    """Yield concrete compound rule objects from CompoundRulesOS."""
+    try:
+        morph_data = source.Cache.LangProject.MorphologicalDataOA
+        for raw in morph_data.CompoundRulesOS:
+            yield getattr(raw, "concrete", raw)
+        return
+    except AttributeError:
+        pass
+    try:
+        for raw in source.MorphRules.GetAllCompoundRules():
+            yield getattr(raw, "concrete", raw)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _rules_target_guid_label_sets(target):
+    """Return (adhoc_guids, adhoc_labels, compound_guids, compound_labels).
+
+    Used by build_rules_inventory for per-row target_status computation.
+    Returns four empty sets when target is None.
+    """
+    adhoc_guids: Set[str] = set()
+    adhoc_labels: Set[str] = set()
+    compound_guids: Set[str] = set()
+    compound_labels: Set[str] = set()
+    if target is None:
+        return adhoc_guids, adhoc_labels, compound_guids, compound_labels
+
+    # Adhoc
+    try:
+        for obj, _pg in _rules_walk_adhoc(target):
+            g = _rule_guid(obj)
+            adhoc_guids.add(g)
+            lbl = _rule_label(obj)
+            if lbl:
+                adhoc_labels.add(lbl.strip().casefold())
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Compound
+    try:
+        for obj in _rules_walk_compound(target):
+            g = _rule_guid(obj)
+            compound_guids.add(g)
+            lbl = _rule_label(obj)
+            if lbl:
+                compound_labels.add(lbl.strip().casefold())
+    except Exception:  # noqa: BLE001
+        pass
+
+    return adhoc_guids, adhoc_labels, compound_guids, compound_labels
+
+
+_ADHOC_SUBCLASSES = frozenset((
+    "MoAlloAdhocProhib", "MoMorphAdhocProhib", "MoAdhocProhibGr",
+))
+_COMPOUND_SUBCLASSES = frozenset((
+    "MoEndoCompound", "MoExoCompound",
+))
+
+
+def _is_gold_rule(obj) -> bool:
+    """True when an object has GOLD-shipped status (Constitution I guard)."""
+    # Reuse the IsProtected / GOLD pattern from categories.py
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).IsProtected
+    except Exception:  # noqa: BLE001
+        return bool(getattr(obj, "IsProtected", False))
+
+
+def build_rules_inventory(source, target=None) -> RulesInventory:
+    """Build a RulesInventory from source (read-only).
+
+    Walks both OS collections (recursing IMoAdhocProhibGr.MembersOC) and
+    builds per-row target_status via the 008/009/010 pattern.  All rows are
+    preselected (checked=True, FR-009).  GUIDs are normalized via _rule_guid
+    (mirrors categories._guid_str_from — same lowercase/braces-stripped contract).
+
+    Parameters
+    ----------
+    source :
+        FLExProject handle (or duck-typed equivalent). May be None.
+    target :
+        Optional target project handle. When None, target_status is blank.
+
+    Returns
+    -------
+    RulesInventory
+    """
+    # Build target GUID / label sets for status classification
+    adhoc_tgt_guids, adhoc_tgt_labels, cmpd_tgt_guids, cmpd_tgt_labels = (
+        _rules_target_guid_label_sets(target)
+    )
+    has_target = target is not None
+
+    adhoc_rows: List[RuleRow] = []
+    compound_rows: List[RuleRow] = []
+
+    # --- Ad Hoc Rules ---------------------------------------------------------
+    if source is not None:
+        try:
+            for obj, parent_group_guid in _rules_walk_adhoc(source):
+                if _is_gold_rule(obj):
+                    continue
+                class_name = _rule_class_name(obj)
+                if class_name not in _ADHOC_SUBCLASSES:
+                    continue  # unexpected subclass: skip silently (enumeration only)
+                g = _rule_guid(obj)
+                lbl = _rule_label(obj)
+                if has_target:
+                    status = _rule_target_status(
+                        g, adhoc_tgt_guids, adhoc_tgt_labels, lbl)
+                else:
+                    status = ""
+                adhoc_rows.append(RuleRow(
+                    guid=g,
+                    label=lbl,
+                    subclass=class_name,
+                    checked=True,
+                    target_status=status,
+                    parent_group_guid=parent_group_guid,
+                ))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # --- Compound Rules -------------------------------------------------------
+    if source is not None:
+        try:
+            for obj in _rules_walk_compound(source):
+                if _is_gold_rule(obj):
+                    continue
+                class_name = _rule_class_name(obj)
+                if class_name not in _COMPOUND_SUBCLASSES:
+                    continue
+                g = _rule_guid(obj)
+                lbl = _rule_label(obj)
+                if has_target:
+                    status = _rule_target_status(
+                        g, cmpd_tgt_guids, cmpd_tgt_labels, lbl)
+                else:
+                    status = ""
+                compound_rows.append(RuleRow(
+                    guid=g,
+                    label=lbl,
+                    subclass=class_name,
+                    checked=True,
+                    target_status=status,
+                    parent_group_guid=None,
+                ))
+        except Exception:  # noqa: BLE001
+            pass
+
+    adhoc_group = RuleCategoryGroup(
+        category_label="Ad Hoc Rules",
+        rows=tuple(adhoc_rows),
+        count=len(adhoc_rows),
+    )
+    compound_group = RuleCategoryGroup(
+        category_label="Compound Rules",
+        rows=tuple(compound_rows),
+        count=len(compound_rows),
+    )
+    has_any = (adhoc_group.count + compound_group.count) > 0
+    return RulesInventory(adhoc=adhoc_group, compound=compound_group, has_any=has_any)
+
+
 def build_phonology_excluded_lossy(
     inventory: PhonologyInventory,
     checked_by_category: Dict[object, Set[str]],

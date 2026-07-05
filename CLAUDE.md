@@ -55,4 +55,4 @@ closing clause before Layer 3 begins.
 
 ## Rules
 
-When working and referencing flexicon or liblcm, ALWAYS use FLExToolsMCP instead of using direct code inspection. This allows lookup and testing.
+When working and referencing flexicon or liblcm, ALWAYS use FLExToolsMCP instead of using direct code inspection. This allows lookup and testing. `Ejagham Mini` and `Esperanto`, `Mbugwe Lizzie HCPractice` are good (read-only) test projects for many phenomena.

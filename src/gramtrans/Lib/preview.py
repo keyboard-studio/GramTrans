@@ -166,6 +166,13 @@ def build_run_plan(
             elif isinstance(result, PlannedAction):
                 actions.append(result)
 
+    # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
+    # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
+    # Routes into the shared excluded_lossy list -> single Move gate (T024).
+    _rules_missing_ref_warnings(
+        context, selection, actions, excluded_lossy, source, target
+    )
+
     return RunPlan(
         context=context,
         selection=selection,
@@ -178,6 +185,182 @@ def build_run_plan(
         lexentry_ref_bindings=_lexentry_ref_bindings,
         excluded_lossy=tuple(excluded_lossy),
     )
+
+
+# ============================================================================
+# Rules missing-reference detection (018-rules-page T023, US4, FR-014/FR-015)
+# ============================================================================
+
+def _rules_missing_ref_warnings(
+    context: "RunContext",
+    selection: "Selection",
+    planned_actions: List["PlannedAction"],
+    excluded_lossy: List["ExcludedLossy"],
+    source,
+    target,
+) -> None:
+    """Emit ExcludedLossy warnings for kept rules with unresolvable member refs.
+
+    For each rule that was planned (PlannedAction for ADHOC_COMPOUND_RULES),
+    inspect its dependency GUIDs (via adhoc_compound_rules_dependencies).
+    If a dep GUID is:
+      - NOT in the set of in-flight action GUIDs (being transferred), AND
+      - NOT already present in the target (by GUID),
+    emit one entry-centric ExcludedLossy warning for that (rule, dep) pair
+    (FR-014 one-per-ref, FR-015 routed to shared Move gate).
+
+    ``target is None`` => treat target as lacking every ref (safe default,
+    no crash — spec Assumptions / data-model.md "No target bound" invariant).
+
+    All GUID comparisons use _guid_str_from via the categories helper so the
+    normalization invariant (lowercase, braces-stripped) is upheld on both
+    sides.
+    """
+    if __package__:
+        from .categories import adhoc_compound_rules_dependencies, _rules_enumerate_all, _guid_str_from
+    else:
+        from categories import adhoc_compound_rules_dependencies, _rules_enumerate_all, _guid_str_from  # type: ignore
+
+    # Build the set of GUIDs that are 'in-flight' (planned for transfer in this run)
+    in_flight_guids: set = {
+        a.source_guid
+        for a in planned_actions
+        if isinstance(a, PlannedAction)
+    }
+
+    # Build the set of GUIDs already present in the target (all rule-dep categories:
+    # allomorphs, MSAs, POS objects).  We use a broad approach — collect GUIDs of
+    # every reachable object in the target that might be a dep of a rule.
+    target_guids: set = set()
+    if target is not None:
+        try:
+            # Allomorphs (IMoForm)
+            for entry in target.Cache.LangProject.LexDbOA.Entries:
+                try:
+                    for allo in entry.AlternateFormsOS:
+                        target_guids.add(_guid_str_from(allo))
+                except (AttributeError, TypeError):
+                    pass
+                try:
+                    lf = entry.LexemeFormOA
+                    if lf is not None:
+                        target_guids.add(_guid_str_from(lf))
+                except (AttributeError, TypeError):
+                    pass
+                # MSAs (IMoMorphSynAnalysis)
+                try:
+                    for msa in entry.MorphoSyntaxAnalysesOC:
+                        target_guids.add(_guid_str_from(msa))
+                except (AttributeError, TypeError):
+                    pass
+        except (AttributeError, TypeError):
+            pass
+        # POS objects (IPartOfSpeech — compound rule deps)
+        try:
+            def _iter_pos(pos_list):
+                for pos in pos_list:
+                    target_guids.add(_guid_str_from(pos))
+                    try:
+                        for child in pos.SubPossibilitiesOS:
+                            _iter_pos([child])
+                    except (AttributeError, TypeError):
+                        pass
+            poses = target.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS
+            _iter_pos(list(poses))
+        except (AttributeError, TypeError):
+            pass
+
+    # Identify which rules are planned (in the ADHOC_COMPOUND_RULES planned actions)
+    planned_rule_guids: set = {
+        a.source_guid
+        for a in planned_actions
+        if isinstance(a, PlannedAction)
+        and getattr(a, "category", None) == GrammarCategory.ADHOC_COMPOUND_RULES
+    }
+
+    if not planned_rule_guids:
+        return
+
+    # Build a guid -> label map for kept rules using source enumeration
+    rule_labels: dict = {}
+    if source is not None:
+        try:
+            for obj in _rules_enumerate_all(source):
+                g = _guid_str_from(obj)
+                if g in planned_rule_guids:
+                    try:
+                        name = obj.Name
+                        text = getattr(
+                            getattr(name, "BestAnalysisAlternative", None),
+                            "Text", None
+                        ) if name is not None else None
+                        lbl = text if text and text not in ("***", "") else g[:8]
+                    except (AttributeError, TypeError):
+                        lbl = g[:8]
+                    rule_labels[g] = lbl
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Determine ref kind from dep GUID context.
+    # We cannot cheaply infer ref kind from a plain GUID, so we iterate the
+    # source rule objects and use the subclass-specific fields.
+    def _dep_ref_kind(rule_obj, dep_guid: str) -> str:
+        """Guess stranded_ref_kind from the rule subclass fields."""
+        try:
+            from SIL.LCModel import ICmObject
+            class_name = ICmObject(getattr(rule_obj, "concrete", rule_obj)).ClassName
+        except Exception:
+            class_name = getattr(rule_obj, "class_name",
+                                 getattr(rule_obj, "ClassName", "")) or ""
+        if class_name == "MoAlloAdhocProhib":
+            return "allomorph"
+        if class_name == "MoMorphAdhocProhib":
+            return "morpheme"
+        if class_name in ("MoEndoCompound", "MoExoCompound"):
+            return "part-of-speech"
+        return "member"
+
+    def _dep_label(dep_guid: str) -> str:
+        return dep_guid[:8]
+
+    # Emit warnings: one per (kept rule, stranded dep) pair
+    warned: set = set()
+    if source is not None:
+        try:
+            for rule_obj in _rules_enumerate_all(source):
+                rule_guid = _guid_str_from(rule_obj)
+                if rule_guid not in planned_rule_guids:
+                    continue
+                dep_guids = adhoc_compound_rules_dependencies(rule_obj)
+                for dep_guid in dep_guids:
+                    if not dep_guid:
+                        continue
+                    # Dep is resolved if in-flight or already in target
+                    if dep_guid in in_flight_guids:
+                        continue
+                    if dep_guid in target_guids:
+                        continue
+                    key = (rule_guid, dep_guid)
+                    if key in warned:
+                        continue
+                    warned.add(key)
+                    rule_lbl = rule_labels.get(rule_guid, rule_guid[:8])
+                    ref_kind = _dep_ref_kind(rule_obj, dep_guid)
+                    excluded_lossy.append(ExcludedLossy(
+                        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+                        entry_guid=rule_guid,
+                        entry_label=rule_lbl,
+                        dep_category=GrammarCategory.ADHOC_COMPOUND_RULES,
+                        dep_guid=dep_guid,
+                        dep_label=_dep_label(dep_guid),
+                        message=(
+                            f"Rule '{rule_lbl}' references {ref_kind} "
+                            f"'{_dep_label(dep_guid)}' which is absent from the target "
+                            f"and not being transferred."
+                        ),
+                    ))
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ============================================================================

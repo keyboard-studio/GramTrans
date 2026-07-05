@@ -41,6 +41,7 @@ _ACCESSORS = [
     ("page_items",        "_page_items"),
     ("page_skeleton",     "_page_skeleton"),
     ("page_gram_deps",    "_page_gram_deps"),
+    ("page_rules",        "_page_rules"),
     ("page_preview",      "_page_preview"),
     ("page_finish",       "_page_finish"),
 ]
@@ -100,4 +101,63 @@ def test_custom_fields_page_registered_in_wizard_source():
     assert add_phon != -1, "addPage(_page_phonology) not found"
     assert add_cf < add_phon, (
         "Custom Fields addPage must appear before Phonology addPage"
+    )
+
+
+# ============================================================================
+# T022 -- _PageRules registered at addPage index 6, _page_finish at 7,
+#         page_rules() accessor returns _PageRules, appears before _PagePhonology
+#         (appears AFTER phonology in order, actually before _page_finish).
+# ============================================================================
+
+def test_rules_accessor_exists():
+    """T022: page_rules() accessor must be present on SelectionWizard."""
+    assert hasattr(SelectionWizard, "page_rules"), (
+        "SelectionWizard missing page_rules accessor (018-rules-page T018)"
+    )
+
+
+def test_rules_accessor_returns_page_rules_type():
+    """T022: page_rules() returns the stored _page_rules attribute."""
+    from gramtrans.Lib.ui import selection_wizard as sw_mod
+    _PageRules = sw_mod._PageRules
+    w = _StubWizard()
+    w._page_rules = object()  # sentinel
+    result = SelectionWizard.page_rules(w)
+    assert result is w._page_rules
+
+
+def test_rules_page_registered_before_page_finish_in_source():
+    """T022: addPage(_page_rules) appears before addPage(_page_finish) in source."""
+    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    add_rules = src.find("addPage(self._page_rules)")
+    add_finish = src.find("addPage(self._page_finish)")
+    assert add_rules != -1, "addPage(_page_rules) not found in wizard source"
+    assert add_finish != -1, "addPage(_page_finish) not found in wizard source"
+    assert add_rules < add_finish, (
+        "_PageRules addPage must appear before _PageFinish addPage (index 6 < 7)"
+    )
+
+
+def test_rules_page_registered_after_gram_deps_in_source():
+    """T022: addPage(_page_rules) appears after addPage(_page_gram_deps) in source."""
+    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    add_gram = src.find("addPage(self._page_gram_deps)")
+    add_rules = src.find("addPage(self._page_rules)")
+    assert add_gram != -1, "addPage(_page_gram_deps) not found in wizard source"
+    assert add_rules != -1, "addPage(_page_rules) not found in wizard source"
+    assert add_gram < add_rules, (
+        "_PageGramDeps (index 5) must be addPage'd before _PageRules (index 6)"
+    )
+
+
+def test_page_rules_appears_before_page_finish_accessor():
+    """T022: page_rules accessor appears in source before page_finish accessor."""
+    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    rules_acc = src.find("def page_rules(")
+    finish_acc = src.find("def page_finish(")
+    assert rules_acc != -1, "page_rules() accessor not found in wizard source"
+    assert finish_acc != -1, "page_finish() accessor not found in wizard source"
+    assert rules_acc < finish_acc, (
+        "page_rules() accessor should appear before page_finish() accessor"
     )

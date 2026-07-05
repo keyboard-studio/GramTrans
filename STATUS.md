@@ -1,5 +1,49 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 018 — Rules Page (Ad Hoc & Compound Rules: Model-B block + engine) CREW-APPROVED (2026-07-05)
+
+**Spec**: [specs/018-rules-page/](specs/018-rules-page/) — spec + probe-results (authoritative
+FLExTools MCP) + plan + research + data-model + contract + quickstart + tasks (30).
+**Speckit flow**: /speckit-plan → /speckit-tasks → 3 LEX crew cycles, APPROVED (QC 88/100, domain PASS).
+**Tests**: full unit suite **1033 passed / 7 skipped / 13 xfailed / 1 xpassed / 0 failed** (+35 new).
+
+### What shipped
+- **Engine** — the five `adhoc_compound_rules_*` callbacks in `categories.py` (~1793-2320),
+  replacing the `NotImplementedError("Phase 3c T056-T060")` stubs. Per-subclass dispatch
+  (`_rule_subclass_info`) over IMoAlloAdhocProhib / IMoMorphAdhocProhib / IMoAdhocProhibGr /
+  IMoEndoCompound / IMoExoCompound; enumeration walker recursing `IMoAdhocProhibGr.MembersOC`
+  (`_rules_enumerate_all`); GUID-first plan (`_phonology_simple_plan`); execute with adhoc ref
+  wiring (First*RA + RestOf*RS), compound OWNED-ATOMIC MSA wiring (Left/Right/Overriding/To MsaOA
+  via `IMoStemMsaFactory.Create(Guid)` + OA-slot assign, `PartOfSpeechRA` resolved by GUID), and
+  group re-parenting. `dependencies()` yields member refs for FR-005 closure.
+- **Wizard page** — `_PageRules` in `selection_wizard.py` (registered before `_page_finish`, index 6;
+  `_page_finish`→7; `page_rules()` P-1 accessor). Two grouped tristate trees (Ad Hoc / Compound) +
+  whole-block toggle, all-preselected, per-item trim into `Selection.leaf_item_picks`, NEW/IN TARGET
+  status, no conflict-mode control (Layer-1 default). Inventory: `RuleRow`/`RuleCategoryGroup`/
+  `RulesInventory` + `build_rules_inventory` in `selection.py`.
+- **Referential completeness** — `_rules_missing_ref_warnings` in `preview.py` emits one
+  entry-centric `ExcludedLossy` per kept rule with an unresolvable member ref, into the shared
+  aggregated Move gate (FR-014/015).
+- **Cycle-3 fixes**: GUID normalization via `_guid_str_from`; GOLD_INVIOLABLE guard on plan_action;
+  group nodes sorted LAST in enumerate (SC-001 sc.4); fallback-enumerate dedup; loud raise on
+  missing source.
+- **Tests**: `test_rules_plan_dispatch.py` (engine, 35), `test_rules_inventory.py` (12),
+  `test_rules_leaf_item_picks.py` (9), `test_rules_missing_ref.py` (9), `test_wizard_page_order.py`
+  (+5). `test_rules_live.py` scaffolded, all SKIPPED.
+
+### Key discovery (recorded in probe-results.md)
+- **Esperanto** is the only surveyed project with rule data (5 MoEndoCompound; no exo/adhoc).
+  Ejagham Mini/Full/GT-Test and the FLExTrans/HC parser projects have zero rules.
+- The flexicon `AdhocProhibition` wrapper docstrings name **non-existent** properties — the concrete
+  LCM interfaces (probed live) are authoritative and used directly.
+
+### ⚠ DEFERRED FOLLOW-UP GATE (T013/T028)
+The **live write round-trip** (Esperanto → throwaway target) is NOT yet run: it needs a
+write-enabled FLExTools MCP session, and no project has live exo/adhoc data. The one unproven
+point is whether owned-atomic MSA ownership **persists through a Move commit** (read-side ownership
+is live-confirmed; all logic is covered by fake-handle unit tests). Schedule a write-enabled
+session; if feasible seed a target with exo + adhoc rules to exercise all five subclasses live.
+
 ## ▶▶▶ Feature 017 — GOLD_RESERVED Edit-Copy (MERGE-per-WS fill-gaps) CREW-APPROVED (2026-07-05)
 
 **Spec**: [specs/017-gold-reserved-edit-copy/spec.md](specs/017-gold-reserved-edit-copy/spec.md)
