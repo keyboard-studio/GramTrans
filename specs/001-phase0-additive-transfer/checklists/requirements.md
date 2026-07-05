@@ -31,10 +31,11 @@
 
 ## Notes
 
-- The spec mentions flexicon (the only runtime API flavor in this repo, consumed as
-  the patched MattGyverLee fork), LibLCM (out of scope — the LibLCM-direct
+- The spec mentions flexicon (the only runtime API flavor in this repo, the standalone
+  `pyflexicon>=4.1` package — a standalone independent project, NOT a fork of stock
+  flexicon), LibLCM (out of scope — the LibLCM-direct
   implementation lives in a separate post-Phase-2 sibling repository per constitution
-  v5.0.0 Principle IV), and FLExToolsMCP (non-normative author-side assistant) by
+  v5.1.0 Principle IV), and FLExToolsMCP (non-normative author-side assistant) by
   name in the Assumptions section. These are NOT implementation prescriptions —
   they are scope boundaries derived from constitution Principle II. They are tagged
   "informational" / "scope context" precisely so a planner cannot misread them as

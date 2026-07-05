@@ -1,13 +1,13 @@
 ---
 
-description: "Task list for Phase 0 — Additive Grammar Transfer (reconciled with constitution v5.0.0 on 2026-06-19)"
+description: "Task list for Phase 0 — Additive Grammar Transfer (reconciled with constitution v5.1.0 on 2026-07-05)"
 ---
 
 # Tasks: Phase 0 — Additive Grammar Transfer
 
 **Input**: Design documents from [specs/001-phase0-additive-transfer/](.)
 
-**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/), [quickstart.md](quickstart.md), [constitution v5.0.0](../../.specify/memory/constitution.md)
+**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/), [quickstart.md](quickstart.md), [constitution v5.1.0](../../.specify/memory/constitution.md)
 
 **Tests**: Included — both `plan.md` Testing section and constitution Development-Workflow gate require unit + integration tests with pre/post Import Residue artifacts.
 
@@ -16,7 +16,7 @@ description: "Task list for Phase 0 — Additive Grammar Transfer (reconciled wi
 **Reconciliation note (2026-06-19)**: This task list was regenerated after the
 `/speckit-analyze` audit found that Layer 1+2 implementation had outrun the planned
 scaffolding (constitution v4.0.0 adapter pattern was bypassed; Move-mode writes occurred
-before Preview engine existed). Per constitution v5.0.0:
+before Preview engine existed). Per constitution v5.1.0:
 - The flavor-adapter contract is removed (Principle II). Former T016/T017/T018 are gone.
 - Layer 1+2 Move-mode work is acknowledged as a one-time validation spike (STATUS.md);
   the inline logic MUST be refactored into `Lib/preview.py` + `Lib/transfer.py` before
@@ -38,7 +38,7 @@ before Preview engine existed). Per constitution v5.0.0:
 **Purpose**: Project initialization and basic scaffolding.
 
 - [x] T001 Create the directory skeleton from [plan.md](plan.md) Project Structure: `src/gramtrans/gramtrans.py`, `src/gramtrans/Lib/__init__.py` (or empty stub for `site.addsitedir`), `src/gramtrans/Lib/ui/__init__.py`, `tests/{unit,integration,fixtures}/`. DONE during Layer 1+2 validation spike.
-- [x] T002 Initialize Python packaging in `pyproject.toml` at repo root: declare `gramtrans` package, Python version per the FlexTools host, runtime deps `flexicon>=2.0` (installed from the MattGyverLee fork, see [../../CLAUDE.md](../../CLAUDE.md)) and PyQt, dev deps `pytest`. DONE 2026-06-19.
+- [x] T002 Initialize Python packaging in `pyproject.toml` at repo root: declare `gramtrans` package, Python version per the FlexTools host, runtime deps `pyflexicon>=4.1` (the standalone flexicon package, installed via `pip install -e <path-to-flexicon>`, see [../../CLAUDE.md](../../CLAUDE.md)) and PyQt, dev deps `pytest`. DONE 2026-06-19.
 - [x] T003 [P] Configure linting/formatting in `pyproject.toml`: `ruff` rules + `black` line length, exclude `tests/fixtures/`. DONE.
 - [x] T004 [P] Configure pytest in `pyproject.toml`: `testpaths = ["tests"]`, marker registration for `integration` (requires FlexTools host) so unit-only runs can `-m "not integration"`. DONE.
 - [ ] T005 Create `tests/fixtures/toy_source/README.md` pointing at the live `Ejagham Mini` project; commit a placeholder `tests/fixtures/copy_target.py` stub to be filled in by T015
@@ -47,14 +47,14 @@ before Preview engine existed). Per constitution v5.0.0:
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Lock the flexicon surface, document the fork dependency, scaffold the
+**Purpose**: Lock the flexicon surface, document the `pyflexicon>=4.1` dependency, scaffold the
 helper modules under `Lib/`, and lay down the data-model types every user story depends
-on. There is **no** flavor-adapter contract to scaffold (constitution v5.0.0).
+on. There is **no** flavor-adapter contract to scaffold (constitution v5.1.0).
 
 **STATUS (2026-06-19)**: D-validation tasks T006–T012 were executed against the live
 flexicon surface via the FLExToolsMCP. Findings are baked into [research.md](research.md)
 R1, R6, R7, R10 and into [.specify/memory/constitution.md](../../.specify/memory/constitution.md)
-v5.0.0. These tasks are marked complete as a record; no further validation work blocks
+v5.1.0. These tasks are marked complete as a record; no further validation work blocks
 user-story phases.
 
 ### MCP-Mediated Validation (research.md D1–D7) — RESOLVED
@@ -66,12 +66,12 @@ user-story phases.
 - [x] T010 [P] Enumerate per-LCM-type GUID-on-create permissibility (research.md D5) — DONE; some flexicon factory wrappers DO accept a `Guid` parameter on `Create()` (verified against POS, Template, Slot during the Layer 1+2 spike — see STATUS.md); for the remainder the pattern is `factory.Create()` → add to owner → assign `obj.Guid`. The single helper lives inline in `Lib/transfer.py`.
 - [x] T011 [P] Enumerate per-LCM-type residue-field availability (research.md D6) — DONE; dual-carrier strategy: `LiftResidue` where present (Lex + MoForm + MSA classes), `Description`-append with `[GT-Tag]:` marker elsewhere
 - [x] T012 [P] Confirm `UndoableUnitOfWorkHelper` Python accessibility (research.md D7) — DONE; the FlexTools runner pre-wraps every snippet in a UOW (`STATUS.md` MCP validator quirks); module code does NOT nest its own UOW
-- [x] T013 Synthesis: R1 / R6 / R7 / R10 in [research.md](research.md) updated; [plan.md](plan.md) Constitution Check rewritten for v5.0.0 (no adapter contract; LibLCM port is a separate sibling repo)
+- [x] T013 Synthesis: R1 / R6 / R7 / R10 in [research.md](research.md) updated; [plan.md](plan.md) Constitution Check rewritten for v5.1.0 (no adapter contract; LibLCM port is a separate sibling repo)
 
-### Fork Dependency & Validation-Spike Closing — NEW under v5.0.0
+### Dependency Documentation & Validation-Spike Closing — NEW under v5.1.0
 
-- [ ] T-Fork **[BLOCKING US1 impl]** Document the flexicon fork dependency in [../../CLAUDE.md](../../CLAUDE.md) and the repo README: list the 9 patched files (`BaseOperations.py` + 8 Grammar Operations subclasses), the two patches (the `WritingSystems` enumeration fix + the new `ApplySyncableProperties` method), the fork URL or local path (`D:/Github/_Projects/_LEX/flexicon`), and the install steps. The `pyproject.toml` requirement stays as `flexicon>=2.0`; the fork is installed manually.
-- [ ] T-Spike **[BLOCKING Layer 3]** Refactor the existing `src/gramtrans/gramtrans.py.transfer_verb_vertical()` inline Move logic into the Preview/Move split required by constitution v5.0.0 Principle III closing clause.
+- [ ] T-Fork **[BLOCKING US1 impl]** Document the `pyflexicon>=4.1` dependency in [../../CLAUDE.md](../../CLAUDE.md) and the repo README: flexicon (dist `pyflexicon`) is a standalone independent package — NOT a fork or patch of stock flexicon — that natively provides both the `WritingSystems` enumeration fix (via `project.WritingSystems.GetAll()`) and the `ApplySyncableProperties(item, props, ws_map=None)` method on `BaseOperations` (the 8 Grammar Operations subclasses each declare an override for MCP-indexer visibility). Record that `pyproject.toml` declares `pyflexicon>=4.1` and the editable install step `pip install -e <path-to-flexicon>`.
+- [ ] T-Spike **[BLOCKING Layer 3]** Refactor the existing `src/gramtrans/gramtrans.py.transfer_verb_vertical()` inline Move logic into the Preview/Move split required by constitution v5.1.0 Principle III closing clause.
 
   **Dependency order**: T019 (data-model types in `Lib/types.py`) → T020 (`Lib/residue.py`) → T-Spike → all other US1 implementation tasks.
 
@@ -100,7 +100,7 @@ user-story phases.
 
 ### Core Data Model (depends on T013)
 
-- [x] T019 Implement the entity dataclasses + enums from [data-model.md](data-model.md) E1–E4 in `src/gramtrans/Lib/models.py` (renamed from `types.py` to avoid shadowing stdlib `types` under `site.addsitedir`): `GrammarCategory`, `WSKind`, `RunMode`, `SkipReason`, `RunContext`, `Selection`, `WSMappingEntry`, `WSMapping`, `PlannedAction`, `Skip`, `RunPlan`, with the documented invariants enforced in `__post_init__`. **The `Flavor` enum is removed** per constitution v5.0.0. DONE 2026-06-19.
+- [x] T019 Implement the entity dataclasses + enums from [data-model.md](data-model.md) E1–E4 in `src/gramtrans/Lib/models.py` (renamed from `types.py` to avoid shadowing stdlib `types` under `site.addsitedir`): `GrammarCategory`, `WSKind`, `RunMode`, `SkipReason`, `RunContext`, `Selection`, `WSMappingEntry`, `WSMapping`, `PlannedAction`, `Skip`, `RunPlan`, with the documented invariants enforced in `__post_init__`. **The `Flavor` enum is removed** per constitution v5.1.0. DONE 2026-06-19.
 - [x] T020 [P] Implement `src/gramtrans/Lib/residue.py` — `ImportResidueTag` ([data-model.md E5](data-model.md), [spec.md FR-010 / Q5](spec.md)): `serialize()` produces `GT|<run_id>|<source_project_name>|<iso_timestamp>`; classmethod `parse(s)`; helpers `apply_carrier_a(obj, tag)` / `apply_carrier_b(obj, tag)` / `apply_residue(obj, ws, tag)` dispatcher; run_id-matches-timestamp invariant in `__post_init__`. DONE 2026-06-19.
 - [x] T021 [P] Implement `src/gramtrans/Lib/report.py` — `RunReport.build_from_plan(plan, mode, wall_clock_seconds=0)` factory classmethod + `to_snapshot_json()` method (per_category dict keyed by enum NAME, ordered by enum declaration order) + `render_text_summary(report)` for the FlexTools report pane. FR-018 invariant enforced in `RunReport.__post_init__` ([data-model.md E6](data-model.md), [contracts/run-report.md](contracts/run-report.md)). DONE 2026-06-19.
 - [ ] T022 Implement `src/gramtrans/gramtrans.py` per the FLExTrans convention: module-level `docs = {FTM_Name, FTM_Version, FTM_ModifiesDB, FTM_Synopsis, FTM_Help, FTM_Description}` dict + `MainFunction(project, report, modifyAllowed)` callable, with `import site; site.addsitedir(r"Lib")` at the top. `MainFunction` instantiates the PyQt main window. This **replaces** the v4.0.0 `module.py` + `FlexToolsModuleClass` plan; STATUS.md confirms the no-wrapper template is what the MCP returns.
@@ -147,7 +147,7 @@ Ejagham Mini → restored `Ejagham Full GT-Test`; verify acceptance scenarios 1�
 
 - [x] T036 [US1] Implement `src/gramtrans/Lib/ws_mapping.py` — `validate(ws_mapping, required, *, strict_overspec=False)` raises `WSMappingIncomplete` (listing missing `(source_ws_id, kind)` pairs) when the mapping is incomplete; `is_complete()` predicate for UI gating; `required_ws_set()` helper to build the required frozenset from a closure-walker's union. The closure-side `required_writing_systems(piece)` per-category call lands with T039+. DONE 2026-06-19, T028 verifies.
 - [x] T037 [US1] Implement `src/gramtrans/Lib/closure.py` — `walk(seeds, dependencies_fn)` returns `(visit_order, pulled_in_by)`; dedups by `(category, source_guid)`; seed-semantics-win on items present both as seed and as dependency; handles cycles defensively; works with generator seed input. Companion `topological(order, parents)` reverses for dependencies-first execution. DONE 2026-06-19, T027 verifies.
-- [ ] T038 [P] [US1] Implement WS-creation pre-step in `src/gramtrans/Lib/ws_mapping.py`: materializes `WSMapping.entries[create_in_target=True]` into the target via `project.WritingSystem.Create*` (no separate `categories/writing_systems.py` file under v5.0.0)
+- [ ] T038 [P] [US1] Implement WS-creation pre-step in `src/gramtrans/Lib/ws_mapping.py`: materializes `WSMapping.entries[create_in_target=True]` into the target via `project.WritingSystem.Create*` (no separate `categories/writing_systems.py` file under v5.1.0)
 - [~] T039 [US1] `src/gramtrans/Lib/categories.py` — **SHELL DONE 2026-06-19**. Per-leaf-category function signatures + `LEAF_CATEGORIES` dispatch registry + `for_category(cat)` lookup, all 10 leaf categories. Bodies raise `NotImplementedError("T039: ...")` with task pointers. Test: `tests/unit/test_category_registry.py` (6 tests) locks the registry shape. Full bodies pending LCM live-run validation post-T-Spike.
 - [x] T049 [US1] **Affix closure done via `Lib/preview._plan_layer3_verb_affixes` + `Lib/transfer._execute_layer3` 2026-06-19**. 20 allomorphs created with new GUIDs (LibLCM factory limitation; FR-012 identity_remap captures); `PhoneEnvRC` re-wired by GUID lookup against target environments (which were `Skip(ALREADY_PRESENT_BY_GUID)` since FW templates ship them). The category-protocol shell at `categories_affixes.py` stays as a stub for the eventual generic-walker refactor. MCP-verified: 13 LexEntries + 20 allomorphs created in 0.387s on the Ejagham Mini → Full GT-Test pair.
 - [x] T050 [US1] Slot transfer inline in `Lib/categories_templates.py` — DONE: no separate `categories_slots.py`. Verb-vertical slot path already lives in `Lib/preview.py._plan_verb_vertical` + `Lib/transfer.py._execute_verb_vertical`.
@@ -237,9 +237,9 @@ stories.
 - [ ] T080 [P] Verify [SC-003](spec.md) (zero dangling refs in target) by post-Move integrity scan in `tests/integration/test_no_dangling_refs.py`
 - [ ] T081 [P] Verify [SC-004](spec.md) (zero modifications to pre-existing target objects) via the pre/post snapshot diff already in T031, extracted into a standalone scenario in `tests/integration/_snapshots/sc004.json`
 - [ ] T082 Capture pre/post Import Residue artifacts (constitution Development-Workflow gate): export `tests/integration/_snapshots/residue_pre.json` (empty) and `residue_post.json` (all added objects with parsed tags) from the benchmark run
-- [x] T083 Update [plan.md](plan.md) Constitution Check for constitution v5.0.0: no flavor-adapter contract; no LibLCM in this repo; Phase 3 LibLCM port is a separate sibling repo. DONE 2026-06-19 as part of the v5.0.0 pivot.
+- [x] T083 Update [plan.md](plan.md) Constitution Check for constitution v5.1.0: no flavor-adapter contract; no LibLCM in this repo; Phase 3 LibLCM port is a separate sibling repo. DONE 2026-06-19 as part of the v5.0.0 pivot; re-reconciled to v5.1.0 on 2026-07-05.
 - [x] T084 [P] `docs = {...}` dict in `src/gramtrans/gramtrans.py` carries `FTM_Name`, `FTM_Version` (0.1.0), `FTM_ModifiesDB=True`, `FTM_Synopsis`, `FTM_Description` (including the Q5 tag-format note). DONE 2026-06-19.
-- [x] T085 [P] [CLAUDE.md](../../CLAUDE.md) SPECKIT block updated for v5.0.0 + fork-dependency section added. DONE 2026-06-19.
+- [x] T085 [P] [CLAUDE.md](../../CLAUDE.md) SPECKIT block updated for v5.1.0 + `pyflexicon>=4.1` dependency section added (flexicon documented as a standalone package, not a fork). DONE 2026-06-19; refreshed for v5.1.0 on 2026-07-05.
 - [ ] T086 Run [quickstart.md](quickstart.md) Scenarios A–F all the way through against the Ejagham fixture pair; produce a one-page release-notes summary in `specs/001-phase0-additive-transfer/release-notes.md` enumerating which acceptance scenarios passed and the wall-clock per scenario
 
 ---
@@ -249,7 +249,7 @@ stories.
 ### Phase Dependencies
 
 - **Setup (Phase 1)**: No prior dependencies — already complete from the Layer 1+2 spike.
-- **Foundational (Phase 2)**: Depends on Phase 1. The D-validation subgroup (T006–T013) is complete. **T-Fork** and **T-Spike** are new blocking tasks under v5.0.0; T-Fork blocks any US1 implementation, T-Spike blocks any Layer 3 work (T051b).
+- **Foundational (Phase 2)**: Depends on Phase 1. The D-validation subgroup (T006–T013) is complete. **T-Fork** and **T-Spike** are new blocking tasks under v5.1.0; T-Fork blocks any US1 implementation, T-Spike blocks any Layer 3 work (T051b).
 - **US1 (Phase 3)**: Depends on Phase 2 completion + T-Spike (for `Lib/preview.py` + `Lib/transfer.py` existence). MVP-critical.
 - **US2 (Phase 4)**: Depends on Phase 2. Test code can be authored alongside US1 implementation; tests run after US1's engine code lands.
 - **US3 (Phase 5)**: Depends on Phase 2. Independent of US1/US2 conceptually; integration tests run against a working transfer engine, so they execute after US1's engine code lands.
@@ -297,11 +297,11 @@ stories.
 
 ### Constitution Gate Reminders
 
-- Phase 0 imports flexicon directly. There is no `flavors/` directory; no adapter contract. (Principle II, v5.0.0)
+- Phase 0 imports flexicon directly. There is no `flavors/` directory; no adapter contract. (Principle II, v5.1.0)
 - Preview Mode MUST produce zero writes; T029 + T081 enforce this. The Layer 1+2 Move-mode spike is the one-time exception closed by T-Spike. (Principle III)
 - GOLD inviolability test T035 MUST pass before Phase 0 ships. (Principle I)
 - Phase 1 / Phase 2 features (overwrite, interactive merge) MUST NOT appear in this Phase 0 codebase. (Principle IV)
-- Phase 3 (LibLCM-direct) MUST NOT appear in this codebase — it is a separate sibling repo. (Principle IV, v5.0.0)
+- Phase 3 (LibLCM-direct) MUST NOT appear in this codebase — it is a separate sibling repo. (Principle IV, v5.1.0)
 - Closure-by-default is the UI default; opt-out is a deliberate user action. (Principle V)
 
 ---
@@ -310,6 +310,6 @@ stories.
 
 - `[P]` tasks operate on different files with no incomplete-task dependencies.
 - `[Story]` label maps to spec.md user stories for traceability.
-- Tests fail before implementation (red-green discipline). **Carve-out**: Layer 1+2 work in STATUS.md ran ahead of TDD as the recorded validation spike per constitution v5.0.0 Principle III; T-Spike closes that exception and Layer 3 onward returns to red-green discipline.
+- Tests fail before implementation (red-green discipline). **Carve-out**: Layer 1+2 work in STATUS.md ran ahead of TDD as the recorded validation spike per constitution v5.1.0 Principle III; T-Spike closes that exception and Layer 3 onward returns to red-green discipline.
 - Stop at any checkpoint to validate the just-completed user story end-to-end against quickstart scenarios.
 - The `mcp__flextools-mcp__*` calls in Phase 2 are **author-side**, not runtime — per constitution Principle II, no MCP imports appear in `src/gramtrans/` code.
