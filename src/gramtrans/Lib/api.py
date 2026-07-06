@@ -19,6 +19,7 @@ contracts/module-ui.md) — no raw flexicon imports in UI code.
 from __future__ import annotations
 
 import enum
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -37,6 +38,7 @@ if __package__:
     )
     from .preview import build_run_plan
     from .ws_mapping import WSMappingIncomplete, is_complete, required_ws_set
+    from .debuglog import enable_from_env as _enable_debug_logging
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
@@ -51,6 +53,9 @@ else:
     )
     from preview import build_run_plan  # type: ignore
     from ws_mapping import WSMappingIncomplete, is_complete, required_ws_set  # type: ignore
+    from debuglog import enable_from_env as _enable_debug_logging  # type: ignore
+
+_log = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -209,6 +214,15 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
         raise TargetUnavailable(
             f"Target {choice.project_name!r} is unavailable: {exc!s}"
         ) from exc
+
+    # Persist diagnostics: the target is opened writeEnabled=True but with NO
+    # `undoable=` argument, so flexicon's default (undoable=False) applies. A
+    # non-undoable open changes how/whether CloseProject persists writes.
+    _log.debug(
+        "bind_target: opened %r writeEnabled=True, undoable=<default False> "
+        "(no undoable= arg passed); handle id=%s",
+        choice.project_name, id(target),
+    )
 
     return RunContext(
         source_handle=stub.source_handle,
@@ -384,6 +398,8 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
       3. Re-opens the target and re-binds context before calling transfer.execute.
     transfer.execute internals are unchanged (Principle: zero edits to transfer).
     """
+    # Honor GRAMTRANS_DEBUG on the export path (idempotent, no-op when off).
+    _enable_debug_logging()
     if plan.context is not context and plan.context != context:
         raise PreviewStale(
             "Plan's context does not match the call context; the UI must "
@@ -407,7 +423,24 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         a for a in plan.actions
         if isinstance(a, CreateDefinitionAction)
     ]
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug(
+            "execute_move: entry  actions=%d create_actions=%d "
+            "source=%r target=%r target_handle_id=%s tag=%r "
+            "PATH-CLOSE-REBIND=%s",
+            len(plan.actions), len(create_actions),
+            context.source_project_name, context.target_project_name,
+            id(getattr(context, "target_handle", None)),
+            tag.serialize() if hasattr(tag, "serialize") else str(tag),
+            bool(create_actions),
+        )
     if create_actions:
+        phase1_handle = context.target_handle
+        _log.debug(
+            "execute_move PATH-CLOSE-REBIND: closing Phase-1 preview handle "
+            "id=%s (the handle stored on the caller's context)",
+            id(phase1_handle),
+        )
         # Step 1: close the Phase-1 preview handle.
         try:
             context.target_handle.CloseProject()
@@ -430,6 +463,17 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
                 f"custom-field schema write failed: {exc}"
             ) from exc
 
+        # Handle divergence is a prime suspect for the persist bug: writes go to
+        # `fresh_target` (created locally here), but the wizard cleanup in
+        # gramtrans._run_gui closes the ORIGINAL handle stored on its context.
+        _log.debug(
+            "execute_move PATH-CLOSE-REBIND: opened fresh_target id=%s "
+            "(created locally). Writes below target THIS handle; the caller's "
+            "context still references the disposed Phase-1 handle id=%s. This "
+            "branch owns closing fresh_target (see Step 5).",
+            id(fresh_target), id(phase1_handle),
+        )
+
         # Step 4: re-bind context with the fresh handle (frozen dataclass replace).
         import dataclasses
         context = dataclasses.replace(context, target_handle=fresh_target)
@@ -442,12 +486,22 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         # is a silent no-op. FLEx only persists writes on CloseProject()
         # (EndNonUndoableTask + usm.Save), so this branch must own closing
         # fresh_target or every object write below is discarded on exit.
+        _log.debug(
+            "execute_move PATH-CLOSE-REBIND: calling execute() with a "
+            "_NullReportSink — per-item .Warning() reports are DISCARDED "
+            "(fresh_target id=%s)", id(fresh_target),
+        )
         try:
             return execute(
                 plan, context.source_handle, context.target_handle,
                 _NullReportSink(), tag,
             )
         finally:
+            _log.debug(
+                "execute_move PATH-CLOSE-REBIND: closing fresh_target id=%s "
+                "(this branch owns the disk-write for the create path)",
+                id(fresh_target),
+            )
             try:
                 fresh_target.CloseProject()
             except Exception:
@@ -457,6 +511,11 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     # UI passes the FlexTools report object through. For programmatic API
     # calls (e.g. from a test), a tiny null sink is the safe default.
     sink = _NullReportSink()
+    _log.debug(
+        "execute_move: calling execute() with a _NullReportSink — per-item "
+        ".Warning() reports are DISCARDED (target_handle id=%s)",
+        id(getattr(context, "target_handle", None)),
+    )
     return execute(plan, context.source_handle, context.target_handle, sink, tag)
 
 
