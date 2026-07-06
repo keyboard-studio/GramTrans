@@ -13,8 +13,11 @@ source's syncable properties via flexicon's `ApplySyncableProperties`
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Iterable
+
+_log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
@@ -86,6 +89,22 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     already verified that the plan was produced from the current selection.
     """
     start = time.time()
+
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug(
+            "execute: entry  mode=MOVE tag=%r actions=%d overwrites=%d skips=%d "
+            "source=%r target_handle_id=%s interactive_session=%s",
+            tag.serialize() if hasattr(tag, "serialize") else str(tag),
+            len(plan.actions), len(getattr(plan, "overwrites", ()) or ()),
+            len(plan.skips),
+            getattr(plan.context, "source_project_name", "?"),
+            id(target), interactive_session is not None,
+        )
+
+    # Behavior-neutral persist-diagnostic counters for leaf dispatch.
+    leaf_attempted = 0
+    leaf_succeeded = 0
+    leaf_failed = 0
 
     # Build index of source actions for quick lookup of pulled-in flag.
     pulled_in_guids = frozenset(
@@ -239,10 +258,26 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             bundle = _for_category(action.category)
         except KeyError:
             continue
+        leaf_attempted += 1
+        _log.debug(
+            "execute leaf-dispatch: attempting  category=%s guid=%s",
+            action.category.value, action.source_guid,
+        )
         try:
             bundle["execute_action"](action, exec_ctx, plan.ws_mapping, tag)
             leaf_count += 1
+            leaf_succeeded += 1
         except Exception as exc:
+            leaf_failed += 1
+            # Persist diagnostics: the original code only funneled this into a
+            # report_sink.Warning, which the export path discards via a
+            # _NullReportSink. Emit the full traceback so the swallowed failure
+            # is visible when GRAMTRANS_DEBUG is on. Keep the Warning too.
+            _log.exception(
+                "execute leaf-dispatch: execute_action FAILED (swallowed) "
+                "category=%s guid=%s",
+                action.category.value, action.source_guid,
+            )
             report_sink.Warning(
                 f"  [{action.category.value}] execute_action raised "
                 f"{type(exc).__name__}: {exc}; skipping {action.source_guid[:8]}"
@@ -254,6 +289,15 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         extra_skips.extend(_exec_skips)
 
     elapsed = time.time() - start
+    # Persist diagnostics: the report is built from the PLAN, not from what was
+    # actually written. If attempted != succeeded (or failures > 0) the report
+    # will still count the full plan as "added" — surface that discrepancy.
+    _log.debug(
+        "execute: leaf-dispatch counts  attempted=%d succeeded=%d failed=%d "
+        "vs len(plan.actions)=%d  (RunReport is built from the PLAN, so "
+        "swallowed write failures do NOT reduce the reported 'added' count)",
+        leaf_attempted, leaf_succeeded, leaf_failed, len(plan.actions),
+    )
     # Build the report from the plan. If every action ran without raising,
     # the FR-018 invariant on RunReport.__post_init__ passes by construction
     # (every PlannedAction → +1 added, every plan.Skip → +1 skipped).
@@ -1465,6 +1509,10 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             f"  guid={src_guid[:8]}"
         )
     except Exception as exc:
+        _log.exception(
+            "_execute_update_semantic: FAILED (swallowed) category=%s guid=%s",
+            cat.value, src_guid,
+        )
         report_sink.Warning(
             f"  [{cat.value}] _execute_update_semantic raised"
             f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
@@ -2027,6 +2075,10 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink):
                 tgt_ms.set_String(ws_handle, TsStringUtils.MakeString(src_text, ws_handle))
                 filled_count += 1
             except Exception as exc:
+                _log.exception(
+                    "OW-MERGE: set_String FAILED (swallowed) category=%s guid=%s "
+                    "field=%s ws=%s", cat.value, src_guid, field_name, ws_handle,
+                )
                 report_sink.Warning(
                     f"  [OW-MERGE] {cat.value} {src_guid[:8]} "
                     f"{field_name}@ws={ws_handle}: write failed: {exc}"

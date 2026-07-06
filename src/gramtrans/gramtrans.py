@@ -23,9 +23,12 @@ split into:
 from flextoolslib import *  # noqa: F401,F403 — FlexTools host names
 
 import datetime
+import logging
 import os
 import site
 import sys
+
+_log = logging.getLogger(__name__)
 
 # Make `Lib/` importable per the FLExTrans module convention. `Lib/ui/` is
 # added too so the PyQt widgets load flat (top-level module names), which keeps
@@ -71,6 +74,12 @@ from conflict import (
     collect_overwrite_conflicts,
 )
 from ws_mapping import detect_ws_mismatches, fold_choices_into_ws_mapping
+
+# Flag-gated diagnostic logging (GRAMTRANS_DEBUG). Strict no-op when off.
+try:
+    from debuglog import enable_from_env as _enable_debug_logging
+except ImportError:  # package-import fallback (tests / non-addsitedir hosts)
+    from gramtrans.Lib.debuglog import enable_from_env as _enable_debug_logging
 
 
 __version__ = "0.1.0"
@@ -175,6 +184,10 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
     lifetime of the modal dialog. The target project opened by the dialog's
     target-picker is closed here after the dialog returns, to release its lock.
     """
+    # Honor GRAMTRANS_DEBUG on the export path (idempotent, no-op when off).
+    _enable_debug_logging()
+    _log.debug("_run_gui: entry  modifyAllowed=%s", modifyAllowed)
+
     # Phase 3c: use the SelectionWizard (replaces main_window.MainWindow).
     # Flat import (Lib/ui on sys.path) so the dual-mode guard takes its flat
     # branch; fall back to the package path for non-addsitedir hosts.
@@ -203,12 +216,39 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
     finally:
         ctx = wizard.context()
         target = getattr(ctx, "target_handle", None) if ctx is not None else None
+        # Persist-confirmation log: CloseProject() is the ONLY disk-write on
+        # this path. Log which handle we close and (defensively) its LCM dirty
+        # state before/after so a "nothing persisted" run is diagnosable.
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "_run_gui cleanup: target_handle id=%s name=%r",
+                id(target) if target is not None else None,
+                _safe_project_name(target),
+            )
+            if target is None:
+                _log.debug(
+                    "_run_gui cleanup: target is None; CloseProject SKIPPED "
+                    "(no disk write) — writes performed on any other handle are lost"
+                )
         if target is not None:
+            _log.debug(
+                "_run_gui cleanup: LCM dirty BEFORE close = %s (handle id=%s)",
+                _safe_uow_is_dirty(target), id(target),
+            )
             try:
                 target.CloseProject()
                 report.Info("[GramTrans] Target project closed.")
+                _log.debug(
+                    "_run_gui cleanup: CloseProject() ran on handle id=%s; "
+                    "LCM dirty AFTER close = %s", id(target),
+                    _safe_uow_is_dirty(target),
+                )
             except Exception as exc:  # noqa: BLE001
                 report.Warning(f"[GramTrans] Could not close target project: {exc}")
+                _log.exception(
+                    "_run_gui cleanup: CloseProject() raised on handle id=%s",
+                    id(target),
+                )
     report.Info("[GramTrans] Selection Wizard closed.")
 
 
@@ -476,6 +516,38 @@ def _make_run_id() -> "tuple[str, str]":
         "GT-" + now.strftime("%Y%m%d-%H%M%S"),
         now.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+def _safe_project_name(flex_project) -> str:
+    """Best-effort human-readable project name for diagnostics; never raises."""
+    if flex_project is None:
+        return ""
+    try:
+        v = getattr(flex_project, "ProjectName", None)
+        if v is None:
+            return ""
+        return v() if callable(v) else str(v)
+    except Exception:
+        return ""
+
+
+def _safe_uow_is_dirty(flex_project):
+    """Best-effort read of the LCM UnitOfWork dirty flag for persist diagnostics.
+
+    The specs reference ``target.Cache.UnitOfWorkService.IsDirty``; that path
+    may not exist on every handle/version, so access it entirely defensively.
+    Returns the bool if reachable, else a short reason string — never raises.
+    """
+    try:
+        cache = getattr(flex_project, "Cache", None)
+        if cache is None:
+            return "unreachable(no Cache)"
+        uow = getattr(cache, "UnitOfWorkService", None)
+        if uow is None:
+            return "unreachable(no UnitOfWorkService)"
+        return getattr(uow, "IsDirty", "unreachable(no IsDirty)")
+    except Exception as exc:  # noqa: BLE001
+        return f"unreachable({type(exc).__name__})"
 
 
 def _safe_project_path(flex_project) -> str:
