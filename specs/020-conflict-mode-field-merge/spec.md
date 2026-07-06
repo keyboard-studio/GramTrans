@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-05
 
-**Status**: Draft
+**Status**: Superseded by [feature 022 — Disposition Model](../022-disposition-model/) — retained as history (see tasks.md header and STATUS.md). Was: Draft.
 
 **Input**: User description: "Conflict-mode UI + field-level merge (ADD_NEW/MERGE/OVERWRITE per
 category). Roadmap build-sequence step 5 — its own phase."

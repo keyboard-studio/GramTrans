@@ -21,7 +21,7 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
 
 ## Phase 1: Setup
 
-- [ ] T001 Extend `tests/unit/_fakes_phonology.py` with entry-type fakes (no
+- [x] T001 Extend `tests/unit/_fakes_phonology.py` with entry-type fakes (no
   pythonnet):
   - `FakeInflFeatSpec(value_ref)`: `.ValueRA = value_ref` stand-in for
     `IFsFeatureSpecification`
@@ -52,7 +52,7 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
 
 ### Engine touch -- leaf_item_picks filter (Workstream 1)
 
-- [ ] T002 [P] Unit tests for the `leaf_item_picks` enumerate filter in
+- [x] T002 [P] Unit tests for the `leaf_item_picks` enumerate filter in
   `tests/unit/test_leaf_item_picks_entry_types.py`:
   - Key absent => all items (back-compat; VARIANT_TYPES and COMPLEX_FORM_TYPES)
   - Key present => only those GUIDs (frozenset of normalized GUIDs)
@@ -67,7 +67,7 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
   - Empty-user-defined-list (picks is empty frozenset) is NOT the same as picks=None:
     zero items returned, not all items (FR-006 distinction)
 
-- [ ] T003 Add `_is_gold_entry_type(node)` helper to
+- [x] T003 Add `_is_gold_entry_type(node)` helper to
   `src/gramtrans/Lib/categories.py` immediately after `_is_gold` (line ~91):
   - Delegates to `_is_gold(node)` now
   - Carries the TODO reswap contract comment (see plan.md GOLD-Detection Gate)
@@ -75,20 +75,20 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
     or `complex_form_types_plan_action` (those are out of scope -- they keep calling
     `_is_gold` directly)
 
-- [ ] T004 Extend `variant_types_enumerate_source` (categories.py:1066-1069) to
+- [x] T004 Extend `variant_types_enumerate_source` (categories.py:1066-1069) to
   filter the result of `_walk_possibilities_via_lexdb` by
   `selection.leaf_picks_for(GrammarCategory.VARIANT_TYPES)` when not None, comparing
   `_guid_str_from(r)` (NOT raw `.Guid`). Makes T002 pass for VARIANT_TYPES. Confirm
   `is_on` still gates before enumerate in `src/gramtrans/Lib/preview.py` leaf-dispatch.
   **Churn constraint**: edit only lines 1066-1069; do not refactor helper signatures.
 
-- [ ] T005 Extend `complex_form_types_enumerate_source` (categories.py:1219-1222)
+- [x] T005 Extend `complex_form_types_enumerate_source` (categories.py:1219-1222)
   identically for `GrammarCategory.COMPLEX_FORM_TYPES`. Makes T002 pass for
   COMPLEX_FORM_TYPES. Same churn constraint.
 
 ### Pure builder + collapse + missing-ref derivation (Workstream 3)
 
-- [ ] T006 [P] Unit tests for `build_entry_types_inventory` in
+- [x] T006 [P] Unit tests for `build_entry_types_inventory` in
   `tests/unit/test_entry_types_inventory.py`:
   - Two category groups in order (VARIANT_TYPES, COMPLEX_FORM_TYPES) with correct counts
   - All user-defined rows preselected; GOLD rows shown but not user-modifiable
@@ -103,14 +103,14 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
   - GUID normalization: raw mixed-case/braced `.Guid` on fake objects normalized
     correctly by `_guid_str_from` on both source and target sides
 
-- [ ] T007 [P] Unit tests for `collapse_entry_types` in
+- [x] T007 [P] Unit tests for `collapse_entry_types` in
   `tests/unit/test_entry_types_inventory.py`:
   - All-checked => each category on, no `leaf_item_picks` key (transfer-all)
   - Trimmed category => `leaf_item_picks[cat]` = checked subset (frozenset of guids)
   - Whole-block off => no categories, no picks
   - Empty-block => nothing planned (no error)
 
-- [ ] T008 [P] Unit tests for entry-types missing-reference warnings in
+- [x] T008 [P] Unit tests for entry-types missing-reference warnings in
   `tests/unit/test_entry_types_inventory.py`:
   - Kept ILexEntryInflType with infl-feat ref V, V absent from target =>
     1 entry-centric warning
@@ -120,18 +120,18 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
   - N kept inflection variant types with unresolvable refs => N warnings aggregated
   - guard: `if struct is None: return ()` -- no false dep on base ILexEntryType
 
-- [ ] T009 Implement `EntryTypesRow`, `EntryTypesCategoryGroup`, `EntryTypesInventory`
+- [x] T009 Implement `EntryTypesRow`, `EntryTypesCategoryGroup`, `EntryTypesInventory`
   dataclasses and `build_entry_types_inventory(source, target=None)` in
   `src/gramtrans/Lib/selection.py`. Uses `_walk_possibilities_via_lexdb` for both
   categories; `_is_gold_entry_type` from categories.py for GOLD detection; reuses
   `_phon_target_sets` pattern for target-status. Makes T006 pass.
 
-- [ ] T010 Implement `collapse_entry_types(inventory, checked_by_category)` in
+- [x] T010 Implement `collapse_entry_types(inventory, checked_by_category)` in
   `src/gramtrans/Lib/selection.py`: emit `categories` on-flags and `leaf_item_picks`
   only for trimmed categories (fully-checked => key absent => transfer-all). Makes
   T007 pass.
 
-- [ ] T011 Implement `entry_types_missing_ref_warnings(inventory, checked_guids_by_cat,
+- [x] T011 Implement `entry_types_missing_ref_warnings(inventory, checked_guids_by_cat,
   target)` in `src/gramtrans/Lib/selection.py`: for each kept `ILexEntryInflType`
   in `checked_guids_by_cat[VARIANT_TYPES]`, look up `variant_infl_feat_deps[guid]`,
   check each dep val_guid against the target's INFLECTION_FEATURES. Return a list of
@@ -140,7 +140,7 @@ rules, conflict-mode UI, KL-021-2 (extended feature-structure reference traversa
 
 ### Wizard-order regression test update
 
-- [ ] T012 [P] Extend `tests/unit/test_wizard_page_order.py` to add
+- [x] T012 [P] Extend `tests/unit/test_wizard_page_order.py` to add
   `("page_entry_types", "_page_entry_types")` to `_ACCESSORS` and assert the accessor
   returns the expected type (`isinstance(w.page_entry_types(), _PageEntryTypes)`).
   The test also asserts 7 distinct pages. Extend the `test_no_literal_page_index_calls`
@@ -159,13 +159,13 @@ one-click transfer-all.
 **Independent Test**: Bind Ejagham Mini; page 6 is Lexical-entry types; both categories
 preselected with correct counts; advancing unchanged plans every user-defined entry type.
 
-- [ ] T013 [US1] Add `_PageEntryTypes` (grouped tree: 2 category groups, item rows
+- [x] T013 [US1] Add `_PageEntryTypes` (grouped tree: 2 category groups, item rows
   with hierarchy, counts on headers, ALL user-defined rows preselected) in
   `src/gramtrans/Lib/ui/selection_wizard.py`. `initializePage` builds via
   `build_entry_types_inventory(source, target)`. Empty category renders (no error).
   Title: "Step 6 of 7: Lexical-Entry Types".
 
-- [ ] T014 [US1] Insert `_PageEntryTypes` at index 5 in `SelectionWizard.__init__`:
+- [x] T014 [US1] Insert `_PageEntryTypes` at index 5 in `SelectionWizard.__init__`:
   - Add `self._page_entry_types = _PageEntryTypes()`
   - `self.addPage(self._page_entry_types)` after `self.addPage(self._page_gram_deps)`
   - `self.addPage(self._page_finish)` remains last
@@ -174,12 +174,12 @@ preselected with correct counts; advancing unchanged plans every user-defined en
     (single reconciliation pass; see plan.md Shared-Hotspot Merge Notes §3)
   - Update `SelectionWizard.__doc__` comment block listing page order
 
-- [ ] T015 [US1] Merge entry-types picks into the Selection built in
+- [x] T015 [US1] Merge entry-types picks into the Selection built in
   `_build_preview_selection` (`collapse_entry_types` -> `categories` +
   `leaf_item_picks`), applying Layer-1 default conflict modes; nothing writes (Move
   only).
 
-- [ ] T016 [P] [US1] Unit test in `tests/unit/test_entry_types_display.py`:
+- [x] T016 [P] [US1] Unit test in `tests/unit/test_entry_types_display.py`:
   - Page preselect-all state -> collapse yields both categories on with no
     `leaf_item_picks` keys (SC-001/SC-002)
   - Assert `_PageEntryTypes` renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode
@@ -197,15 +197,15 @@ preselected with correct counts; advancing unchanged plans every user-defined en
 **Independent Test**: toggle off => zero entry-type items planned; deselect 1 variant
 type => all but that one planned.
 
-- [ ] T017 [US2] Add the whole-block toggle + per-category tristate group toggles to
+- [x] T017 [US2] Add the whole-block toggle + per-category tristate group toggles to
   `_PageEntryTypes` (whole-block reflects the aggregate; empty-block => toggle
   unchecked/disabled, not vacuously checked). Mirror `_PagePhonology._on_whole_block_clicked`.
 
-- [ ] T018 [US2] Wire per-item deselect -> `collect_entry_type_picks()` so trimmed
+- [x] T018 [US2] Wire per-item deselect -> `collect_entry_type_picks()` so trimmed
   categories produce `leaf_item_picks[cat]` subsets and fully-checked categories omit
   the key.
 
-- [ ] T019 [P] [US2] Unit tests in `tests/unit/test_entry_types_display.py`:
+- [x] T019 [P] [US2] Unit tests in `tests/unit/test_entry_types_display.py`:
   - whole-block off => empty collapse (SC-003)
   - trim 1-of-N => subset pick
   - category all-checked => key omitted (transfer-all back-compat)
@@ -223,12 +223,12 @@ shows as NEW (separate user-defined row).
 **Independent Test**: bind a source mixing GOLD defaults + user-defined types; GOLD rows
 show in_target; a source GOLD type with redefined meaning shows as NEW.
 
-- [ ] T020 [US3] Confirm `build_entry_types_inventory` uses `_is_gold_entry_type` to
+- [x] T020 [US3] Confirm `build_entry_types_inventory` uses `_is_gold_entry_type` to
   mark GOLD items as `in_target` (not shown as NEW); a type that was GOLD but has been
   redefined (different GUID from any target GOLD) is shown as NEW user-defined.
   `_is_gold_entry_type(node)` delegates to `_is_gold` per the TODO contract.
 
-- [ ] T021 [P] [US3] Unit tests in `tests/unit/test_entry_types_inventory.py`:
+- [x] T021 [P] [US3] Unit tests in `tests/unit/test_entry_types_inventory.py`:
   - FakeEntryType with `catalog_source_id` set => shown as `in_target` (GOLD link)
   - FakeEntryType with `catalog_source_id=None` and GUID absent from target => `new`
   - FakeEntryType with `catalog_source_id=None` but GUID present in target => `in_target`
@@ -245,11 +245,11 @@ show in_target; a source GOLD type with redefined meaning shows as NEW.
 **Independent Test**: source=target => every user-defined row IN TARGET; fresh target =>
 NEW; no target => blank, no crash.
 
-- [ ] T022 [US4] Render the target-status column on `_PageEntryTypes` rows using the
+- [x] T022 [US4] Render the target-status column on `_PageEntryTypes` rows using the
   row `.status` from `build_entry_types_inventory` (reuse `_STATUS_LABELS`), blank
   when `None`.
 
-- [ ] T023 [P] [US4] Unit test in `tests/unit/test_entry_types_inventory.py`:
+- [x] T023 [P] [US4] Unit test in `tests/unit/test_entry_types_inventory.py`:
   - status computed by GUID (in_target) / name-match (similar) / else new
   - `target=None` => blank (status=None) -- no crash (SC-005 / FR-007)
 
@@ -265,13 +265,13 @@ raises an aggregated warning into the single shared Move gate.
 **Independent Test**: keep an `ILexEntryInflType` referencing value V that is absent
 from target; Preview warns; Move pops ONE consolidated dialog (not a per-type prompt).
 
-- [ ] T024 [US5] Expose `_PageEntryTypes.missing_ref_warnings(target)` and feed
+- [x] T024 [US5] Expose `_PageEntryTypes.missing_ref_warnings(target)` and feed
   entry-types missing-reference warnings into the aggregated `el_count` in
   `_PageFinish._on_move` (selection_wizard.py:2840) -- same single dialog as
   skeleton/deps/phonology (FR-011). Wire via an `_entry_types_missing_ref_for(wizard)`
   helper mirroring `_phonology_excluded_lossy_for`.
 
-- [ ] T025 [P] [US5] Unit test in `tests/unit/test_entry_types_display.py`:
+- [x] T025 [P] [US5] Unit test in `tests/unit/test_entry_types_display.py`:
   - N entry-types missing-ref warnings + M phonology warnings => ONE combined Move
     confirmation covering all; resolved references => no warning (SC-006)
   - base ILexEntryType (no InflFeatsOA) => 0 warnings
@@ -282,7 +282,7 @@ from target; Preview warns; Move pops ONE consolidated dialog (not a per-type pr
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T026 Full regression sweep: confirm all existing unit tests remain green
+- [x] T026 Full regression sweep: confirm all existing unit tests remain green
   (`leaf_item_picks` absent-key back-compat for VARIANT_TYPES/COMPLEX_FORM_TYPES).
   Run `pytest tests/unit/ -x -q` before and after changes to confirm no regression.
 
@@ -290,7 +290,7 @@ from target; Preview warns; Move pops ONE consolidated dialog (not a per-type pr
   Ejagham Full GT-Test -- whole-block, block-off, per-item trim, infl-feat dep
   carried, idempotency re-run. (Written; main session executes.)
 
-- [ ] T028 Update STATUS.md handoff; note merge-reconciliation items (see plan.md
+- [x] T028 Update STATUS.md handoff; note merge-reconciliation items (see plan.md
   Shared-Hotspot Merge Notes); commit topic-aligned increments.
 
 ---

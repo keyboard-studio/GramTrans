@@ -57,10 +57,10 @@ Define the `MergePreviewPane` class stub (public API only; implementation in T00
 **Files**: `src/gramtrans/Lib/ui/merge_preview_pane.py` (NEW)
 
 **Checklist**:
-- [ ] `PreviewRequest` fields match plan R5 exactly (no extra fields).
-- [ ] `resolution_changed = pyqtSignal(str, object)` declared on the class body.
-- [ ] Module importable without PyQt6 installed (guarded import, stub class survives).
-- [ ] No LCM imports anywhere in the file.
+- [x] `PreviewRequest` fields match plan R5 exactly (no extra fields).
+- [x] `resolution_changed = pyqtSignal(str, object)` declared on the class body.
+- [x] Module importable without PyQt6 installed (guarded import, stub class survives).
+- [x] No LCM imports anywhere in the file.
 - [NOTE] LINK_ONLY is imported from 012's merge_preview.py for completeness but is NOT a valid 014 pane mode. Do not wire LINK_ONLY into any 014 PreviewRequest / mode combo. Valid 014 pane modes are OVERWRITE, MERGE_KEEP, NEW only (per R1).
 
 ---
@@ -96,10 +96,10 @@ Import `MergePreviewService`, `to_html`, `OVERWRITE`, `MERGE_KEEP`, `NEW` from
 **Files**: `src/gramtrans/Lib/ui/merge_preview_pane.py`
 
 **Checklist**:
-- [ ] `show_item` with a non-resolvable request hides the resolution header.
-- [ ] `clear()` leaves the widget in the same state as just after `__init__`.
-- [ ] `preview_for` is called with the full 4-tuple `(category, source_guid, target_guid, mode)` — never a 3-tuple.
-- [ ] `to_html` output is set on the browser widget without modification.
+- [x] `show_item` with a non-resolvable request hides the resolution header.
+- [x] `clear()` leaves the widget in the same state as just after `__init__`.
+- [x] `preview_for` is called with the full 4-tuple `(category, source_guid, target_guid, mode)` — never a 3-tuple.
+- [x] `to_html` output is set on the browser widget without modification.
 - [NOTE] LINK_ONLY is imported from 012's merge_preview.py for completeness but is NOT a valid 014 pane mode. Do not wire LINK_ONLY into any 014 PreviewRequest / mode combo. Valid 014 pane modes are OVERWRITE, MERGE_KEEP, NEW only (per R1).
 
 ---
@@ -141,12 +141,12 @@ Implement the resolution header widget inside `MergePreviewPane`:
 **Files**: `src/gramtrans/Lib/ui/merge_preview_pane.py`
 
 **Checklist**:
-- [ ] Combo does not accept free-text; candidates only.
-- [ ] Switching to Create new disables the combo and does not guard-block the signal.
-- [ ] Switching to Overwrite/Merge with an empty combo does NOT emit `resolution_changed`.
-- [ ] Signal carries the correct `(entry_guid, SimilarResolution)`.
-- [ ] No `invalidate()` call on mode flip (plan R2: distinct 4-tuple cache key is sufficient).
-- [ ] Signal blocking during `show_item` initialisation prevents double-emit.
+- [x] Combo does not accept free-text; candidates only.
+- [x] Switching to Create new disables the combo and does not guard-block the signal.
+- [x] Switching to Overwrite/Merge with an empty combo does NOT emit `resolution_changed`.
+- [x] Signal carries the correct `(entry_guid, SimilarResolution)`.
+- [x] No `invalidate()` call on mode flip (plan R2: distinct 4-tuple cache key is sufficient).
+- [x] Signal blocking during `show_item` initialisation prevents double-emit.
 
 ---
 
@@ -180,10 +180,10 @@ by side at 1280+ width; confirm with a brief manual check on the FlexTools host)
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`
 
 **Checklist**:
-- [ ] Helper is private (underscore prefix).
-- [ ] Returns a `QSplitter` (not a layout).
-- [ ] Stretch factors are 3:2 (tree:pane) as per plan R7.
-- [ ] Wizard `minimumSize` updated so tree + pane are not clipped at launch.
+- [x] Helper is private (underscore prefix).
+- [x] Returns a `QSplitter` (not a layout).
+- [x] Stretch factors are 3:2 (tree:pane) as per plan R7.
+- [x] Wizard `minimumSize` updated so tree + pane are not clipped at launch.
 
 ---
 
@@ -215,10 +215,10 @@ builder (it names the affix's part-of-speech category for the inventory).
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageItemPicker` section
 
 **Checklist**:
-- [ ] `UserRole + 30` and `+ 31` do not collide with any existing role constant (grep
+- [x] `UserRole + 30` and `+ 31` do not collide with any existing role constant (grep
       confirmed: phonology uses 20-22; no other constant uses 30-31).
-- [ ] Both roles set on every item row (new, in-target, similar), not only on SIMILAR rows.
-- [ ] No existing behavior changed (roles are additive).
+- [x] Both roles set on every item row (new, in-target, similar), not only on SIMILAR rows.
+- [x] No existing behavior changed (roles are additive).
 
 ---
 
@@ -250,9 +250,9 @@ is the value already iterated at the POS-node level of the skeleton builder.
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageSkeleton` section
 
 **Checklist**:
-- [ ] `UserRole + 40/41/42` do not collide with any existing role constant.
-- [ ] Owner GUID set correctly for both slot rows and template rows.
-- [ ] Group/header rows (the POS node itself) do NOT receive item-level status roles
+- [x] `UserRole + 40/41/42` do not collide with any existing role constant.
+- [x] Owner GUID set correctly for both slot rows and template rows.
+- [x] Group/header rows (the POS node itself) do NOT receive item-level status roles
       (or receive a sentinel that `_on_tree_selection_changed` filters as a group).
 
 ---
@@ -288,11 +288,11 @@ item.setData(0, _DEPS_CAT_ROLE,    grammar_category)
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageGramDeps` section
 
 **Checklist**:
-- [ ] `UserRole + 50/51` do not collide with existing constants.
-- [ ] All three deps sections (inflection features, inflection classes, stem names)
+- [x] `UserRole + 50/51` do not collide with existing constants.
+- [x] All three deps sections (inflection features, inflection classes, stem names)
       have the correct `GrammarCategory` mapped.
-- [ ] Section-header (group) rows do NOT receive item-level status roles.
-- [ ] The research mapping is confirmed before the PR is filed.
+- [x] Section-header (group) rows do NOT receive item-level status roles.
+- [x] The research mapping is confirmed before the PR is filed.
 
 ---
 
@@ -325,9 +325,9 @@ rather than adding a duplicate role.
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PagePhonology` section
 
 **Checklist**:
-- [ ] `UserRole + 23` does not collide (next available after 22).
-- [ ] Status role set on all phonology item rows (all five categories).
-- [ ] Group rows receive `_PHON_KIND_ROLE = "group"` (already set); they do not
+- [x] `UserRole + 23` does not collide (next available after 22).
+- [x] Status role set on all phonology item rows (all five categories).
+- [x] Group rows receive `_PHON_KIND_ROLE = "group"` (already set); they do not
       receive `_PHON_STATUS_ROLE` (filtered in the selection handler).
 
 ---
@@ -384,13 +384,13 @@ Wire the pane into `_PageItemPicker` (~line 573 of `selection_wizard.py`):
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageItemPicker`
 
 **Checklist**:
-- [ ] Splitter replaces the direct `addWidget(self._tree, 1)` call exactly.
-- [ ] `_preview_service` is constructed fresh on each `initializePage` (no stale state).
-- [ ] `_on_tree_selection_changed` fires once per selection (double-connect guard present).
-- [ ] Group/header rows produce `self._pane.clear()` with no further processing.
-- [ ] `resolvable=False` for NEW and IN-TARGET rows (header hidden).
-- [ ] `resolvable=True` only when `status == "similar"` and candidates are non-empty.
-- [ ] The 4-tuple passed to `preview_for` always uses the current resolution's `mode`,
+- [x] Splitter replaces the direct `addWidget(self._tree, 1)` call exactly.
+- [x] `_preview_service` is constructed fresh on each `initializePage` (no stale state).
+- [x] `_on_tree_selection_changed` fires once per selection (double-connect guard present).
+- [x] Group/header rows produce `self._pane.clear()` with no further processing.
+- [x] `resolvable=False` for NEW and IN-TARGET rows (header hidden).
+- [x] `resolvable=True` only when `status == "similar"` and candidates are non-empty.
+- [x] The 4-tuple passed to `preview_for` always uses the current resolution's `mode`,
       not a hardcoded mode.
 
 ---
@@ -444,11 +444,11 @@ Implement the full resolution store lifecycle on `_PageItemPicker`:
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageItemPicker`
 
 **Checklist**:
-- [ ] 100% of SIMILAR rows have a store entry after `initializePage` (no gaps).
-- [ ] Store is reset to `{}` at the top of `initializePage` (not accumulated across entries).
-- [ ] `_update_target_column` handles all three action strings without a KeyError.
-- [ ] `self._guid_to_items` is confirmed to exist in the 011 implementation before use.
-- [ ] Target column text is set even when `resolution.target_guid` is empty (create_new).
+- [x] 100% of SIMILAR rows have a store entry after `initializePage` (no gaps).
+- [x] Store is reset to `{}` at the top of `initializePage` (not accumulated across entries).
+- [x] `_update_target_column` handles all three action strings without a KeyError.
+- [x] `self._guid_to_items` is confirmed to exist in the 011 implementation before use.
+- [x] Target column text is set even when `resolution.target_guid` is empty (create_new).
 
 ---
 
@@ -478,12 +478,12 @@ the page's live store.
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageItemPicker.collect_selection`
 
 **Checklist**:
-- [ ] Returned `Selection.similar_resolutions` is a copy, not a reference to the live store.
-- [ ] The dummy/fallback path (inventory is None) returns an empty `similar_resolutions`
+- [x] Returned `Selection.similar_resolutions` is a copy, not a reference to the live store.
+- [x] The dummy/fallback path (inventory is None) returns an empty `similar_resolutions`
       (the dataclass default), not `None`.
-- [ ] All existing callers of `collect_selection` continue to work (the new field is
+- [x] All existing callers of `collect_selection` continue to work (the new field is
       additive; callers that do not read `similar_resolutions` are unaffected).
-- [ ] MUST NOT touch planner/executor (FR-012) — reconstruction copy in _PagePreview._on_preview and collect_selection fold are UI/selection layer only.
+- [x] MUST NOT touch planner/executor (FR-012) — reconstruction copy in _PagePreview._on_preview and collect_selection fold are UI/selection layer only.
 
 ---
 
@@ -518,11 +518,11 @@ Wire the pane into `_PagePhonology` (~line 1761):
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PagePhonology`
 
 **Checklist**:
-- [ ] `resolvable=False` for ALL phonology rows (including SIMILAR); no resolution header.
-- [ ] Double-connect guard is applied (existing pattern; do not remove it).
-- [ ] SIMILAR phonology uses `OVERWRITE` mode for display, not `MERGE_KEEP`.
-- [ ] No `SimilarResolution` is seeded or stored for phonology.
-- [ ] `matched_target_guid` source confirmed against 011 implementation before coding.
+- [x] `resolvable=False` for ALL phonology rows (including SIMILAR); no resolution header.
+- [x] Double-connect guard is applied (existing pattern; do not remove it).
+- [x] SIMILAR phonology uses `OVERWRITE` mode for display, not `MERGE_KEEP`.
+- [x] No `SimilarResolution` is seeded or stored for phonology.
+- [x] `matched_target_guid` source confirmed against 011 implementation before coding.
 
 ---
 
@@ -547,10 +547,10 @@ Wire the pane into `_PageSkeleton` (~line 1095). This page has no resolution wor
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageSkeleton`
 
 **Checklist**:
-- [ ] Owner GUID flows into `PreviewRequest.owner_guid` for slot/template rows.
-- [ ] `resolvable=False` for all skeleton rows.
-- [ ] Double-connect guard present.
-- [ ] Existing skeleton page behavior (checkboxes, skeleton collection) unchanged.
+- [x] Owner GUID flows into `PreviewRequest.owner_guid` for slot/template rows.
+- [x] `resolvable=False` for all skeleton rows.
+- [x] Double-connect guard present.
+- [x] Existing skeleton page behavior (checkboxes, skeleton collection) unchanged.
 
 ---
 
@@ -576,11 +576,11 @@ data-role gap (fixed in T007); this task uses those new roles.
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PageGramDeps`
 
 **Checklist**:
-- [ ] Uses `_DEPS_CAT_ROLE` and `_DEPS_STATUS_ROLE` introduced in T007.
-- [ ] Section-header rows (inflection features, inflection classes, stem names headers)
+- [x] Uses `_DEPS_CAT_ROLE` and `_DEPS_STATUS_ROLE` introduced in T007.
+- [x] Section-header rows (inflection features, inflection classes, stem names headers)
       produce `self._pane.clear()` rather than a preview attempt.
-- [ ] `resolvable=False` for all deps rows.
-- [ ] Existing deps page behavior (checkboxes, dependency collection) unchanged.
+- [x] `resolvable=False` for all deps rows.
+- [x] Existing deps page behavior (checkboxes, dependency collection) unchanged.
 
 ---
 
@@ -619,14 +619,14 @@ coding.
 **Files**: `src/gramtrans/Lib/ui/selection_wizard.py`, `_PagePreview._on_preview` (~line 2186)
 
 **Checklist**:
-- [ ] Insertion is after `_replace_conflict_modes` and before `compute_preview` (verify
+- [x] Insertion is after `_replace_conflict_modes` and before `compute_preview` (verify
       line order by reading the function).
-- [ ] `dataclasses` is imported at module level (or already imported).
-- [ ] `similar_resolutions` from the picker page is a copy (T011 already returns a copy
+- [x] `dataclasses` is imported at module level (or already imported).
+- [x] `similar_resolutions` from the picker page is a copy (T011 already returns a copy
       from `collect_selection`); no aliasing concern.
-- [ ] No other fields of `selection` are altered by this line.
-- [ ] Existing `_PagePreview` test paths (dry-run with no SIMILAR rows) pass unchanged.
-- [ ] MUST NOT touch planner/executor (FR-012) — reconstruction copy in _PagePreview._on_preview and collect_selection fold are UI/selection layer only.
+- [x] No other fields of `selection` are altered by this line.
+- [x] Existing `_PagePreview` test paths (dry-run with no SIMILAR rows) pass unchanged.
+- [x] MUST NOT touch planner/executor (FR-012) — reconstruction copy in _PagePreview._on_preview and collect_selection fold are UI/selection layer only.
 
 ---
 
@@ -664,11 +664,11 @@ returning a fixed `MergePreview`; stub `to_html` to return a known HTML string.
 **Files**: `tests/unit/test_014_pane_display.py` (NEW)
 
 **Checklist**:
-- [ ] `QT_QPA_PLATFORM=offscreen` set before `QApplication` construction.
-- [ ] `pytest.importorskip("PyQt6")` at module level.
-- [ ] Stub service does not require a live LCM project.
-- [ ] Tests are marked `not integration` (no fixture dependency on live project).
-- [ ] All four test cases present and passing.
+- [x] `QT_QPA_PLATFORM=offscreen` set before `QApplication` construction.
+- [x] `pytest.importorskip("PyQt6")` at module level.
+- [x] Stub service does not require a live LCM project.
+- [x] Tests are marked `not integration` (no fixture dependency on live project).
+- [x] All four test cases present and passing.
 
 ---
 
@@ -713,10 +713,10 @@ Test cases covering SC-007 requirements:
 **Files**: `tests/unit/test_014_resolution_control.py` (NEW)
 
 **Checklist**:
-- [ ] `QSignalSpy` used to capture `resolution_changed` emissions.
-- [ ] Combo substring filter test confirms case-insensitivity (both upper and lower input).
-- [ ] All eight test cases present.
-- [ ] No live LCM required (stub service).
+- [x] `QSignalSpy` used to capture `resolution_changed` emissions.
+- [x] Combo substring filter test confirms case-insensitivity (both upper and lower input).
+- [x] All eight test cases present.
+- [x] No live LCM required (stub service).
 
 ---
 
@@ -756,10 +756,10 @@ Test cases:
 **Files**: `tests/unit/test_014_resolution_seeding.py` (NEW)
 
 **Checklist**:
-- [ ] Fake inventory fixture has at least two SIMILAR affix rows.
-- [ ] Test 5 covers the reconstruction copy from T015 (the `dataclasses.replace` line).
-- [ ] No live LCM required.
-- [ ] All five test cases present.
+- [x] Fake inventory fixture has at least two SIMILAR affix rows.
+- [x] Test 5 covers the reconstruction copy from T015 (the `dataclasses.replace` line).
+- [x] No live LCM required.
+- [x] All five test cases present.
 
 ---
 
@@ -790,10 +790,10 @@ Test cases:
 **Files**: `tests/unit/test_014_phonology_display.py` (NEW)
 
 **Checklist**:
-- [ ] Stub service returns an appropriate `MergePreview` for each mode.
-- [ ] Resolution header confirmed hidden via `pane._resolution_header.isVisible() is False`.
-- [ ] Test 3 uses `hasattr` or `getattr` with a sentinel; does not crash on absence.
-- [ ] All three test cases present.
+- [x] Stub service returns an appropriate `MergePreview` for each mode.
+- [x] Resolution header confirmed hidden via `pane._resolution_header.isVisible() is False`.
+- [x] Test 3 uses `hasattr` or `getattr` with a sentinel; does not crash on absence.
+- [x] All three test cases present.
 
 ---
 
