@@ -72,36 +72,42 @@ class CategoryScope(enum.Enum):
 
 
 class ConflictMode(enum.Enum):
-    """Per-category conflict mode (Selection UI, plan.md revised 2026-07-01 section h).
+    """Per-category conflict mode (Selection UI, plan.md revised 2026-07-05 section h).
 
     Determines what happens when a closure item from the source meets an
     object already present in the target.
 
     ADD_NEW   : always create a new copy, even if a matching object exists.
-    MERGE     : link-if-present-by-GUID else ADD (interim MERGE, Option b).
-                No field-level update is performed -- the page-3 control
-                MUST label this explicitly so users are not misled.
-    OVERWRITE : overwrite the target's existing object with source values
-                (only offered when structurally possible and not forbidden
-                by Layer-1 kind or Layer-2 IsProtected gating).
+    LINK      : link-if-present-by-GUID else ADD.  No field-level update is
+                performed (formerly MERGE; renamed 022-disposition-model).
+                The persisted value "merge" is shimmed to LINK at read time
+                in `conflict_mode_for` for one release of backward compat.
+    UPDATE    : non-destructive field update for existing items.  Source wins
+                on diverged fields; a target field is NEVER blanked from an
+                empty source (FR-003).  New items are always added regardless.
+    OVERWRITE : overwrite the target's existing object with source values,
+                including blanking a target field from an empty source (only
+                offered when structurally possible and not forbidden by
+                Layer-1 kind or Layer-2 IsProtected gating).
     """
     ADD_NEW = "add_new"
-    MERGE = "merge"
+    LINK = "link"
+    UPDATE = "update"
     OVERWRITE = "overwrite"
 
 
 # ---------------------------------------------------------------------------
-# Layer-1 category-kind defaults (section h, plan.md revised 2026-07-01).
+# Layer-1 category-kind defaults (section h, plan.md revised 2026-07-05).
 # Maps each GrammarCategory to its default ConflictMode per kind:
-#   MULTI_INSTANCE     -> ADD_NEW (all three modes offered)
-#   SINGLETON_NONDELETABLE -> MERGE (ADD_NEW hidden)
-#   GOLD_RESERVED      -> MERGE (ADD_NEW hidden, OVERWRITE forbidden)
-#   CUSTOM_FIELDS      -> MERGE (ADD_NEW hidden, OVERWRITE forbidden, conservative default)
+#   MULTI_INSTANCE     -> UPDATE (non-destructive; all four modes offered)
+#   SINGLETON_NONDELETABLE -> LINK (ADD_NEW hidden)
+#   GOLD_RESERVED      -> LINK (ADD_NEW hidden, OVERWRITE/UPDATE forbidden)
+#   CUSTOM_FIELDS      -> LINK (ADD_NEW hidden, OVERWRITE/UPDATE forbidden, conservative default)
 # ---------------------------------------------------------------------------
 
 def _build_default_conflict_modes() -> dict:
     """Return the default ConflictMode for every GrammarCategory per Layer-1."""
-    # MULTI_INSTANCE categories (all three modes offered; default ADD_NEW)
+    # MULTI_INSTANCE categories (all four modes offered; default UPDATE per 022 Ruling)
     multi_instance = {
         GrammarCategory.AFFIXES,
         GrammarCategory.STEMS,
@@ -123,7 +129,7 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.MSA,
         GrammarCategory.ALLOMORPH,
     }
-    # GOLD_RESERVED categories (ADD_NEW hidden, OVERWRITE forbidden -> MERGE default)
+    # GOLD_RESERVED categories (ADD_NEW hidden, OVERWRITE/UPDATE forbidden -> LINK default)
     gold_reserved = {
         GrammarCategory.GRAM_CATEGORIES,
         GrammarCategory.INFLECTION_FEATURES,
@@ -133,27 +139,27 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.PHONOLOGICAL_FEATURES,
         GrammarCategory.SEMANTIC_DOMAINS,
     }
-    # SINGLETON_NONDELETABLE (ADD_NEW hidden -> MERGE default)
+    # SINGLETON_NONDELETABLE (ADD_NEW hidden -> LINK default)
     singleton = {
         GrammarCategory.WRITING_SYSTEMS_CHECK,
     }
-    # CUSTOM_FIELDS: conservative default (ADD hidden, OVERWRITE forbidden, MERGE no-op-if-identical)
+    # CUSTOM_FIELDS: conservative default (ADD hidden, OVERWRITE/UPDATE forbidden, LINK no-op-if-identical)
     custom_fields = {
         GrammarCategory.CUSTOM_FIELDS,
     }
     result: dict = {}
     for cat in GrammarCategory:
         if cat in multi_instance:
-            result[cat] = ConflictMode.ADD_NEW
+            result[cat] = ConflictMode.UPDATE  # 022: UPDATE is the new MULTI_INSTANCE default
         elif cat in gold_reserved:
-            result[cat] = ConflictMode.MERGE
+            result[cat] = ConflictMode.LINK
         elif cat in singleton:
-            result[cat] = ConflictMode.MERGE
+            result[cat] = ConflictMode.LINK
         elif cat in custom_fields:
-            result[cat] = ConflictMode.MERGE
+            result[cat] = ConflictMode.LINK
         else:
             # Fallback for any newly-added category: safest default
-            result[cat] = ConflictMode.MERGE
+            result[cat] = ConflictMode.LINK
     return result
 
 
@@ -442,12 +448,28 @@ class Selection:
         Lookup order:
         1. Explicit entry in `category_conflict_modes`.
         2. Layer-1 default from `_DEFAULT_CONFLICT_MODES`.
-        3. MERGE as ultimate fallback (safest, non-destructive).
+        3. LINK as ultimate fallback (safest, non-destructive).
+
+        Backward-compat shim (022-disposition-model, T004):
+        A persisted value of "merge" (written by pre-022 code) is remapped to
+        LINK at this single read point.  Log a deprecation notice so operators
+        can identify and re-save stale selections.
         """
         explicit = self.category_conflict_modes.get(category)
         if explicit is not None:
+            # Backward-compat shim: persisted "merge" -> LINK (one shim point only).
+            # The residue.py "merge=" wire format is a DISTINCT MergeDecisionLog
+            # encoding and is NOT touched here -- see residue.py:27,96,179.
+            if isinstance(explicit, str) and explicit == "merge":
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "Deprecated persisted ConflictMode value 'merge' for %s; "
+                    "resolving to LINK.  Re-save the selection to update.",
+                    category,
+                )
+                return ConflictMode.LINK
             return explicit
-        return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.MERGE)
+        return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.LINK)
 
     def _replace_conflict_modes(self, category_conflict_modes: dict) -> "Selection":
         """Return a new Selection with `category_conflict_modes` set.

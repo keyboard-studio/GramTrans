@@ -485,3 +485,202 @@ def build_session_from_resolutions(prompts, decisions):
         for guid, decs in decisions_by_guid.items()
     }
     return InteractiveSession(merge_decisions_by_guid=out)
+
+
+# ============================================================================
+# 022-disposition-model: per-item disposition computation (T015-T017, T020-T022)
+# ============================================================================
+
+import enum as _enum
+
+
+class ItemDisposition(_enum.Enum):
+    """Per-item outcome computed during the Preview / plan phase (022 FR-005).
+
+    IGNORE   : item was never selected by the user; it never enters the plan.
+    SKIP     : selected, present in target, all user-editable fields in sync
+               (2-way: source == target; or 3-way: baseline unchanged too).
+               No write occurs.
+    ADD      : not present in target; will be added regardless of intent.
+    UPDATE   : present; >=1 diverged field; UPDATE intent governs write
+               (non-destructive: source wins where diverged, preserves where
+               source is empty).
+    OVERWRITE: present; >=1 diverged field; OVERWRITE intent governs write
+               (destructive: source wins unconditionally, may blank target).
+    """
+    IGNORE = "ignore"
+    SKIP = "skip"
+    ADD = "add"
+    UPDATE = "update"
+    OVERWRITE = "overwrite"
+
+
+def _is_empty(value) -> bool:
+    """Return True if `value` is semantically empty for UPDATE skip-write decisions.
+
+    Empty means: None, empty string, empty dict, empty list/tuple/set.
+    Non-empty scalars (int 0, bool False) are considered non-empty because they
+    carry intentional data.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    if isinstance(value, dict):
+        return len(value) == 0
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return len(value) == 0
+    return False
+
+
+def compute_field_diff(src_props: dict, tgt_props: dict) -> dict:
+    """Return a dict of {field_name: (src_value, tgt_value)} for fields that differ.
+
+    Only keys present in BOTH dicts are compared (intersection).  A key absent
+    from one side is not a conflict (source-wins or target-preserved by caller).
+    """
+    if not isinstance(src_props, dict) or not isinstance(tgt_props, dict):
+        return {}
+    diff = {}
+    for key in sorted(set(src_props) & set(tgt_props)):
+        if src_props[key] != tgt_props[key]:
+            diff[key] = (src_props[key], tgt_props[key])
+    return diff
+
+
+def compute_disposition(
+    src_props,
+    tgt_props,
+    intent,
+    prior_baseline=None,
+) -> "ItemDisposition":
+    """Compute the per-item ItemDisposition (022 FR-005, T015, T020, T022).
+
+    Args:
+        src_props: dict of source's syncable properties (or None if item is
+            new / not-yet-fetched).  None -> ADD.
+        tgt_props: dict of target's syncable properties.  None -> ADD (not
+            present in target).
+        intent: ConflictMode — the user's chosen transfer intent for the
+            category (LINK / UPDATE / OVERWRITE / ADD_NEW).
+        prior_baseline: optional dict of the target's props at the time of the
+            PRIOR run (from residue snapshot).  When provided, enables 3-way
+            comparison: a field that matches *both* the baseline and the current
+            target is "untouched" and contributes no divergence (auto-SKIP).
+            When absent, 2-way comparison only (first-run behaviour, T022).
+
+    Returns:
+        ItemDisposition.
+
+    Note: IGNORE is NOT computed here -- IGNORE is the disposition for items
+    that were never selected and thus never enter the plan.  Callers that
+    enumerate unselected items must assign IGNORE themselves.
+    """
+    # Lazy import to avoid a top-level circular dependency.
+    if __package__:
+        from .models import ConflictMode as _ConflictMode
+    else:
+        from models import ConflictMode as _ConflictMode  # type: ignore
+
+    # Item not present in target -> ADD (regardless of intent).
+    if tgt_props is None or src_props is None:
+        return ItemDisposition.ADD
+
+    # Compute effective diff.
+    if prior_baseline is not None:
+        # 3-way: suppress fields where target matches baseline (untouched, T020).
+        # A field is "diverged" only if it changed since the prior run in the
+        # source direction, i.e. src != tgt AND (tgt changed since baseline OR
+        # src changed since baseline).  Simplest safe interpretation: exclude
+        # fields where tgt == baseline (no change in target since last run).
+        raw_diff = compute_field_diff(src_props, tgt_props)
+        diff = {
+            k: v
+            for k, v in raw_diff.items()
+            if prior_baseline.get(k) != tgt_props.get(k)  # target drifted from baseline
+            or src_props.get(k) != prior_baseline.get(k)   # source changed since baseline
+        }
+    else:
+        # 2-way: any src != tgt is diverged (first-run behaviour, T022).
+        diff = compute_field_diff(src_props, tgt_props)
+
+    if not diff:
+        # Zero diverged fields -> SKIP (no write needed).
+        return ItemDisposition.SKIP
+
+    # >=1 diverged field: disposition follows intent.
+    if intent in (_ConflictMode.LINK, _ConflictMode.ADD_NEW):
+        # LINK / ADD_NEW: no field-level writes to existing items -> SKIP
+        # (the item IS present; LINK writes nothing to it).
+        return ItemDisposition.SKIP
+    if intent == _ConflictMode.UPDATE:
+        return ItemDisposition.UPDATE
+    if intent == _ConflictMode.OVERWRITE:
+        return ItemDisposition.OVERWRITE
+    # Unknown intent: conservative SKIP.
+    return ItemDisposition.SKIP
+
+
+def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj) -> int:
+    """Apply the non-destructive UPDATE write semantic (022 FR-003, T011).
+
+    Iterates the syncable-property keys present in both src_props and tgt_props.
+    For each key:
+    - If the source value is empty (None / "" / {} / []) -> SKIP write (never
+      blank a target field from an empty source).
+    - Otherwise write the source value to the target field via
+      ``ops.ApplySyncableProperties(tgt_obj, {key: src_value})``.
+
+    Args:
+        src_props: dict returned by GetSyncableProperties on the source object.
+        tgt_props: dict returned by GetSyncableProperties on the target object.
+        ops: the Operations instance (must expose ApplySyncableProperties).
+        tgt_obj: the target LCM object to write to.
+
+    Returns:
+        int: number of fields written (0 if all-identical or all-empty-source).
+    """
+    written = 0
+    for key in sorted(set(src_props) & set(tgt_props)):
+        src_val = src_props[key]
+        tgt_val = tgt_props[key]
+        if src_val == tgt_val:
+            continue  # identical -> skip
+        if _is_empty(src_val):
+            continue  # non-destructive: never blank from empty source
+        # Source differs and is non-empty -> write.
+        try:
+            ops.ApplySyncableProperties(tgt_obj, {key: src_val})
+            written += 1
+        except (AttributeError, TypeError):
+            pass  # best-effort; caller's error handling covers the rest
+    return written
+
+
+# ============================================================================
+# 022 T014: Flexicon version gate for Phoneme/Environment field-diff promotion
+# ============================================================================
+
+# When pyflexicon ships the ITsString.get_String guard fix for
+# EnvironmentOperations (~:694-698) and PhonemeOperations (~:1309-1319),
+# bump this constant to the fix release version.
+# TODO(Ruling-Y): update _FLEXICON_ITSTRING_FIX_VERSION when the
+# flexicon ITsString.get_String patch ships.
+_FLEXICON_ITSTRING_FIX_VERSION = "999.0.0"  # placeholder; no fix yet
+
+
+def _phoneme_env_field_diff_enabled() -> bool:
+    """Return True if the installed pyflexicon version supports
+    GetSyncableProperties on Phoneme and PH_ENVIRONMENT objects without
+    the ITsString.get_String defect (022 T014 / Ruling Y).
+
+    Until the fix ships, Phoneme and PH_ENVIRONMENT stay SELECTOR-ONLY
+    (Tier C).  When the fix ships, update _FLEXICON_ITSTRING_FIX_VERSION.
+    """
+    try:
+        import importlib.metadata as _meta
+        installed = _meta.version("pyflexicon")
+        from packaging.version import Version
+        return Version(installed) >= Version(_FLEXICON_ITSTRING_FIX_VERSION)
+    except Exception:
+        return False  # fail-closed: stay SELECTOR-ONLY if version unreadable

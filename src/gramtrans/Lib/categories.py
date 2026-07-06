@@ -169,9 +169,9 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     1. _is_gold -> Skip(GOLD_INVIOLABLE) if GOLD.
     2. target_iter_fn(context.target_handle) -> scan for GUID.
     3. If absent -> return None (caller emits PlannedAction).
-    4. apply_isprotected_layer2 -> if MERGE, Skip(ALREADY_PRESENT_BY_GUID)
+    4. apply_isprotected_layer2 -> if LINK, Skip(ALREADY_PRESENT_BY_GUID)
        with IsProtected note.
-    5. MERGE-per-WS edit detection on Name, Abbreviation, Description.
+    5. LINK-per-WS edit detection on Name, Abbreviation, Description.
        - Any gaps -> PlannedOverwrite(write_mode="merge").
        - All equal -> Skip(ALREADY_PRESENT_BY_GUID).
        - All conflicts (no gaps) -> Skip(ALREADY_PRESENT_BY_GUID) + conflict detail.
@@ -199,9 +199,9 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     if tgt_obj is None:
         return None  # absent -> caller emits PlannedAction
 
-    # IsProtected guard (FR-E02): downgrade to MERGE = link-only, no edit.
+    # IsProtected guard (FR-E02): downgrade to LINK = link-only, no edit.
     mode = apply_isprotected_layer2(category, tgt_obj, ConflictMode.OVERWRITE)
-    if mode == ConflictMode.MERGE:
+    if mode == ConflictMode.LINK:
         return Skip(
             category=category,
             source_guid=src_guid,
@@ -212,7 +212,7 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
             ),
         )
 
-    # MERGE-per-WS edit detection (FR-E04 to FR-E07).
+    # LINK-per-WS edit detection (FR-E04 to FR-E07).
     # Enumerate writing systems from source side.
     source = context.source_handle
     ws_list = []

@@ -125,7 +125,8 @@ _SCOPE_LABELS = {
 
 _CONFLICT_LABELS = {
     ConflictMode.ADD_NEW: "Add new (always create a copy)",
-    ConflictMode.MERGE: "Merge (link existing by ID, else add; no field update)",
+    ConflictMode.LINK: "Link (link existing by ID, else add; no field update)",
+    ConflictMode.UPDATE: "Update (non-destructive: source wins on diverged fields; never blanks target)",
     ConflictMode.OVERWRITE: "Overwrite (replace target values with source)",
 }
 
@@ -180,10 +181,10 @@ _CATEGORY_TOGGLES = [
 def _allowed_modes(cat: GrammarCategory) -> list:
     """Return the list of ConflictMode values offered for `cat` per Layer 1."""
     if cat in _GOLD_RESERVED or cat in _CUSTOM_FIELDS_ONLY:
-        # ADD_NEW hidden, OVERWRITE forbidden
-        return [ConflictMode.MERGE]
-    # MULTI_INSTANCE or SINGLETON_NONDELETABLE that isn't GOLD -> all three
-    return [ConflictMode.ADD_NEW, ConflictMode.MERGE, ConflictMode.OVERWRITE]
+        # ADD_NEW hidden, OVERWRITE/UPDATE forbidden (GOLD safety rail, 022 T005)
+        return [ConflictMode.LINK]
+    # MULTI_INSTANCE or SINGLETON_NONDELETABLE that isn't GOLD -> all four modes
+    return [ConflictMode.ADD_NEW, ConflictMode.LINK, ConflictMode.UPDATE, ConflictMode.OVERWRITE]
 
 
 # ---------------------------------------------------------------------------
@@ -1218,8 +1219,8 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
     Re-hosts the existing scope-combo controls from main_window and adds
     per-category ConflictMode selectors gated by the Layer-1 kind table.
 
-    The MERGE control carries an explicit label ("link existing by ID, else
-    add; no field update") per spec section (i).
+    The LINK control carries an explicit label ("link existing by ID, else
+    add; no field update") per spec section (i) (022: renamed from MERGE).
     """
 
     def __init__(self, parent=None):
@@ -1272,7 +1273,7 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
             for mode in _allowed_modes(cat):
                 conflict_cb.addItem(_CONFLICT_LABELS[mode], mode)
             # Default: Layer-1 default mode
-            default_mode = _DEFAULT_CONFLICT_MODES.get(cat, ConflictMode.MERGE)
+            default_mode = _DEFAULT_CONFLICT_MODES.get(cat, ConflictMode.LINK)  # 022: LINK as ultimate fallback
             for idx in range(conflict_cb.count()):
                 if conflict_cb.itemData(idx) == default_mode:
                     conflict_cb.setCurrentIndex(idx)
@@ -2166,8 +2167,8 @@ class _PageCustomFields(QtWidgets.QWizardPage):
     The whole-block tristate toggle mirrors _PagePhonology: empty block =>
     unchecked + disabled (not vacuously full, per Acceptance 1.3).
 
-    No ADD_NEW / MERGE / OVERWRITE conflict-mode control (per spec: CUSTOM_FIELDS
-    uses conservative MERGE-only default, applied automatically at plan time).
+    No ADD_NEW / LINK / UPDATE / OVERWRITE conflict-mode control (per spec: CUSTOM_FIELDS
+    uses conservative LINK-only default, applied automatically at plan time).
     """
 
     def __init__(self, parent=None):
@@ -2487,7 +2488,7 @@ class _PageRules(QtWidgets.QWizardPage):
     controls the entire block (tristate: all / none / partial).  Empty
     category renders as empty (FR-011) — not an error.
 
-    No ADD_NEW / MERGE / OVERWRITE conflict-mode control (FR-016):
+    No ADD_NEW / LINK / UPDATE / OVERWRITE conflict-mode control (FR-016):
     per-category Layer-1 defaults are applied automatically at plan time.
 
     On page-leave, ``collect_rules_picks()`` collapses checked rows into
@@ -2775,7 +2776,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
     Strata are NEVER a user row (FR-009) — they travel automatically iff a rule
     is kept, decided in ``collapse_phonology``.
 
-    Deliberately renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode control
+    Deliberately renders NO ADD_NEW/LINK/UPDATE/OVERWRITE conflict-mode control
     (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically
     when the Preview page builds the Selection.
     """
