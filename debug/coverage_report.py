@@ -131,6 +131,23 @@ def main(argv):
     import flexicon
     flexicon.FLExInitialize()
 
+    # SLDR offline: LCM's WS save/commit path calls
+    # SIL.WritingSystems.Sldr.Initialize(offlineTestMode=False, ...), which makes
+    # a BLOCKING HTTP call to the SLDR server. Offline / proxied / slow-server ->
+    # CloseProject() hangs forever while persisting (e.g. the AddCustomField
+    # schema write in api._ensure_custom_fields). There is NO Sldr.OfflineMode
+    # property in this libpalaso build; the lever is Cleanup() + Initialize(True).
+    # FLExInitialize already initialized SLDR *online*, so we must re-init offline
+    # here, after FLExInitialize (assemblies loaded) and before any OpenProject.
+    try:
+        from SIL.WritingSystems import Sldr  # type: ignore
+        if Sldr.IsInitialized:
+            Sldr.Cleanup()
+        Sldr.Initialize(True)  # offlineTestMode=True -> local SldrCache, no network
+        print("[INFO] SLDR forced offline (Sldr.Initialize(True))")
+    except Exception as exc:  # noqa: BLE001
+        print("[WARN] could not force SLDR offline: %r" % (exc,))
+
     lines = []
 
     def out(s=""):

@@ -317,6 +317,12 @@ def _ensure_custom_fields(target_project_name: str,
         return created
 
     proj = FLExProject()
+    _log.debug(
+        "_ensure_custom_fields: opening %r writeEnabled=True (fresh handle id=%s) "
+        "-- if this is the last log line, the re-open is blocked on the Phase-1 "
+        "write-lock not yet released by the OS/backend",
+        target_project_name, id(proj),
+    )
     try:
         proj.OpenProject(projectName=target_project_name, writeEnabled=True)
     except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
@@ -324,6 +330,11 @@ def _ensure_custom_fields(target_project_name: str,
             f"_ensure_custom_fields: could not open {target_project_name!r} "
             f"for schema write: {exc!s}"
         ) from exc
+    _log.debug(
+        "_ensure_custom_fields: opened %r (handle id=%s); running AddCustomField "
+        "pre-pass for %d action(s)",
+        target_project_name, id(proj), len(create_actions),
+    )
     try:
         mdc_managed = IFwMetaDataCacheManaged(proj.Cache.MetaDataCacheAccessor)
         cf_ops = proj.CustomFields
@@ -375,8 +386,17 @@ def _ensure_custom_fields(target_project_name: str,
         # single-owner contract guarantees this: we close the Phase-1 handle
         # before opening here, so no other UoW owner can be active.
         _do_creates()
+        _log.debug(
+            "_ensure_custom_fields: AddCustomField pre-pass done (created=%r); "
+            "closing schema-write handle id=%s to persist to disk",
+            created, id(proj),
+        )
     finally:
         proj.CloseProject()
+    _log.debug(
+        "_ensure_custom_fields: schema-write handle id=%s CloseProject() returned",
+        id(proj),
+    )
 
     return created
 
@@ -451,9 +471,18 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
             context.target_handle.CloseProject()
         except Exception:
             pass  # already closed or unavailable
+        _log.debug(
+            "execute_move PATH-CLOSE-REBIND: Phase-1 handle id=%s CloseProject() "
+            "returned; entering _ensure_custom_fields pre-pass",
+            id(phase1_handle),
+        )
 
         # Step 2: open fresh undoable handle, run AddCustomField pre-pass, close.
         _ensure_custom_fields(context.target_project_name, create_actions)
+        _log.debug(
+            "execute_move PATH-CLOSE-REBIND: _ensure_custom_fields pre-pass "
+            "returned; re-opening target for the value-write phase",
+        )
 
         # Step 3: re-open the target (fresh handle now sees persisted fields).
         try:

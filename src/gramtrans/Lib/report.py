@@ -73,7 +73,10 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     for action in plan.actions:
         b = _bucket(action.category)
         b["added"] += 1
-        if action.pulled_in_by:
+        # plan.actions is heterogeneous: PlannedAction has `pulled_in_by`,
+        # but CreateDefinitionAction (schema-level custom-field creates) does
+        # not.  Tolerate its absence the same way the overwrites loop below does.
+        if getattr(action, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
 
     skips_list: list = []
