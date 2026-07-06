@@ -18,14 +18,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from _fakes_affix import (  # re-export the shared pieces tests need
+from _fakes_affix import (
     FakeEntry,
     FakeMultiStr,
     FakeMultiUnicode,
     FakePos,
     FakeSense,
-    make_pos,
-    make_source,
 )
 
 

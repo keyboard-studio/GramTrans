@@ -583,7 +583,7 @@ class TestStemsTabWiring:
         assert "s1" in sel.stem_picks and "a1" in sel.affix_picks
 
     def test_stem_row_shows_target_status_column(self, qapp):
-        from _fakes_affix import make_infl_entry, make_pos, make_source
+        from _fakes_affix import make_pos, make_source
         from _fakes_stem import make_stem_entry
         pn = make_pos("pn", "n", "Noun")
         s1 = make_stem_entry("s1", "dog", pn, glosses=["dog"])
@@ -640,7 +640,6 @@ class TestStemsPaneNoConflictUINoWrite:
     strict=False,
 )
 def test_stem_picks_flow_into_compute_plan_owned_children():
-    from gramtrans.Lib.selection import PickerState, SourceAffixInventory
     sel = Selection(
         categories={GrammarCategory.STEMS: True},
         stem_picks=frozenset({"stem-guid-1"}),

@@ -238,7 +238,6 @@ class TestStemClosure:
         feat = FakeInflFeature("feat-shared", "Tense")
         pv = make_pos_with_slots("pv", "v", "Verb", infl_feats=[feat])
         slot = make_slot("slot-1", "S")
-        pv.AffixSlotsOC = pv.AffixSlotsOC  # noqa: keep collections
         affix = make_infl_entry_with_slots("a1", "-s", ["3sg"], pv, [slot])
         stem = make_stem_entry("s1", "run", pv, glosses=["run"])
         src = make_source([affix, stem], [pv])
