@@ -103,14 +103,43 @@ def _is_gold(obj) -> bool:
 def _guid_str_from(obj) -> str:
     """Extract a lower-cased GUID string from an LCM object.
 
-    Uses ICmObject cast (same pattern as transfer.py).  Falls back to
-    `obj.guid` for fake/duck-typed test objects.
+    Handles three object shapes:
+      1. Raw LCM objects   -> cast via ICmObject (same pattern as transfer.py).
+      2. flexicon wrapper objects (e.g. the PhonologicalRule items yielded by
+         PhonRules.GetAll()'s RuleCollection) that are NOT castable to
+         ICmObject but expose the underlying LCM object as `._obj` and a
+         PascalCase `.Guid`.  Without this branch such wrappers fall through
+         to `""`, producing empty-GUID PlannedActions that later blow up in
+         DotNetGuid.Parse("") (swallowed FormatException in execute).
+      3. fake / duck-typed test objects exposing a lowercase `.guid`.
     """
     try:
         from SIL.LCModel import ICmObject  # lazy — not available in unit tests
-        return str(ICmObject(obj).Guid).lower()
     except Exception:
-        return str(getattr(obj, "guid", "")).lower()
+        ICmObject = None
+    if ICmObject is not None:
+        # Raw LCM object: direct cast.
+        try:
+            return str(ICmObject(obj).Guid).lower()
+        except Exception:
+            pass
+        # flexicon wrapper: cast the underlying LCM object it holds.
+        inner = getattr(obj, "_obj", None)
+        if inner is not None:
+            try:
+                return str(ICmObject(inner).Guid).lower()
+            except Exception:
+                pass
+    # Attribute fallbacks: lowercase `.guid` first (fake/duck-typed test
+    # objects, and the original contract), then PascalCase `.Guid` (a wrapper
+    # with no `._obj`).  In production a real flexicon wrapper is resolved by
+    # the `._obj` -> ICmObject cast above, so this is only reached under tests
+    # or for unusual objects.
+    for attr in ("guid", "Guid"):
+        val = getattr(obj, attr, None)
+        if val:
+            return str(val).lower()
+    return ""
 
 
 def _target_has_guid(target_iter, src_guid: str) -> bool:
@@ -1947,7 +1976,7 @@ def _rule_subclass_info(obj):
 def _cast_rule_concrete(obj):
     """Cast a rule/prohibition object to its concrete LCM subclass.
 
-    LCM owning collections (AdhocCoProhibitionsOS, CompoundRulesOS, and
+    LCM owning collections (AdhocCoProhibitionsOC, CompoundRulesOS, and
     IMoAdhocProhibGr.MembersOC) yield elements typed as the BASE interface
     (IMoCompoundRule / IMoAdhocProhib).  pythonnet exposes only the members of
     that static base type, so subclass-only slots — LeftMsaOA / RightMsaOA /
@@ -2033,7 +2062,7 @@ def _rules_enumerate_all(source):
     """Yield every leaf prohibition and compound rule from a source project.
 
     Adhoc prohibitions come from
-      source.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOS.
+      source.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC.
     IMoAdhocProhibGr grouping nodes are recursed via MembersOC (yielding the
     GROUP node itself, then recursing — callers that want only leaves should
     filter by class_name != 'MoAdhocProhibGr').
@@ -2070,7 +2099,7 @@ def _rules_enumerate_all(source):
     # Adhoc prohibitions from the OS collection
     try:
         morph_data = source.Cache.LangProject.MorphologicalDataOA
-        adhoc_os = morph_data.AdhocCoProhibitionsOS
+        adhoc_os = morph_data.AdhocCoProhibitionsOC
         for obj in _recurse_adhoc(adhoc_os):
             yield obj
     except AttributeError:
@@ -2272,7 +2301,7 @@ def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
             ),
         )
     # _phonology_simple_plan does GUID-first skip/add against a target iterator;
-    # for rules the target collection is CompoundRulesOS + AdhocCoProhibitionsOS.
+    # for rules the target collection is CompoundRulesOS + AdhocCoProhibitionsOC.
     # We reuse the existing helper by providing a synthetic ops_attr; however
     # since rules live in two OS collections we do the check inline.
     src_guid = _guid_str_from(piece)
@@ -2283,7 +2312,7 @@ def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
             try:
                 morph_data = tgt.Cache.LangProject.MorphologicalDataOA
                 try:
-                    for obj in morph_data.AdhocCoProhibitionsOS:
+                    for obj in morph_data.AdhocCoProhibitionsOC:
                         yield obj
                 except (AttributeError, TypeError):
                     pass
@@ -2364,9 +2393,9 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     if class_name in ("MoEndoCompound", "MoExoCompound"):
         owner_coll = morph_data.CompoundRulesOS
     else:
-        # Adhoc: all top-level adhoc items go into AdhocCoProhibitionsOS;
+        # Adhoc: all top-level adhoc items go into AdhocCoProhibitionsOC;
         # group children are re-parented in T011.
-        owner_coll = morph_data.AdhocCoProhibitionsOS
+        owner_coll = morph_data.AdhocCoProhibitionsOC
 
     new_rule, _preserved = _create_with_guid(factory_iface, owner_coll, src_guid, target)
 
@@ -2451,7 +2480,7 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         # Children were already created in the top-level OS; move kept ones
         # into the created group's MembersOC.  (Children not in scope => skipped
         # already by enumerate; this handles the parent-group itself.)
-        # The group node is created above (in AdhocCoProhibitionsOS).
+        # The group node is created above (in AdhocCoProhibitionsOC).
         # Child objects are NOT created here; they were enumerated as separate
         # items and will get their own execute_action calls — here we re-parent
         # children that already exist in the target by GUID into MembersOC.
@@ -2461,11 +2490,11 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 child_guid = _guid_str_from(src_child)
                 # Find child in target top-level OS (it may have just been created)
                 tgt_child = _find_target_obj_by_guid(
-                    list(morph_data.AdhocCoProhibitionsOS), child_guid)
+                    list(morph_data.AdhocCoProhibitionsOC), child_guid)
                 if tgt_child is not None:
                     try:
                         # Remove from top-level OS, add to group's MembersOC
-                        morph_data.AdhocCoProhibitionsOS.Remove(tgt_child)
+                        morph_data.AdhocCoProhibitionsOC.Remove(tgt_child)
                         new_rule.MembersOC.Add(tgt_child)
                     except (AttributeError, TypeError):
                         pass
@@ -4372,7 +4401,11 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     src_rule = None
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
-            src_rule = r
+            # PhonRules.GetAll() yields flexicon PhonologicalRule wrappers
+            # (RuleCollection). Unwrap to the raw LCM object so ClassName
+            # detection, StratumRA, and sync operate on the real object
+            # rather than the wrapper (whose ICmObject cast fails).
+            src_rule = getattr(r, "_obj", r)
             break
     if src_rule is None:
         return None
@@ -4393,7 +4426,13 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     try:
         props = source.PhonRules.GetSyncableProperties(src_rule)
         target.PhonRules.ApplySyncableProperties(new_rule, props)
-    except (AttributeError, TypeError):
+    except Exception:
+        # PhonologicalRuleOperations does not implement GetSyncableProperties
+        # (flexicon exposes only GetAll), so the base class raises
+        # NotImplementedError -- which (AttributeError, TypeError) would NOT
+        # catch, re-failing the action after the rule shell was created.
+        # Mirror phonemes_execute_action: degrade to a GUID-preserving create
+        # rather than aborting. See flexicon#222 for the sync-method gap.
         pass
     # Wire StratumRA if present.
     try:

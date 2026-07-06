@@ -2669,7 +2669,7 @@ def _rule_target_status(obj_guid: str, target_guids: set,
 
 
 def _rules_walk_adhoc(source):
-    """Yield (obj, parent_group_guid) pairs from AdhocCoProhibitionsOS (recurse groups).
+    """Yield (obj, parent_group_guid) pairs from AdhocCoProhibitionsOC (recurse groups).
 
     Top-level items have parent_group_guid=None.
     Group nodes appear before their children (depth-first pre-order).
@@ -2696,7 +2696,7 @@ def _rules_walk_adhoc(source):
     # Try direct LCM path first
     try:
         morph_data = source.Cache.LangProject.MorphologicalDataOA
-        for pair in _recurse(morph_data.AdhocCoProhibitionsOS, None):
+        for pair in _recurse(morph_data.AdhocCoProhibitionsOC, None):
             yield pair
         return
     except AttributeError:

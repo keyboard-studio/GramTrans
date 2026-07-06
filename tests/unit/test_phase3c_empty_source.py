@@ -98,7 +98,7 @@ class _FakePOSProject:
 
 class _FakeMorphData:
     def __init__(self, adhoc=(), compound=()) -> None:
-        self.AdhocCoProhibitionsOS = list(adhoc)
+        self.AdhocCoProhibitionsOC = list(adhoc)
         self.CompoundRulesOS = list(compound)
 
 

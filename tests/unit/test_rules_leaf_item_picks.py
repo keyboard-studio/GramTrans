@@ -35,7 +35,7 @@ class FakeRule:
 
 class FakeMorphData:
     def __init__(self, adhoc=(), compound=()):
-        self.AdhocCoProhibitionsOS = list(adhoc)
+        self.AdhocCoProhibitionsOC = list(adhoc)
         self.CompoundRulesOS = list(compound)
 
 

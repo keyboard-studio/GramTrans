@@ -65,7 +65,7 @@ class FakeRulesCollection:
 
 class FakeMorphData:
     def __init__(self, adhoc=(), compound=()):
-        self.AdhocCoProhibitionsOS = FakeRulesCollection(adhoc)
+        self.AdhocCoProhibitionsOC = FakeRulesCollection(adhoc)
         self.CompoundRulesOS = FakeRulesCollection(compound)
 
 
