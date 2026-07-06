@@ -687,16 +687,26 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         affix_tab_layout.addWidget(splitter, 1)
         self._tabs.addTab(affix_tab, "Affixes")
 
-        # --- Stems tab (stubbed, disabled) ---
+        # --- Stems tab (019: enabled, POS-grouped stem tree) ---
         stems_tab = QtWidgets.QWidget()
         stems_layout = QtWidgets.QVBoxLayout(stems_tab)
         stems_layout.addWidget(QtWidgets.QLabel(
-            "[STUBBED] Stem transfer is not yet available. "
-            "It will be enabled in a future phase (Layer-3 stems).",
+            "Select the stem entries to transfer, grouped by part of speech. "
+            "Checking a part of speech selects the stems under it.",
             stems_tab,
         ))
-        self._tabs.addTab(stems_tab, "Stems (not yet available)")
-        self._tabs.setTabEnabled(1, False)
+        self._stem_tree = QtWidgets.QTreeWidget(stems_tab)
+        self._stem_tree.setColumnCount(5)
+        self._stem_tree.setHeaderLabels(
+            ["Stem / Group", "Type", "From", "To", "Target"]
+        )
+        self._stem_tree.header().setStretchLastSection(False)
+        self._stem_tree.setAlternatingRowColors(True)
+        stems_layout.addWidget(self._stem_tree, 1)
+        self._tabs.addTab(stems_tab, "Stems")
+        # Stem inventory + per-guid item registry (mirrors the affix tree).
+        self._stem_inventory: Optional[PosGroupedAffixInventory] = None
+        self._stem_guid_to_items: dict = {}
 
         layout.addWidget(self._tabs, 1)
 
@@ -722,6 +732,10 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                 self._tree, ["(No source project bound)"]
             )
             empty_item.setFlags(empty_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            # 019: clear the stem tab too (no crash when unbound).
+            self._stem_inventory = None
+            self._stem_guid_to_items = {}
+            self._stem_tree.clear()
             return
 
         # FR-018(e): obtain target handle from page-0 context; guard for no-target
@@ -773,6 +787,20 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
         # Connect pane resolution_changed signal (T009)
         self._pane.resolution_changed.connect(self._on_resolution_changed)
+
+        # --- 019: build + populate the Stems tab (want_affix=False) ---
+        try:
+            stem_inventory = build_pos_grouped_inventory(
+                source, target=target, want_affix=False
+            )
+        except Exception:  # noqa: BLE001
+            stem_inventory = None  # type: ignore[assignment]
+        self._stem_inventory = stem_inventory
+        attach_ws_font_delegate(
+            self._stem_tree, [0, 2, 3], WsFontRegistry.from_project(source)
+        )
+        if stem_inventory is not None:
+            self.populate_stem_tree(stem_inventory)
 
     # T009/T010: helper methods
     def _candidate_list(self):
@@ -1195,6 +1223,102 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             else:
                 self._collect_checked(child, out)
 
+    # ------------------------------------------------------------------
+    # 019: Stems tab population + pick collection
+    # ------------------------------------------------------------------
+    def populate_stem_tree(self, inventory: PosGroupedAffixInventory) -> None:
+        """Populate the POS-grouped Stems tree from the stem inventory.
+
+        Mirrors ``populate_pos_tree`` but for stems: rows carry
+        ``GrammarCategory.STEMS`` and open preselected (checked). Called by
+        initializePage; may also be called directly in tests.
+        """
+        self._stem_tree.clear()
+        self._stem_guid_to_items = {}
+        for pos_node in inventory.roots:
+            self._add_stem_pos_node(self._stem_tree.invisibleRootItem(), pos_node)
+        has_junk = bool(inventory.junk.no_pos or inventory.junk.no_analysis)
+        if has_junk:
+            drawer = self._make_group_item(
+                self._stem_tree, "Unattached stems",
+                kind="pos_group", checkable=True, is_produces_group=False,
+            )
+            for label, rows in (
+                ("No part of speech", inventory.junk.no_pos),
+                ("No sense / no analysis", inventory.junk.no_analysis),
+            ):
+                if rows:
+                    sg = self._make_group_item(
+                        drawer, label,
+                        kind="subgroup", checkable=True, is_produces_group=False,
+                    )
+                    for row in rows:
+                        self._add_stem_row(sg, row)
+        self._stem_tree.expandAll()
+        for col in range(5):
+            self._stem_tree.resizeColumnToContents(col)
+
+    def _add_stem_pos_node(self, parent, pos_node) -> None:
+        """Recursively add a stem POS group and its stem rows + child POSes."""
+        stem_count = _count_affixes_in_node(pos_node)
+        word = "stem" if stem_count == 1 else "stems"
+        label = f"{pos_node.label} -- {stem_count} {word}"
+        pos_item = self._make_group_item(
+            parent, label,
+            kind="pos_group", checkable=True, is_produces_group=False,
+        )
+        pos_item.setData(0, _GUID_ROLE, pos_node.pos_guid)
+        set_ws_runs(pos_item, 0, (
+            (pos_node.label, WsRole.ANALYSIS),
+            (f" -- {stem_count} {word}", None),
+        ))
+        # Stems land in the inflectional (attaches) bucket of the shared row shape.
+        for row in pos_node.inflectional:
+            self._add_stem_row(pos_item, row)
+        for child in pos_node.children:
+            self._add_stem_pos_node(pos_item, child)
+
+    def _add_stem_row(self, parent: QtWidgets.QTreeWidgetItem, row) -> None:
+        """Add a leaf stem row; renders the NEW / IN TARGET / SIMILAR column."""
+        label_runs = affix_label_runs(row.form, row.glosses)
+        label = "".join(text for text, _ in label_runs)
+        _status_labels = {"new": "NEW", "in_target": "IN TARGET", "similar": "SIMILAR"}
+        target_label = _status_labels.get(row.status or "", "")
+        item = QtWidgets.QTreeWidgetItem(
+            parent, [label, "Stem", "", "", target_label]
+        )
+        set_ws_runs(item, 0, label_runs)
+        item.setData(0, _GUID_ROLE, row.entry_guid)
+        item.setData(0, _KIND_ROLE, "stem")
+        item.setData(0, _IS_PRODUCES, False)
+        item.setData(0, _ITEM_STATUS_ROLE, row.status or "")
+        item.setData(0, _ITEM_CAT_ROLE, GrammarCategory.STEMS)
+        item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        # Open preselected (mirror the affix picker default; deselect is primary).
+        item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+        self._stem_guid_to_items.setdefault(row.entry_guid, []).append(item)
+
+    def _collect_checked_stems(self, node: QtWidgets.QTreeWidgetItem,
+                               out: set) -> None:
+        """Recursively collect checked stem entry_guids from the Stems tree."""
+        for i in range(node.childCount()):
+            child = node.child(i)
+            if child.data(0, _KIND_ROLE) == "stem":
+                if child.checkState(0) == QtCore.Qt.CheckState.Checked:
+                    guid = child.data(0, _GUID_ROLE)
+                    if guid:
+                        out.add(guid)
+            else:
+                self._collect_checked_stems(child, out)
+
+    def _stem_picks(self) -> frozenset:
+        """Checked stem GUIDs intersected with the known stem inventory."""
+        if self._stem_inventory is None:
+            return frozenset()
+        checked: set = set()
+        self._collect_checked_stems(self._stem_tree.invisibleRootItem(), checked)
+        return frozenset(checked) & self._stem_inventory.all_affix_guids()
+
     def collect_selection(self) -> Selection:
         """Build a Selection from the current picker state (T011, FR-009).
 
@@ -1209,8 +1333,15 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             return base
         ps = self.picker_state()
         base = collapse_pos_grouped(ps.checked_affixes, self._inventory)
+        # 019: fold stem picks in. Non-empty stem_picks requires categories[STEMS].
+        stem_picks = self._stem_picks()
+        categories = dict(base.categories)
+        if stem_picks:
+            categories[GrammarCategory.STEMS] = True
         return dataclasses.replace(
             base,
+            categories=categories,
+            stem_picks=stem_picks,
             similar_resolutions=dict(self._resolution_store),
         )
 
@@ -1800,6 +1931,23 @@ class _PageSkeleton(QtWidgets.QWizardPage):
         except Exception:  # noqa: BLE001
             return frozenset()
 
+    def _get_stem_picks(self) -> frozenset:
+        """019: retrieve stem_picks from the item-picker page (mirror of
+        _get_affix_picks). The skeleton builder itself stays AFFIX-ONLY per
+        FR-013; this accessor exists for parity and downstream use.
+        """
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_items = w.page_items()
+            if page_items is None:
+                return frozenset()
+            sel = page_items.collect_selection()
+            return sel.stem_picks
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
     def collect_skeleton_picks(self) -> dict:
         """Return the current skeleton selections as:
         {
@@ -1904,17 +2052,20 @@ class _PageGramDeps(QtWidgets.QWizardPage):
         self._deps = None
 
         affix_picks = self._get_affix_picks()
+        stem_picks = self._get_stem_picks()
         source = self._get_source()
-        if source is None or not affix_picks:
+        if source is None or not (affix_picks or stem_picks):
             empty = QtWidgets.QTreeWidgetItem(
-                self._tree, ["(No affixes selected or no source bound)"]
+                self._tree, ["(No affixes or stems selected, or no source bound)"]
             )
             empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
             return
 
         target = self._get_target()
         try:
-            deps = build_deps_inventory(source, affix_picks, target=target)
+            deps = build_deps_inventory(
+                source, affix_picks, target=target, stem_picks=stem_picks
+            )
         except Exception:  # noqa: BLE001
             deps = None
 
@@ -2082,6 +2233,21 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                 return frozenset()
             sel = page_items.collect_selection()
             return sel.affix_picks
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+    def _get_stem_picks(self) -> frozenset:
+        """019: retrieve stem_picks from the item-picker page (mirror of
+        _get_affix_picks)."""
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_items = w.page_items()
+            if page_items is None:
+                return frozenset()
+            sel = page_items.collect_selection()
+            return sel.stem_picks
         except Exception:  # noqa: BLE001
             return frozenset()
 

@@ -345,6 +345,8 @@ class Selection:
     categories: dict = field(default_factory=dict)  # dict[GrammarCategory, bool]
     include_closure: bool = True
     affix_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
+    # 019-stems-item-picker: picked stem-entry GUIDs, sibling to affix_picks.
+    stem_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     template_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     pos_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — POS GUIDs
     enable_overwrite: bool = False  # Phase 1 (FR-101/FR-108): when True,
@@ -385,6 +387,10 @@ class Selection:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
             raise ValueError(
                 "affix_picks non-empty requires categories[AFFIXES] to be True"
+            )
+        if self.stem_picks and self.categories.get(GrammarCategory.STEMS) is not True:
+            raise ValueError(
+                "stem_picks non-empty requires categories[STEMS] to be True"
             )
         if self.template_picks and self.categories.get(GrammarCategory.AFFIX_TEMPLATES) is not True:
             raise ValueError(
