@@ -61,8 +61,8 @@ renamed refs and new UPDATE/SKIP assertions).
 **Independent Test**: Source field A diverged (non-empty src, non-empty target, different values) + field B non-empty in target and empty in source; run UPDATE; A takes source value, B unchanged. Run OVERWRITE on same pair; B is blanked. (Spec US2 scenarios 1-3.)
 
 - [ ] T011 [US2] Implement the UPDATE write semantic in `src/gramtrans/Lib/conflict.py` alongside the existing OVERWRITE path: iterate `GetSyncableProperties` keys; for each key, if the source value is empty (None / empty string / empty GUID), skip the write; otherwise write the source value to the target field. Contrast: OVERWRITE continues to write source unconditionally.
-- [ ] T012 [US2] Wire the UPDATE path into `src/gramtrans/Lib/transfer.py` execute path: when `conflict_mode_for(category) == ConflictMode.UPDATE` and the item is already present (IN TARGET), call the UPDATE write semantic (T011) rather than the OVERWRITE write. ADD path is unchanged (new items are always added regardless of intent).
-- [ ] T013 [US2] Guard UPDATE and OVERWRITE paths in `src/gramtrans/Lib/protection.py` / `src/gramtrans/Lib/conflict.py`: a GOLD or `IsProtected` target MUST veto both UPDATE and OVERWRITE and downgrade to LINK behavior (no field writes), consistent with 020 R4 and constitution Principle I.
+- [x] T012 [US2] Wire the UPDATE path into `src/gramtrans/Lib/transfer.py` execute path: when `conflict_mode_for(category) == ConflictMode.UPDATE` and the item is already present (IN TARGET), call the UPDATE write semantic (T011) rather than the OVERWRITE write. ADD path is unchanged (new items are always added regardless of intent).
+- [x] T013 [US2] Guard UPDATE and OVERWRITE paths in `src/gramtrans/Lib/protection.py` / `src/gramtrans/Lib/conflict.py`: a GOLD or `IsProtected` target MUST veto both UPDATE and OVERWRITE and downgrade to LINK behavior (no field writes), consistent with 020 R4 and constitution Principle I.
 
 **Checkpoint**: UPDATE writes only diverged non-empty source fields; OVERWRITE is unchanged; GOLD/protected veto applies to both.
 
@@ -113,7 +113,7 @@ renamed refs and new UPDATE/SKIP assertions).
 
 **Goal**: Phoneme and PH_ENVIRONMENT categories auto-promote from SELECTOR-ONLY to Tier A (full field-diff) when the pyflexicon `ITsString.get_String` fix ships, without requiring a code change in GramTrans.
 
-- [ ] T014 [P] Add a flexicon version check in `src/gramtrans/Lib/conflict.py` (or `src/gramtrans/Lib/selection.py` tier map): if the installed `pyflexicon` version is >= the fix release (to be confirmed when the bug is resolved; use a named constant `_FLEXICON_ITSTRING_FIX_VERSION`), promote Phonemes and PH_ENVIRONMENT from Tier C (blocked) to Tier A (real field-diff). Until then, they remain SELECTOR-ONLY with a `blocked_reason` string in the tier map (020 Tier C). Gate the constant with a `# TODO(Ruling-Y): update version when flexicon ITsString fix ships` comment.
+- [x] T014 [P] Add a flexicon version check in `src/gramtrans/Lib/conflict.py` (or `src/gramtrans/Lib/selection.py` tier map): if the installed `pyflexicon` version is >= the fix release (to be confirmed when the bug is resolved; use a named constant `_FLEXICON_ITSTRING_FIX_VERSION`), promote Phonemes and PH_ENVIRONMENT from Tier C (blocked) to Tier A (real field-diff). Until then, they remain SELECTOR-ONLY with a `blocked_reason` string in the tier map (020 Tier C). Gate the constant with a `# TODO(Ruling-Y): update version when flexicon ITsString fix ships` comment.
 
 **Checkpoint**: Phoneme/Environment remain SELECTOR-ONLY on current pyflexicon; version constant is defined and documented for future auto-promotion.
 

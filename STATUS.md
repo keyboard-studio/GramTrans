@@ -1,5 +1,50 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 022 — Disposition Model (LINK/UPDATE/OVERWRITE + IGNORE/SKIP) CREW-APPROVED & MERGED (2026-07-05)
+
+**Spec**: [specs/022-disposition-model/](specs/022-disposition-model/) — spec + plan + tasks (33).
+Supersedes 020's interim conflict-mode vocabulary (020 spec/plan/tasks retained on main as history).
+**Constitution**: ratified **v6.0.0** (`.specify/memory/constitution.md`) — Principle IV redefined
+(ADD_NEW/LINK/UPDATE/OVERWRITE intents; IGNORE/SKIP/ADD/UPDATE/OVERWRITE dispositions; UPDATE default
+for MULTI_INSTANCE), Principle III Preview action list updated.
+**Speckit + crew**: /speckit-plan (020) → pivot to 022 → 6 LEX crew cycles. Final: **APPROVED** (re-QC 88/100,
+all P0 resolved, domain PASS).
+**Tests**: post-merge full unit suite **1150 passed / 7 skipped / 13 xfailed / 1 xpassed / 0 failed**.
+
+### What shipped (code merged to main via `feat(022): disposition-model UPDATE semantics — crew-approved (C6)`)
+- **Enum**: `ConflictMode.MERGE` → **LINK** (`"link"`); new **UPDATE** (`"update"`). One read-time
+  backward-compat shim maps persisted `"merge"` → LINK in `conflict_mode_for` (`models.py`). The
+  distinct field-level `MergeResolution` enum is untouched. Residue `merge=` wire format untouched.
+- **UPDATE = non-destructive** (`apply_update_semantic`, `conflict.py`): source wins on diverged fields;
+  **never blanks a target field from an empty source** (`_is_empty` handles all-empty multistring +
+  `"***"`). UPDATE is the **default for MULTI_INSTANCE**; OVERWRITE opt-in.
+- **Disposition**: `ItemDisposition` + `compute_disposition` (2-way + 3-way residue baseline) + `compute_field_diff`;
+  true-SKIP on empty diff.
+- **Executor wiring** (`transfer.py`): `execute()` consults `conflict_mode_for` per overwrite → routes
+  UPDATE→`_execute_update_semantic`, LINK→no-op, OVERWRITE→existing path. C6 defensive gate for
+  PHONEMES/PH_ENVIRONMENT (`_phoneme_env_field_diff_enabled`, `_FLEXICON_ITSTRING_FIX_VERSION`).
+- **Live proof** (throwaway Ejagham Full GT-Test, real POS): non-destructive (empty source, 0 writes,
+  preserved) + divergent-write (1 write, updated) = **PASS**, original restored.
+
+### Deferred / follow-ups (NOT blockers)
+- **AFFIXES/STEMS end-to-end UPDATE**: gated on Phase-3c category engines (features 007/019) whose
+  `plan_action` are still `NotImplementedError` stubs and don't emit overwrite-candidates. UPDATE is
+  currently exercised via GOLD_RESERVED categories (POS/gram_categories, inflection_features,
+  variant_types, complex_form_types, semantic_domains, phonological_features).
+- **NEW-2** (P2 cosmetic): `getattr(target,'Cache')` in `transfer.py` — direct access.
+- **NEW-3** (P2 perf): `_find_obj_by_guid` O(N·M) scan — replace with a guid-keyed dict.
+- **023**: LINK stale-reference re-point (out of 022 scope).
+- **flexicon bug** (Ruling Y, standalone patch staged in scratchpad, NOT applied): `GetSyncableProperties`
+  raises `ITsString.get_String` for Phoneme/Environment (`EnvironmentOperations` ~:694, `PhonemeOperations`
+  ~:1309); ~3–5 line `hasattr(prop_obj,'get_String')` guard + `.Text` fallback. When shipped, bump
+  `_FLEXICON_ITSTRING_FIX_VERSION` to auto-promote those two to Tier A.
+
+### Next pickup
+Phase-3c AFFIXES/STEMS `plan_action` (features 007/019) to make UPDATE end-to-end for MULTI_INSTANCE
+lexical categories; then the NEW-2/NEW-3 cleanup and the flexicon ITsString PR.
+
+---
+
 ## ▶▶▶ Feature 018 — Rules Page (Ad Hoc & Compound Rules: Model-B block + engine) CREW-APPROVED (2026-07-05)
 
 **Spec**: [specs/018-rules-page/](specs/018-rules-page/) — spec + probe-results (authoritative
