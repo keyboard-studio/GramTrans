@@ -2598,6 +2598,601 @@ def _recurse_pos(coll):
                 yield child
 
 
+# ============================================================================
+# Phase 3c shared helpers (US1 affixes / US2 slots+templates / US3 stems)
+# spec 007 — contracts/category-callbacks.md + data-model.md E1-E11.
+#
+# These helpers are duck-typed: they cast to the live LCM interface when a
+# FlexTools host is present but fall through to the raw/`.concrete` object
+# (and `_guid_str_from`'s `obj.guid` fallback) so the planning path runs
+# host-free over the fakes in tests/unit/_fakes_affix.py.
+# ============================================================================
+
+def _as_pos(pos):
+    """Unwrap a flexicon wrapper (`.concrete`) and cast to IPartOfSpeech when
+    a live LCM host is present; otherwise return the concrete/duck object so
+    callbacks run host-free."""
+    concrete = pos.concrete if hasattr(pos, "concrete") else pos
+    try:
+        from SIL.LCModel import IPartOfSpeech
+        return IPartOfSpeech(concrete)
+    except Exception:
+        return concrete
+
+
+def _iter_pos(handle):
+    """Yield every IPartOfSpeech from a source/target handle via
+    `handle.POS.GetAll(recursive=True)`. Empty when the handle is None or
+    exposes no POS accessor."""
+    if handle is None or not hasattr(handle, "POS"):
+        return
+    try:
+        pos_list = handle.POS.GetAll(recursive=True)
+    except (AttributeError, TypeError):
+        return
+    for pos in pos_list:
+        yield pos
+
+
+def _iter_lex_entries(handle):
+    """Yield every ILexEntry from a source/target handle.
+
+    Tolerates both the live flexicon shape (`handle.Cache.LangProject.LexDbOA`
+    exposing `.Entries`) and the duck-typed / contract shape
+    (`handle.LangProject.LexDbOA.EntriesOC`)."""
+    if handle is None:
+        return
+    lexdb = None
+    for nav in (
+        lambda h: h.Cache.LangProject.LexDbOA,
+        lambda h: h.LangProject.LexDbOA,
+    ):
+        try:
+            lexdb = nav(handle)
+        except (AttributeError, TypeError):
+            lexdb = None
+        if lexdb is not None:
+            break
+    if lexdb is None:
+        return
+    for attr in ("EntriesOC", "Entries"):
+        coll = getattr(lexdb, attr, None)
+        if coll is None:
+            continue
+        try:
+            for entry in coll:
+                yield entry
+        except (TypeError, AttributeError):
+            continue
+        return
+
+
+def _affix_type_of(entry):
+    """Return (has_lexeme_form_and_morphtype, is_affix_type) for an entry.
+
+    A degenerate entry (no LexemeFormOA or no MorphTypeRA) yields
+    (False, False) so both AFFIXES and STEMS enumerate skip it."""
+    lf = getattr(entry, "LexemeFormOA", None)
+    if lf is None:
+        return (False, False)
+    mt = getattr(lf, "MorphTypeRA", None)
+    if mt is None:
+        return (False, False)
+    return (True, bool(getattr(mt, "IsAffixType", False)))
+
+
+def _binding_map(context, name):
+    """Return the live binding dict for `name` ("msa_slot_bindings" or
+    "lexentry_ref_bindings").
+
+    Preview.build_run_plan attaches `_msa_slot_bindings` / `_lexentry_ref_bindings`
+    straight onto the RunContext for plan_action to stash into; transfer.execute
+    attaches the whole RunPlan as `_run_plan`. Prefer the direct attribute,
+    fall back to the plan, return None when neither is present (stash no-op)."""
+    direct = getattr(context, "_" + name, None)
+    if direct is not None:
+        return direct
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        return getattr(plan, name, None)
+    return None
+
+
+def _stash_entry_bindings(entry, context):
+    """Stash the deferred MSA->slot and EntryRef component bindings for an
+    entry being transferred (FR-333 17.1 sub-pass + FR-340 post-pass A).
+
+    Called from AFFIXES + STEMS plan_action. Only MSAs with a NON-EMPTY
+    source `SlotsRC` and EntryRefs with non-empty component/primary sequences
+    produce a binding — an unbound affix (empty SlotsRC) never enters
+    `plan.msa_slot_bindings` (matches the Ejagham Mini `ro~-` case, T040)."""
+    msa_map = _binding_map(context, "msa_slot_bindings")
+    if msa_map is not None:
+        for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+            slots = list(getattr(msa, "SlotsRC", None) or [])
+            if not slots:
+                continue
+            msa_map[_guid_str_from(msa)] = [_guid_str_from(s) for s in slots]
+
+    ref_map = _binding_map(context, "lexentry_ref_bindings")
+    if ref_map is not None:
+        for ref in getattr(entry, "EntryRefsOS", None) or []:
+            comp = [_guid_str_from(x)
+                    for x in (getattr(ref, "ComponentLexemesRS", None) or [])]
+            prim = [_guid_str_from(x)
+                    for x in (getattr(ref, "PrimaryLexemesRS", None) or [])]
+            if not comp and not prim:
+                continue
+            slot = ref_map.setdefault(
+                _guid_str_from(entry),
+                {"ComponentLexemesRS": [], "PrimaryLexemesRS": []},
+            )
+            slot["ComponentLexemesRS"].extend(comp)
+            slot["PrimaryLexemesRS"].extend(prim)
+
+
+def _entry_pos_deps(entry):
+    """Yield (GRAM_CATEGORIES, pos_guid) for every POS owned-referenced by the
+    entry's MSAs. Shared by AFFIXES + STEMS dependencies (E4)."""
+    deps = []
+    for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+        for attr in ("PartOfSpeechRA", "FromPartOfSpeechRA", "ToPartOfSpeechRA"):
+            pos = getattr(msa, attr, None)
+            if pos is None:
+                continue
+            g = _guid_str_from(pos)
+            if g:
+                edge = (GrammarCategory.GRAM_CATEGORIES, g)
+                if edge not in deps:
+                    deps.append(edge)
+    return deps
+
+
+def _resolve_target_pos(target, src_pos_guid):
+    """Return the target IPartOfSpeech whose GUID matches `src_pos_guid`, or
+    None. POS is created by the GRAM_CATEGORIES dependency closure first."""
+    if not src_pos_guid:
+        return None
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        if _guid_str_from(pos_obj) == src_pos_guid:
+            return pos_obj
+    return None
+
+
+def _dispatch_msa_subclass(class_name):
+    """Return the MSA subclass tag driving execute-time creation dispatch (E4).
+
+    MVP live paths (probe T012): 'MoInflAffMsa' + 'MoStemMsa'. Other affix MSA
+    subclasses ('MoDerivAffMsa', 'MoUnclassifiedAffixMsa') are recognised but
+    ship as NEEDS_MANUAL until a corpus exercises them."""
+    known = {"MoInflAffMsa", "MoStemMsa", "MoDerivAffMsa", "MoUnclassifiedAffixMsa"}
+    return class_name if class_name in known else None
+
+
+def _dispatch_allomorph_subclass(class_name):
+    """Return the allomorph subclass tag driving execute-time creation dispatch
+    (E3): 'MoAffixAllomorph' vs 'MoStemAllomorph'. Unknown -> None."""
+    known = {"MoAffixAllomorph", "MoStemAllomorph"}
+    return class_name if class_name in known else None
+
+
+def _class_name_of(obj):
+    """Best-effort LCM ClassName, host-free fallback to a `ClassName`/
+    `class_name` attribute on fakes."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).ClassName
+    except Exception:
+        return getattr(obj, "ClassName", getattr(obj, "class_name", None))
+
+
+def _walk_lex_entry_closure(src_entry, context, tag, category):
+    """Atomic owned-child closure write for one LexEntry (E2), shared by
+    AFFIXES + STEMS execute_action.
+
+    Creates the entry (GUID-preserved via ILexEntryFactory.Create(Guid, ILexDb)),
+    then its senses (ILexSenseFactory.Create(Guid, entry)), MSAs (subclass
+    dispatch E4 via MSAOperations wrappers; GUID NOT preserved -> identity_remap),
+    allomorphs (E3), examples, pronunciations, etymologies, and entry-refs.
+
+    MSA `SlotsRC` is NOT written here (deferred to the 17.1 sub-pass) and
+    LexEntryRef component/primary lexemes are NOT written here (deferred to
+    post-pass A). Carrier A residue cascades to entry/senses/MSAs/allomorphs.
+
+    LCM-bound: imports SIL.LCModel, so it is exercised only under a live host /
+    the integration suite. Returns the created ILexEntry (or None if the source
+    object could not be re-resolved)."""
+    from SIL.LCModel import (
+        ILexEntryFactory, ILexDb, ILexSenseFactory, ICmObject,
+    )
+    from System import Guid as DotNetGuid
+    if __package__:
+        from .residue import apply_residue
+    else:
+        from residue import apply_residue  # type: ignore
+
+    target = context.target_handle
+    src_guid = _guid_str_from(src_entry)
+    plan = getattr(context, "_run_plan", None)
+    identity_remap = getattr(plan, "identity_remap", None)
+    if identity_remap is None:
+        identity_remap = getattr(context, "_identity_remap", {})
+    in_plan_entries = getattr(plan, "in_plan_entries", None)
+    if in_plan_entries is None:
+        in_plan_entries = getattr(context, "_in_plan_entries", None)
+
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    lex_db = ILexDb(cache.LangProject.LexDbOA)
+
+    entry_factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
+    new_entry = entry_factory.Create(DotNetGuid.Parse(src_guid), lex_db)
+    try:
+        props = context.source_handle.LexEntry.GetSyncableProperties(src_entry)
+        target.LexEntry.ApplySyncableProperties(new_entry, props)
+    except (AttributeError, TypeError):
+        pass
+    apply_residue(new_entry, ws, tag)
+    if in_plan_entries is not None:
+        try:
+            in_plan_entries[src_guid] = new_entry
+        except (AttributeError, TypeError):
+            pass
+
+    # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
+    _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap)
+
+    # Senses + owned MSAs (E4). ILexSense.MorphoSyntaxAnalysisRA links to an
+    # MSA owned by ILexEntry.MorphoSyntaxAnalysesOC.
+    sense_factory = ILexSenseFactory(target.GetFactory(ILexSenseFactory))
+    msa_by_src_guid = {}
+    for src_sense in getattr(src_entry, "SensesOS", None) or []:
+        s_guid = _guid_str_from(src_sense)
+        try:
+            new_sense = sense_factory.Create(DotNetGuid.Parse(s_guid), new_entry)
+        except Exception:
+            continue
+        try:
+            sprops = context.source_handle.Senses.GetSyncableProperties(src_sense)
+            target.Senses.ApplySyncableProperties(new_sense, sprops)
+        except (AttributeError, TypeError):
+            pass
+        # MSA for this sense (create once per source MSA guid).
+        src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
+        if src_msa is not None:
+            m_guid = _guid_str_from(src_msa)
+            new_msa = msa_by_src_guid.get(m_guid)
+            if new_msa is None:
+                new_msa = _create_msa_for_closure(
+                    src_msa, new_sense, new_entry, context, tag, identity_remap)
+                if new_msa is not None:
+                    msa_by_src_guid[m_guid] = new_msa
+            if new_msa is not None:
+                try:
+                    new_sense.MorphoSyntaxAnalysisRA = new_msa
+                except (AttributeError, TypeError):
+                    pass
+        # STEMS: wire sense.SemanticDomainsRC by GUID lookup (E10).
+        _wire_semantic_domains(src_sense, new_sense, target)
+        apply_residue(new_sense, ws, tag)
+
+    return new_entry
+
+
+def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
+    """Create IMoForm allomorphs (E3) for an entry: LexemeFormOA then each
+    AlternateFormsOS member. GUID is not factory-preservable for allomorphs;
+    the new GUID is recorded in identity_remap."""
+    from SIL.LCModel import (
+        IMoAffixAllomorphFactory, IMoStemAllomorphFactory, ILexEntry, ICmObject,
+    )
+    if __package__:
+        from .residue import apply_residue
+    else:
+        from residue import apply_residue  # type: ignore
+    target = context.target_handle
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    entry_ie = ILexEntry(new_entry)
+
+    def _mk(src_allo, is_lexeme_form):
+        subclass = _dispatch_allomorph_subclass(_class_name_of(src_allo))
+        factory_iface = (IMoStemAllomorphFactory if subclass == "MoStemAllomorph"
+                         else IMoAffixAllomorphFactory)
+        try:
+            factory = factory_iface(target.GetFactory(factory_iface))
+            new_allo = factory.Create()
+        except Exception:
+            return
+        if is_lexeme_form and entry_ie.LexemeFormOA is None:
+            entry_ie.LexemeFormOA = new_allo
+        else:
+            entry_ie.AlternateFormsOS.Add(new_allo)
+        src_g = _guid_str_from(src_allo)
+        try:
+            new_g = str(ICmObject(new_allo).Guid).lower()
+            if new_g != src_g and identity_remap is not None:
+                identity_remap[src_g] = new_g
+        except (AttributeError, TypeError):
+            pass
+        try:
+            aprops = context.source_handle.Allomorphs.GetSyncableProperties(src_allo)
+            target.Allomorphs.ApplySyncableProperties(new_allo, aprops)
+        except (AttributeError, TypeError):
+            pass
+        apply_residue(new_allo, ws, tag)
+
+    lf = getattr(src_entry, "LexemeFormOA", None)
+    if lf is not None:
+        _mk(lf, True)
+    for alt in getattr(src_entry, "AlternateFormsOS", None) or []:
+        _mk(alt, False)
+
+
+def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identity_remap):
+    """Create the target MSA for a sense via the MSAOperations flexicon wrappers
+    (E4 subclass dispatch). GUID is not preservable for MSAs; the new GUID is
+    recorded in identity_remap so the 17.1 sub-pass can resolve SlotsRC targets.
+
+    MVP live paths: MoInflAffMsa (CreateInflAff, slots=None) and MoStemMsa
+    (CreateStem + StratumRA wiring). Returns the new MSA, or None when the
+    subclass is unsupported (NEEDS_MANUAL) or POS is unresolved."""
+    from SIL.LCModel import ICmObject
+    if __package__:
+        from .residue import apply_residue
+    else:
+        from residue import apply_residue  # type: ignore
+    target = context.target_handle
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    class_name = _class_name_of(src_msa)
+    subclass = _dispatch_msa_subclass(class_name)
+    if subclass is None:
+        return None
+
+    src_g = _guid_str_from(src_msa)
+    new_msa = None
+    if subclass == "MoInflAffMsa":
+        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
+            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
+        tgt_pos = _resolve_target_pos(target, pos_guid)
+        # slots=None: SlotsRC deferred to the 17.1 sub-pass (FR-333).
+        new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
+    elif subclass == "MoStemMsa":
+        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
+            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
+        tgt_pos = _resolve_target_pos(target, pos_guid)
+        new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
+        _wire_stratum(src_msa, new_msa, target)
+    elif subclass == "MoDerivAffMsa":
+        from_pos = _resolve_target_pos(
+            target, _guid_str_from(getattr(src_msa, "FromPartOfSpeechRA", None)))
+        to_pos = _resolve_target_pos(
+            target, _guid_str_from(getattr(src_msa, "ToPartOfSpeechRA", None)))
+        new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
+    elif subclass == "MoUnclassifiedAffixMsa":
+        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
+            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
+        tgt_pos = _resolve_target_pos(target, pos_guid)
+        new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
+
+    if new_msa is None:
+        return None
+    try:
+        new_g = str(ICmObject(new_msa).Guid).lower()
+        if new_g != src_g and identity_remap is not None:
+            identity_remap[src_g] = new_g
+    except (AttributeError, TypeError):
+        pass
+    apply_residue(new_msa, ws, tag)
+    return new_msa
+
+
+def _wire_stratum(src_msa, new_msa, target):
+    """Wire MoStemMsa.StratumRA to the Phase 3a-transferred Stratum by GUID
+    lookup (FR-336). No-op / silent when unresolved."""
+    from SIL.LCModel import ICmObject
+    try:
+        src_stratum = getattr(src_msa, "StratumRA", None)
+        if src_stratum is None:
+            return
+        sg = str(ICmObject(src_stratum).Guid).lower()
+        for tgt_stratum in target.Strata.GetAll():
+            if str(ICmObject(tgt_stratum).Guid).lower() == sg:
+                new_msa.StratumRA = tgt_stratum
+                return
+    except (AttributeError, TypeError):
+        pass
+
+
+def _wire_semantic_domains(src_sense, new_sense, target):
+    """Wire sense.SemanticDomainsRC to Phase 3b-transferred domains by GUID
+    lookup (E10). Missing domains are left unwired (surfaced as a sense-level
+    dependency skip by the planner)."""
+    src_rc = getattr(src_sense, "SemanticDomainsRC", None)
+    if src_rc is None:
+        return
+    tgt_rc = getattr(new_sense, "SemanticDomainsRC", None)
+    if tgt_rc is None:
+        return
+    try:
+        target_domains = list(_walk_semantic_domain_list(target))
+    except Exception:
+        target_domains = []
+    for src_dom in src_rc:
+        g = _guid_str_from(src_dom)
+        tgt_dom = _find_target_obj_by_guid(target_domains, g)
+        if tgt_dom is not None:
+            try:
+                tgt_rc.Add(tgt_dom)
+            except (AttributeError, TypeError):
+                pass
+
+
+# ----- 17.1 MSA-slot wiring sub-pass (FR-333) ------------------------------
+# contracts/msa-slot-wiring.md. Runs as a tail block on AFFIX_TEMPLATES
+# execute_action; also directly unit-tested host-free over duck-typed fakes.
+
+def _run_171_subpass(context, target, tag=None):
+    """Wire IMoInflAffMsa.SlotsRC from plan.msa_slot_bindings after affix MSAs
+    and slots are stable in target.
+
+    Reads `context._run_plan.msa_slot_bindings` (a `{src_msa_guid:
+    [src_slot_guid, ...]}` dict) and `context._run_plan.identity_remap`.
+    Resolves each MSA via identity_remap then `target.get_object_by_guid`, then
+    each slot via `target.get_object_by_guid` (slots are GUID-preserved, E8).
+
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per unresolved MSA or
+    per unresolved slot reference. Idempotent: an already-present slot on an
+    MSA's SlotsRC is not re-Added (membership guard)."""
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "msa_slot_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "msa_slot_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+
+    for src_msa_guid, src_slot_guids in bindings.items():
+        target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
+        target_msa = target.get_object_by_guid(target_msa_guid)
+        if target_msa is None:
+            skips.append(Skip(
+                category=GrammarCategory.AFFIX_TEMPLATES,
+                source_guid=src_msa_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"msa_guid={src_msa_guid} not in target after "
+                        "affix transfer"),
+            ))
+            continue
+        for src_slot_guid in src_slot_guids:
+            target_slot = target.get_object_by_guid(src_slot_guid)
+            if target_slot is None:
+                skips.append(Skip(
+                    category=GrammarCategory.AFFIX_TEMPLATES,
+                    source_guid=src_slot_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"slot_guid={src_slot_guid} not in target after "
+                            "slot transfer"),
+                ))
+                continue
+            slot_g = _guid_str_from(target_slot)
+            already = any(
+                (existing is target_slot) or (_guid_str_from(existing) == slot_g)
+                for existing in target_msa.SlotsRC
+            )
+            if already:
+                continue
+            target_msa.SlotsRC.Add(target_slot)
+    return skips
+
+
+# ----- post-pass A: LexEntryRef wiring (FR-340) ----------------------------
+# contracts/post-pass-a.md. Runs as a tail block on STEMS execute_action.
+
+def _run_post_pass_a(context, target, tag=None):
+    """Wire ILexEntryRef.ComponentLexemesRS / PrimaryLexemesRS from
+    plan.lexentry_ref_bindings after both affix and stem entries are stable.
+
+    Bindings shape: `{src_entry_guid: {"ComponentLexemesRS": [...],
+    "PrimaryLexemesRS": [...]}}`. Each referenced lexeme resolves against (a)
+    the in-plan creation list (`plan.in_plan_entries`), then (b)
+    `target.get_object_by_guid`. No fingerprint/name fallback (FR-340).
+
+    Returns Skip(DEPENDENCY_UNRESOLVED) — one per unresolved target entry and
+    one per unresolved component lexeme. Idempotent via a membership guard;
+    source order preserved."""
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "lexentry_ref_bindings", None) or {}
+        in_plan = getattr(plan, "in_plan_entries", None)
+    else:
+        bindings = _binding_map(context, "lexentry_ref_bindings") or {}
+        in_plan = None
+    if in_plan is None:
+        in_plan = (getattr(context, "in_plan_entries", None)
+                   or getattr(context, "_in_plan_entries", None) or {})
+
+    for src_entry_guid, ref_dict in bindings.items():
+        target_entry = target.get_object_by_guid(src_entry_guid)
+        if target_entry is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=src_entry_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"entry_guid={src_entry_guid} not in target after "
+                        "affixes+stems transfer"),
+            ))
+            continue
+        for target_ref in getattr(target_entry, "EntryRefsOS", None) or []:
+            for field_name in ("ComponentLexemesRS", "PrimaryLexemesRS"):
+                seq = getattr(target_ref, field_name, None)
+                if seq is None:
+                    continue
+                for src_lex_guid in ref_dict.get(field_name, []):
+                    target_lex = in_plan.get(src_lex_guid) if in_plan else None
+                    if target_lex is None:
+                        target_lex = target.get_object_by_guid(src_lex_guid)
+                    if target_lex is None:
+                        skips.append(Skip(
+                            category=GrammarCategory.STEMS,
+                            source_guid=src_entry_guid,
+                            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                            detail=(f"{field_name} component {src_lex_guid} "
+                                    "unresolved"),
+                        ))
+                        continue
+                    lex_g = _guid_str_from(target_lex)
+                    already = any(
+                        (existing is target_lex) or (_guid_str_from(existing) == lex_g)
+                        for existing in seq
+                    )
+                    if already:
+                        continue
+                    seq.Add(target_lex)
+    return skips
+
+
+def _run_tail_once(context, target, tag, flag_attr, category, runner):
+    """Run a tail sub-pass (`runner`) exactly once per execute() call, on the
+    LAST executed action of `category` in the plan, and fold its skips into
+    `context._exec_skips`.
+
+    Running on the last action guarantees every prerequisite object of that
+    category (all stems, for post-pass A) is already in target before wiring."""
+    plan = getattr(context, "_run_plan", None)
+    if plan is None:
+        return
+    if getattr(context, flag_attr, False):
+        return
+    try:
+        total = sum(1 for a in getattr(plan, "actions", ()) if a.category == category)
+    except (AttributeError, TypeError):
+        total = 0
+    done_attr = flag_attr + "_count"
+    done = getattr(context, done_attr, 0) + 1
+    try:
+        object.__setattr__(context, done_attr, done)
+    except (AttributeError, TypeError):
+        pass
+    if total and done < total:
+        return
+    try:
+        object.__setattr__(context, flag_attr, True)
+    except (AttributeError, TypeError):
+        pass
+    skips = runner(context, target, tag)
+    exec_skips = getattr(context, "_exec_skips", None)
+    if exec_skips is not None and skips:
+        try:
+            exec_skips.extend(skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 # ----- affixes (Phase 3c US1, memo step 14) --------------------------------
 # Affix LexEntries partitioned by entry.LexemeFormOA.MorphTypeRA.IsAffixType.
 # Owned-child closure: senses, MSAs, allomorphs, examples, pronunciations,
@@ -2605,46 +3200,211 @@ def _recurse_pos(coll):
 # LexEntryRef component lexemes deferred to post-pass A.
 
 def affixes_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3c T013")
+    """Filter source LexEntries to affixes (LexemeFormOA.MorphTypeRA.IsAffixType).
+
+    GOLD-shipped entries are excluded (Principle I). Absent leaf-pick subset
+    => transfer ALL; a non-None subset filters to picked GUIDs."""
+    source = context.source_handle
+    if source is None:
+        return ()
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.AFFIXES)
+        except AttributeError:
+            picks = None
+    results = []
+    for entry in _iter_lex_entries(source):
+        has_form, is_affix = _affix_type_of(entry)
+        if not (has_form and is_affix):
+            continue
+        if _is_gold(entry):
+            continue
+        if picks is not None and _guid_str_from(entry) not in picks:
+            continue
+        results.append(entry)
+    return results
 
 
 def affixes_dependencies(piece):
-    return ()
+    """Yield (GRAM_CATEGORIES, pos_guid) for each MSA's owning POS (E4).
+    MorphType is FW-global; no dependency edge emitted for it."""
+    return tuple(_entry_pos_deps(piece))
 
 
 def affixes_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3c T013")
+    return ()
 
 
 def affixes_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3c T015")
+    """One PlannedAction per affix LexEntry. Side effect (FR-333/FR-340):
+    stash MSA->slot and EntryRef component bindings into the plan for the
+    deferred 17.1 sub-pass + post-pass A."""
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.AFFIXES,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Item is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
+                "not transferred per FR-022 / Principle I."
+            ),
+        )
+    src_guid = _guid_str_from(piece)
+    _stash_entry_bindings(piece, context)
+    if _target_has_guid(_iter_lex_entries(context.target_handle), src_guid):
+        return Skip(
+            category=GrammarCategory.AFFIXES,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"Affix LexEntry GUID {src_guid[:8]}... already present in target.",
+        )
+    return PlannedAction(
+        category=GrammarCategory.AFFIXES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"Affix LexEntry guid={src_guid[:8]}...",
+    )
 
 
 def affixes_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3c T019")
+    """Atomic owned-child closure write for the affix LexEntry (E2)."""
+    source = context.source_handle
+    src_guid = action.source_guid
+    src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
+    if src_entry is None:
+        return None
+    return _walk_lex_entry_closure(
+        src_entry, context, tag, GrammarCategory.AFFIXES)
 
 
 # ----- slots (Phase 3c US2, memo step 16) ----------------------------------
 # IMoInflAffixSlot under IPartOfSpeech.AffixSlotsOC. Implementation T029.
 
 def slots_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3c T029")
+    """Yield every IMoInflAffixSlot across all source POSes (AffixSlotsOC)."""
+    source = context.source_handle
+    if source is None:
+        return ()
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.SLOTS)
+        except AttributeError:
+            picks = None
+    results = []
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for slot in getattr(pos_obj, "AffixSlotsOC", None) or []:
+            if picks is not None and _guid_str_from(slot) not in picks:
+                continue
+            results.append(slot)
+    return results
 
 
 def slots_dependencies(piece):
-    return ()
+    """Yield (GRAM_CATEGORIES, owning_pos_guid) for the slot's owner POS.
+    Empty when the owner is unavailable (duck-typed slot with no Owner)."""
+    owner = getattr(piece, "Owner", None)
+    if owner is None:
+        return ()
+    g = _guid_str_from(owner)
+    return ((GrammarCategory.GRAM_CATEGORIES, g),) if g else ()
 
 
 def slots_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3c T029")
+    return ()
 
 
 def slots_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3c T029")
+    """One PlannedAction per source slot; GUID preserved (E8). Universal
+    collision guard (FR-334): slot GUID already under a target POS ->
+    Skip(ALREADY_PRESENT_BY_GUID)."""
+    src_guid = _guid_str_from(piece)
+    target = context.target_handle
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        for slot in getattr(pos_obj, "AffixSlotsOC", None) or []:
+            if _guid_str_from(slot) == src_guid:
+                return Skip(
+                    category=GrammarCategory.SLOTS,
+                    source_guid=src_guid,
+                    reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                    detail=f"Slot GUID {src_guid[:8]}... already present in target.",
+                )
+    return PlannedAction(
+        category=GrammarCategory.SLOTS,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"AffixSlot guid={src_guid[:8]}...",
+    )
 
 
 def slots_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3c T029")
+    """Create IMoInflAffixSlot(Guid) under the owning target POS; copy Name /
+    Description / Optional; Carrier B residue. Phase 0 verified."""
+    from SIL.LCModel import (
+        IMoInflAffixSlotFactory, IMoInflAffixSlot, ICmObject,
+    )
+    from SIL.LCModel.Core.Text import TsStringUtils
+    from System import Guid as DotNetGuid
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    src_slot = None
+    src_owner_pos_guid = None
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for slot in getattr(pos_obj, "AffixSlotsOC", None) or []:
+            if _guid_str_from(slot) == src_guid:
+                src_slot = slot
+                src_owner_pos_guid = _guid_str_from(pos_obj)
+                break
+        if src_slot is not None:
+            break
+    if src_slot is None:
+        return None
+
+    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    if target_pos is None:
+        return None  # owner POS not in target; dependency unresolved.
+
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    factory = IMoInflAffixSlotFactory(target.GetFactory(IMoInflAffixSlotFactory))
+    new_slot = factory.Create(DotNetGuid.Parse(src_guid))
+    _safe_add_to_owner(new_slot, target_pos.AffixSlotsOC,
+                       "IMoInflAffixSlotFactory", src_guid)
+    new_slot = IMoInflAffixSlot(new_slot)
+
+    src_typed = IMoInflAffixSlot(src_slot)
+    all_ws = {w.Id: w.Handle for w in source.WritingSystems.GetAll()}
+    for prop_name in ("Name", "Description"):
+        src_p = getattr(src_typed, prop_name, None)
+        tgt_p = getattr(new_slot, prop_name, None)
+        if src_p is None or tgt_p is None:
+            continue
+        for _ws_id, ws_handle in all_ws.items():
+            try:
+                text = src_p.get_String(ws_handle).Text
+                if text:
+                    tgt_p.set_String(ws_handle,
+                                     TsStringUtils.MakeString(text, ws_handle))
+            except Exception:
+                pass
+    try:
+        new_slot.Optional = bool(src_typed.Optional)
+    except (AttributeError, TypeError):
+        pass
+    apply_carrier_b(new_slot, ws, tag, strict=False)
+    return new_slot
 
 
 # ----- affix_templates (Phase 3c US2, memo step 17 + 17.1) -----------------
@@ -2653,24 +3413,167 @@ def slots_execute_action(action, context, ws_mapping, tag):
 # affix_templates_execute_action consuming plan.msa_slot_bindings.
 # Implementation T030 (base) + T031 (17.1 tail).
 
+_TEMPLATE_SLOT_SEQS = (
+    "PrefixSlotsRS", "SuffixSlotsRS", "EncliticSlotsRS",
+    "ProcliticSlotsRS", "SlotsRS",
+)
+
+
 def affix_templates_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3c T030")
+    """Yield every IMoInflAffixTemplate across all source POSes
+    (AffixTemplatesOS)."""
+    source = context.source_handle
+    if source is None:
+        return ()
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.AFFIX_TEMPLATES)
+        except AttributeError:
+            picks = None
+    results = []
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for tpl in getattr(pos_obj, "AffixTemplatesOS", None) or []:
+            if picks is not None and _guid_str_from(tpl) not in picks:
+                continue
+            results.append(tpl)
+    return results
 
 
 def affix_templates_dependencies(piece):
-    return ()
+    """Yield (GRAM_CATEGORIES, owning_pos_guid) plus (SLOTS, slot_guid) for
+    each slot referenced across all 5 slot ref sequences in source order
+    (PrefixSlotsRS, SuffixSlotsRS, EncliticSlotsRS, ProcliticSlotsRS,
+    SlotsRS) per the T010 probe."""
+    deps = []
+    owner = getattr(piece, "Owner", None)
+    if owner is not None:
+        g = _guid_str_from(owner)
+        if g:
+            deps.append((GrammarCategory.GRAM_CATEGORIES, g))
+    for seq_name in _TEMPLATE_SLOT_SEQS:
+        for slot in getattr(piece, seq_name, None) or []:
+            sg = _guid_str_from(slot)
+            if sg:
+                deps.append((GrammarCategory.SLOTS, sg))
+    return tuple(deps)
 
 
 def affix_templates_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3c T030")
+    return ()
 
 
 def affix_templates_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3c T030")
+    """One PlannedAction per template; collision guard (FR-334): template GUID
+    already under a target POS -> Skip(ALREADY_PRESENT_BY_GUID)."""
+    src_guid = _guid_str_from(piece)
+    target = context.target_handle
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        for tpl in getattr(pos_obj, "AffixTemplatesOS", None) or []:
+            if _guid_str_from(tpl) == src_guid:
+                return Skip(
+                    category=GrammarCategory.AFFIX_TEMPLATES,
+                    source_guid=src_guid,
+                    reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                    detail=(f"AffixTemplate GUID {src_guid[:8]}... already "
+                            "present in target."),
+                )
+    return PlannedAction(
+        category=GrammarCategory.AFFIX_TEMPLATES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"AffixTemplate guid={src_guid[:8]}...",
+    )
 
 
 def affix_templates_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3c T030")
+    """Create IMoInflAffixTemplate(Guid) under the owning target POS, wire all
+    5 slot ref sequences by GUID lookup, copy Final/Disabled, wire StratumRA,
+    clone RegionOA. Tail block: run the 17.1 MSA-slot sub-pass once (on the
+    last template) after all template writes complete (FR-333)."""
+    from SIL.LCModel import (
+        IMoInflAffixTemplateFactory, IMoInflAffixTemplate, ICmObject,
+    )
+    from System import Guid as DotNetGuid
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    src_tpl = None
+    src_owner_pos_guid = None
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for tpl in getattr(pos_obj, "AffixTemplatesOS", None) or []:
+            if _guid_str_from(tpl) == src_guid:
+                src_tpl = tpl
+                src_owner_pos_guid = _guid_str_from(pos_obj)
+                break
+        if src_tpl is not None:
+            break
+
+    if src_tpl is not None:
+        target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+        if target_pos is not None:
+            cache = getattr(target, "Cache")
+            ws = cache.DefaultAnalWs
+            factory = IMoInflAffixTemplateFactory(
+                target.GetFactory(IMoInflAffixTemplateFactory))
+            new_tpl = factory.Create(DotNetGuid.Parse(src_guid))
+            _safe_add_to_owner(new_tpl, target_pos.AffixTemplatesOS,
+                               "IMoInflAffixTemplateFactory", src_guid)
+            try:
+                props = source.MorphRules.GetSyncableProperties(src_tpl)
+                target.MorphRules.ApplySyncableProperties(new_tpl, props)
+            except (AttributeError, TypeError):
+                pass
+            new_typed = IMoInflAffixTemplate(new_tpl)
+            # Wire all 5 slot ref sequences in source order (T010).
+            all_target_slots = None
+            for seq_name in _TEMPLATE_SLOT_SEQS:
+                src_seq = getattr(src_tpl, seq_name, None)
+                if not src_seq:
+                    continue
+                tgt_seq = getattr(new_typed, seq_name, None)
+                if tgt_seq is None:
+                    continue
+                if all_target_slots is None:
+                    all_target_slots = []
+                    for pos in _iter_pos(target):
+                        for slot in getattr(_as_pos(pos), "AffixSlotsOC", None) or []:
+                            all_target_slots.append(slot)
+                for src_slot in src_seq:
+                    sg = _guid_str_from(src_slot)
+                    tgt_slot = _find_target_obj_by_guid(all_target_slots, sg)
+                    if tgt_slot is not None:
+                        try:
+                            tgt_seq.Add(tgt_slot)
+                        except (AttributeError, TypeError):
+                            pass
+            # Final / Disabled scalars.
+            for bool_prop in ("Final", "Disabled"):
+                try:
+                    setattr(new_typed, bool_prop,
+                            bool(getattr(src_tpl, bool_prop)))
+                except (AttributeError, TypeError):
+                    pass
+            # StratumRA (FR-336).
+            _wire_stratum(src_tpl, new_typed, target)
+            try:
+                apply_carrier_b(new_typed, ws, tag, strict=False)
+            except Exception:
+                pass
+
+    # Tail block (17.1 sub-pass) — run once after all templates complete.
+    _run_tail_once(context, target, tag, "_did_171_subpass",
+                   GrammarCategory.AFFIX_TEMPLATES, _run_171_subpass)
+    return None
 
 
 # ----- stems (Phase 3c US3, memo step 18) ----------------------------------
@@ -2681,23 +3584,100 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
 # Implementation T042-T045.
 
 def stems_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3c T042")
+    """Filter source LexEntries to stems (NOT IsAffixType)."""
+    source = context.source_handle
+    if source is None:
+        return ()
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.STEMS)
+        except AttributeError:
+            picks = None
+    results = []
+    for entry in _iter_lex_entries(source):
+        has_form, is_affix = _affix_type_of(entry)
+        if not has_form or is_affix:
+            continue
+        if _is_gold(entry):
+            continue
+        if picks is not None and _guid_str_from(entry) not in picks:
+            continue
+        results.append(entry)
+    return results
 
 
 def stems_dependencies(piece):
-    return ()
+    """Yield (GRAM_CATEGORIES, pos_guid) per MSA POS, (SEMANTIC_DOMAINS,
+    domain_guid) per sense SemanticDomainsRC entry, and (STRATA, stratum_guid)
+    per MoStemMsa.StratumRA (E4/E10/FR-336)."""
+    deps = list(_entry_pos_deps(piece))
+    for msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
+        stratum = getattr(msa, "StratumRA", None)
+        if stratum is not None:
+            g = _guid_str_from(stratum)
+            if g and (GrammarCategory.STRATA, g) not in deps:
+                deps.append((GrammarCategory.STRATA, g))
+    for sense in getattr(piece, "SensesOS", None) or []:
+        for dom in getattr(sense, "SemanticDomainsRC", None) or []:
+            g = _guid_str_from(dom)
+            if g and (GrammarCategory.SEMANTIC_DOMAINS, g) not in deps:
+                deps.append((GrammarCategory.SEMANTIC_DOMAINS, g))
+    return tuple(deps)
 
 
 def stems_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3c T042")
+    return ()
 
 
 def stems_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3c T042")
+    """One PlannedAction per stem entry. Side effect: same lexentry_ref_bindings
+    stash as AFFIXES for any EntryRefs on the stem entry (FR-340)."""
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.STEMS,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Item is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
+                "not transferred per FR-022 / Principle I."
+            ),
+        )
+    src_guid = _guid_str_from(piece)
+    _stash_entry_bindings(piece, context)
+    if _target_has_guid(_iter_lex_entries(context.target_handle), src_guid):
+        return Skip(
+            category=GrammarCategory.STEMS,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"Stem LexEntry GUID {src_guid[:8]}... already present in target.",
+        )
+    return PlannedAction(
+        category=GrammarCategory.STEMS,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"Stem LexEntry guid={src_guid[:8]}...",
+    )
 
 
 def stems_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3c T042")
+    """Owned-child closure write for the stem LexEntry (same closure as AFFIXES,
+    MSA dispatch including MoStemMsa). Tail block: run post-pass A once (on the
+    last stem) after all stem writes complete (FR-340)."""
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
+    new_entry = None
+    if src_entry is not None:
+        new_entry = _walk_lex_entry_closure(
+            src_entry, context, tag, GrammarCategory.STEMS)
+
+    # Tail block (post-pass A) — run once after all stems complete.
+    _run_tail_once(context, target, tag, "_did_post_pass_a",
+                   GrammarCategory.STEMS, _run_post_pass_a)
+    return new_entry
 
 
 # ============================================================================
