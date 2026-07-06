@@ -518,16 +518,27 @@ class ItemDisposition(_enum.Enum):
 def _is_empty(value) -> bool:
     """Return True if `value` is semantically empty for UPDATE skip-write decisions.
 
-    Empty means: None, empty string, empty dict, empty list/tuple/set.
+    Empty means:
+    - None
+    - str: empty or whitespace-only, OR the flexicon empty-sentinel "***" (after
+      strip).  A value that strips to "***" is treated as unset (FR-003 P1-1/P1-2).
+    - dict (multistring): empty dict, OR every value is itself _is_empty (all-empty
+      multistring like {"en":"","fr":""} must be treated as empty — P1-1).
+    - list/tuple/set/frozenset: zero-length.
     Non-empty scalars (int 0, bool False) are considered non-empty because they
     carry intentional data.
     """
+    _EMPTY_SENTINEL = "***"
     if value is None:
         return True
     if isinstance(value, str):
-        return value == ""
+        stripped = value.strip()
+        return stripped == "" or stripped == _EMPTY_SENTINEL
     if isinstance(value, dict):
-        return len(value) == 0
+        if len(value) == 0:
+            return True
+        # Multistring: empty iff every value is itself empty (P1-1).
+        return all(_is_empty(v) for v in value.values())
     if isinstance(value, (list, tuple, set, frozenset)):
         return len(value) == 0
     return False

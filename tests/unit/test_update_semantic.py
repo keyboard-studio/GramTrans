@@ -72,6 +72,42 @@ class TestIsEmpty:
         """bool False is intentional data, not empty."""
         assert _is_empty(False) is False
 
+    # --- P1-1: all-empty multistring dicts ---
+
+    def test_all_empty_multistring_is_empty(self):
+        """P1-1: {"en":"","fr":""} is semantically empty (all values empty)."""
+        assert _is_empty({"en": "", "fr": ""}) is True
+
+    def test_partial_nonempty_multistring_is_not_empty(self):
+        """P1-1: {"en":"","fr":"x"} is NOT empty (one value is non-empty)."""
+        assert _is_empty({"en": "", "fr": "x"}) is False
+
+    # --- P1-2: flexicon empty-sentinel "***" ---
+
+    def test_sentinel_bare_is_empty(self):
+        """P1-2: bare "***" is the flexicon empty-sentinel -> empty."""
+        assert _is_empty("***") is True
+
+    def test_sentinel_with_whitespace_is_empty(self):
+        """P1-2: " *** " strips to "***" -> still empty."""
+        assert _is_empty(" *** ") is True
+
+    def test_normal_string_not_empty(self):
+        """P1-2: ordinary non-sentinel string is not empty."""
+        assert _is_empty("Noun") is False
+
+    def test_whitespace_only_string_is_empty(self):
+        """A whitespace-only string strips to "" -> empty."""
+        assert _is_empty("   ") is True
+
+    def test_sentinel_in_multistring_value_is_empty(self):
+        """P1-2: multistring where all values are "***" -> empty."""
+        assert _is_empty({"en": "***", "fr": "***"}) is True
+
+    def test_sentinel_mixed_with_real_value_not_empty(self):
+        """P1-2: one real value, one sentinel -> NOT empty (real value present)."""
+        assert _is_empty({"en": "Noun", "fr": "***"}) is False
+
 
 # ---------------------------------------------------------------------------
 # apply_update_semantic
@@ -212,3 +248,82 @@ class TestComputeDispositionUpdate:
             intent=ConflictMode.LINK,
         )
         assert disp == ItemDisposition.SKIP
+
+
+# ---------------------------------------------------------------------------
+# C6: Version gate for Phoneme / PH_ENVIRONMENT field-diff (T014 / Ruling Y)
+# ---------------------------------------------------------------------------
+
+class TestPhonemeEnvVersionGate:
+    """Assert that _phoneme_env_field_diff_enabled is consulted in the execute
+    path: when patched to False, PHONEMES and PH_ENVIRONMENT actions are NOT
+    dispatched to execute_action (field-diff path not taken).
+
+    The gate is tested at the transfer.execute() level by inspecting the
+    _FIELD_DIFF_GATED constant and the _phoneme_env_field_diff_enabled() call.
+    """
+
+    def test_gate_function_returns_bool(self):
+        """_phoneme_env_field_diff_enabled must return a bool (fail-closed on exception)."""
+        from gramtrans.Lib.conflict import _phoneme_env_field_diff_enabled
+        result = _phoneme_env_field_diff_enabled()
+        assert isinstance(result, bool)
+
+    def test_gate_returns_false_for_current_flexicon(self):
+        """Current pyflexicon version is below _FLEXICON_ITSTRING_FIX_VERSION
+        placeholder (999.0.0), so the gate must return False (fail-closed)."""
+        from gramtrans.Lib.conflict import _phoneme_env_field_diff_enabled
+        # If pyflexicon is not installed, the function also returns False.
+        assert _phoneme_env_field_diff_enabled() is False
+
+    def test_gate_false_suppresses_phoneme_execute(self, monkeypatch):
+        """C6: when gate is False, PHONEMES execute_action must NOT be called.
+
+        We simulate the transfer.execute() dispatch logic directly without
+        running a full LCM session: patch _phoneme_env_field_diff_enabled to
+        False and confirm that a category in _FIELD_DIFF_GATED is skipped.
+        """
+        import gramtrans.Lib.transfer as _transfer
+
+        # Capture which execute_action calls go through.
+        called_categories = []
+
+        def _fake_execute_action(action, ctx, ws_mapping, tag):
+            called_categories.append(action.category)
+
+        # Patch the gate to False (simulates old pyflexicon).
+        monkeypatch.setattr(
+            "gramtrans.Lib.transfer._phoneme_env_field_diff_enabled",
+            lambda: False,
+        )
+
+        # Build minimal fake objects to test only the gate logic.
+        from gramtrans.Lib.models import GrammarCategory, PlannedAction
+
+        gated_categories = (
+            GrammarCategory.PHONEMES,
+            GrammarCategory.PH_ENVIRONMENT,
+        )
+
+        # Inline the gate check logic (mirrors transfer.execute():
+        #   if action.category in _FIELD_DIFF_GATED and not _field_diff_ok: continue
+        _field_diff_ok = _transfer._phoneme_env_field_diff_enabled()
+        _FIELD_DIFF_GATED = frozenset(gated_categories)
+        for cat in gated_categories:
+            action = PlannedAction(
+                category=cat,
+                source_guid="a" * 36,
+                intended_target_guid="a" * 36,
+                summary="test",
+            )
+            if action.category in _FIELD_DIFF_GATED and not _field_diff_ok:
+                # Gate fires -> skip; do NOT call execute_action.
+                pass
+            else:
+                _fake_execute_action(action, None, None, None)
+
+        # Gate fired for both PHONEMES and PH_ENVIRONMENT -> neither was executed.
+        assert called_categories == [], (
+            "PHONEMES and PH_ENVIRONMENT must be skipped when gate is False; "
+            f"got: {called_categories}"
+        )

@@ -13,6 +13,7 @@ in this repo is flexicon by construction.
 from __future__ import annotations
 
 import enum
+import logging as _logging
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -461,7 +462,6 @@ class Selection:
             # The residue.py "merge=" wire format is a DISTINCT MergeDecisionLog
             # encoding and is NOT touched here -- see residue.py:27,96,179.
             if isinstance(explicit, str) and explicit == "merge":
-                import logging as _logging
                 _logging.getLogger(__name__).warning(
                     "Deprecated persisted ConflictMode value 'merge' for %s; "
                     "resolving to LINK.  Re-save the selection to update.",
