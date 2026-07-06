@@ -436,6 +436,23 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         # Also update the plan's embedded context so execute() sees the fresh handle.
         plan = dataclasses.replace(plan, context=context)
 
+        # Step 5: run the transfer and CLOSE the fresh handle ourselves.
+        # The wizard's cleanup (gramtrans.py _run_gui) closes the ORIGINAL
+        # target_handle, which we disposed in Step 1; closing a disposed handle
+        # is a silent no-op. FLEx only persists writes on CloseProject()
+        # (EndNonUndoableTask + usm.Save), so this branch must own closing
+        # fresh_target or every object write below is discarded on exit.
+        try:
+            return execute(
+                plan, context.source_handle, context.target_handle,
+                _NullReportSink(), tag,
+            )
+        finally:
+            try:
+                fresh_target.CloseProject()
+            except Exception:
+                pass  # don't let a close error mask the execute result/exception
+
     # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
     # UI passes the FlexTools report object through. For programmatic API
     # calls (e.g. from a test), a tiny null sink is the safe default.
