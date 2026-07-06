@@ -3937,6 +3937,29 @@ def _compute_wizard_plan(wizard) -> tuple:
                 leaf_item_picks=merged_leaf,
             )
 
+    # Step 5e: POS/grammar-category wiring (fix/wizard-pos-grammar-wiring).
+    # The Skeleton page pre-checks exactly the POSes the picked affixes' MSAs
+    # attach to (SkeletonPosNode.preselected). Fold those POS GUIDs into the
+    # Selection as pos_picks + flag GRAM POS, so the verb-vertical POS closure
+    # (_select_source_poses -> _plan_pos_closure) walks precisely those POSes,
+    # creates them in the target, and affix/stem MSAs resolve to a real POS via
+    # _resolve_target_pos instead of None ("no grammatical info").  This is
+    # dependency-driven and minimal: it never flags the leaf GRAM_CATEGORIES
+    # pass (which would enumerate EVERY source POS), and an empty pos_guids set
+    # (skeleton not built / no attaching POS) leaves the selection untouched --
+    # we never flag POS with empty picks, which would walk every source POS.
+    skel_page = wizard.page_skeleton() if hasattr(wizard, "page_skeleton") else None
+    if skel_page is not None and hasattr(skel_page, "collect_skeleton_picks"):
+        pos_guids = skel_page.collect_skeleton_picks().get("pos_guids") or set()
+        if pos_guids:
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.POS] = True
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                pos_picks=frozenset(g.lower() for g in pos_guids),
+            )
+
     # Step 6: WS mapping from page 0.
     page0 = wizard.page_project_ws()
     ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
