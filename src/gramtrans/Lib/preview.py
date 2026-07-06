@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 if __package__:
     from .models import (
         CategoryScope,
+        CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
         PlannedAction,
@@ -35,6 +36,7 @@ if __package__:
 else:
     from models import (
         CategoryScope,
+        CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
         PlannedAction,
@@ -186,7 +188,12 @@ def build_run_plan(
                 skips.append(result)
             elif isinstance(result, PlannedOverwrite):
                 overwrites.append(result)
-            elif isinstance(result, PlannedAction):
+            elif isinstance(result, (PlannedAction, CreateDefinitionAction)):
+                # CreateDefinitionAction (custom-field schema create) is a
+                # standalone dataclass, NOT a PlannedAction subclass. Without
+                # this branch it fell through every isinstance check and was
+                # silently dropped, so custom fields never reached the plan and
+                # execute_move's PATH-CLOSE-REBIND pre-pass never fired.
                 actions.append(result)
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug(

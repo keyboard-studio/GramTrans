@@ -334,6 +334,11 @@ def _ensure_custom_fields(target_project_name: str,
                 existing = cf_ops.FindField(act.owner_class, act.field_name)
                 if existing:
                     continue
+                # AddCustomField's 3rd arg is a CellarPropertyType enum, not a
+                # raw int; pythonnet won't coerce int->Enum implicitly (TypeError
+                # "Use Enum(int_value)"). Wrap the stored int field_type.
+                from SIL.LCModel.Core.Cellar import CellarPropertyType  # noqa: PLC0415
+                field_type_enum = CellarPropertyType(act.field_type)
                 if act.field_type in _LIST_FIELD_TYPES:
                     # 7-arg overload for list-backed reference fields:
                     #   (className, fieldName, fieldType, destinationClass=CmPossibility,
@@ -341,14 +346,14 @@ def _ensure_custom_fields(target_project_name: str,
                     from System import Guid as DotNetGuid  # noqa: PLC0415
                     list_root_guid = DotNetGuid.Parse(act.list_root_guid)
                     flid = mdc_managed.AddCustomField(
-                        act.owner_class, act.field_name, act.field_type,
+                        act.owner_class, act.field_name, field_type_enum,
                         _CM_POSSIBILITY_CLASS_ID, "", 0, list_root_guid,
                     )
                 else:
                     # 4-arg overload for value types:
                     #   (className, fieldName, fieldType, destinationClass=0)
                     flid = mdc_managed.AddCustomField(
-                        act.owner_class, act.field_name, act.field_type, 0
+                        act.owner_class, act.field_name, field_type_enum, 0
                     )
                 if not flid:
                     raise RuntimeError(
