@@ -1172,6 +1172,40 @@ def _is_excluded_key(key: str) -> bool:
     return False
 
 
+# R-a normalization: custom-field values may arrive as raw COM string carriers.
+#
+# The installed flexicon build's ``CustomFieldOperations.GetValue`` returns a
+# live ``ITsString`` COM object for String-type custom fields (contrary to its
+# docstring, which claims a plain ``str``). Storing that object raw makes the
+# diff pane render Python's default repr, e.g.
+# ``<SIL.LCModel.Core.KernelInterfaces.ITsString object at 0x...>``, instead of
+# the field text. Standard fields don't hit this because they flow through
+# flexicon's ``GetSyncableProperties`` (already text-normalized).
+def _coerce_cf_value(value: Any) -> Any:
+    """Normalize a raw ``GetValue`` result to a comparable/displayable value.
+
+    - ``ITsString`` single-string carriers -> ``.Text`` (may be None/empty).
+    - Multi-string carriers -> best analysis alternative text.
+    - ``str``/``int``/``float``/``bool``/``list``/``tuple``/``dict`` -> unchanged
+      (already normalized by flexicon for Integer/Reference/MultiString fields).
+
+    Never raises; unrecognized objects pass through untouched.
+    """
+    if value is None or isinstance(value, (str, int, float, bool, list, tuple, dict)):
+        return value
+    try:
+        # ITsString exposes .Text directly (empty ITsString -> None/"").
+        if hasattr(value, "Text"):
+            return value.Text
+        # Multi-string carrier fallback: reduce to the best analysis alternative.
+        best = getattr(value, "BestAnalysisAlternative", None)
+        if best is not None:
+            return getattr(best, "Text", None)
+    except Exception as _e:
+        logging.debug("_coerce_cf_value: could not normalize %r: %s", type(value), _e)
+    return value
+
+
 # R-b: Empty-value suppression helpers
 def _is_empty_value(v: Any) -> bool:
     """Return True if v is None, empty string, empty dict, or all-whitespace multistring."""
@@ -1249,7 +1283,7 @@ def _read_custom_fields(handle: Any, obj: Any, owner_class: str, prefix: str) ->
                     _flid, field_name = item[0], item[1]
                 else:
                     field_name = str(item)
-                value = cf_ops.GetValue(obj, field_name)
+                value = _coerce_cf_value(cf_ops.GetValue(obj, field_name))
                 if not _is_empty_value(value):
                     result[prefix + field_name] = value
             except Exception as _e:

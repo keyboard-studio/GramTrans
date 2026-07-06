@@ -574,6 +574,51 @@ class TestCustomFieldExtraction:
         _append_custom_fields(handle, entry, "entry", props)
         assert "Example.MyExampleField" in props, f"Got keys: {list(props)}"
 
+    def test_itsstring_value_normalized_to_text(self):
+        """String-type custom fields returning a raw ITsString carrier are
+        normalized to their .Text (not stored as the object's repr).
+
+        Regression: the installed flexicon build's GetValue returns a live
+        ITsString COM object for String custom fields, whose default repr
+        (<...ITsString object at 0x...>) was leaking into the diff pane.
+        """
+
+        class _FakeITsString:
+            """Mimics a COM ITsString: no readable __repr__, only .Text."""
+
+            def __init__(self, text):
+                self.Text = text
+
+            def __repr__(self):
+                return "<SIL.LCModel.Core.KernelInterfaces.ITsString object at 0xDEAD>"
+
+        class _FakeCFOps:
+            def GetAllFields(self, owner_class):
+                if owner_class == "LexEntry":
+                    return [("1", "Noun class"), ("2", "Empty class")]
+                return []
+
+            def GetValue(self, obj, field_name):
+                if field_name == "Noun class":
+                    return _FakeITsString("etu")
+                if field_name == "Empty class":
+                    return _FakeITsString(None)  # empty ITsString -> suppressed
+                return None
+
+        class _FakeEntry:
+            guid = "entry-guid-its"
+            SensesOS = []
+            AlternateFormsOS = []
+
+        class _FakeHandle:
+            CustomFields = _FakeCFOps()
+
+        props: dict = {}
+        _append_custom_fields(_FakeHandle(), _FakeEntry(), "entry", props)
+        assert props.get("CustomField.Noun class") == "etu", f"Got: {props}"
+        # Empty ITsString (Text is None) is suppressed by R-b, not stored raw.
+        assert "CustomField.Empty class" not in props
+
     def test_no_custom_fields_ops_graceful(self):
         """Handle without CustomFields attribute returns empty dict gracefully."""
 
