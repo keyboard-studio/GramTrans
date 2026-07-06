@@ -68,8 +68,11 @@ class TestPreviewCollapsePreselectedAll:
         assert GrammarCategory.VARIANT_TYPES not in result["leaf_item_picks"]
         assert GrammarCategory.COMPLEX_FORM_TYPES not in result["leaf_item_picks"]
 
-    def test_page_title_contains_of_8(self):
-        """FR-001 / SC-007: page title must reflect '8' total pages.
+    def test_page_title_contains_of_9(self):
+        """FR-001 / SC-007: page title must reflect '9' total pages.
+
+        (9 = the wizard flow after both the Lexical-Entry Types page (spec 021)
+        and the Rules page (018) are inserted before Finish.)
 
         Inspects the source code string to avoid creating a QWizardPage without
         a running QApplication (which stalls on Windows headless CI).
@@ -83,7 +86,7 @@ class TestPreviewCollapsePreselectedAll:
                           re.DOTALL)
         assert match, "_PageEntryTypes setTitle not found in source"
         title = match.group(1)
-        assert "of 8" in title, f"Expected 'of 8' in title, got: {title!r}"
+        assert "of 9" in title, f"Expected 'of 9' in title, got: {title!r}"
 
     def test_page_title_contains_entry_types(self):
         """Check that the title string mentions 'Entry' or 'Types'."""
