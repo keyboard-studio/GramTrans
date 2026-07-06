@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/020-conflict-mode-field-merge/plan.md
+at specs/023-nested-preview-gather/plan.md
 <!-- SPECKIT END -->
 
 ## Git Workflow Protocol (specs → main, work → worktree)
