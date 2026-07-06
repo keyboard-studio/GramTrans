@@ -1,5 +1,20 @@
 # Tasks: Conflict-Mode UI & Field-Level Merge (per-category ADD_NEW / MERGE / OVERWRITE)
 
+> ## ⚠️ SUPERSEDED BY [feature 022 — Disposition Model](../022-disposition-model/)
+>
+> Per [STATUS.md](../../STATUS.md), feature **022 supersedes 020's interim conflict-mode
+> vocabulary**; 020's spec/plan/tasks are **retained on `main` as history only**. The
+> conflict-mode / field-merge machinery this feature wired shipped, but 022 (constitution
+> **v6.0.0**) then renamed `ConflictMode.MERGE` → **`LINK`**, added the non-destructive
+> **`UPDATE`** intent, and introduced the computed per-item disposition
+> {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Every task below that names `MERGE` describes the
+> pre-rename vocabulary that no longer exists as such.
+>
+> **The task checkboxes below are intentionally left unchecked** — they are not tracked to
+> completion because the current state of this work lives under
+> [022's tasks.md](../022-disposition-model/tasks.md). Do not re-check them; consult 022
+> instead. (Reconciliation 2026-07-06.)
+
 **Feature**: 020-conflict-mode-field-merge | **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md)
 
 **Ground truth**: [probe-results.md](./probe-results.md) — live FLExTools MCP (Ejagham Full +
