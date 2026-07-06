@@ -67,11 +67,11 @@ change.
 **Insertion point**: after `owner_guid: str = ""` at line 572 (current last field).
 
 **Checklist**:
-- [ ] Add `write_mode: str = "overwrite"` after `owner_guid` (last field preserves
+- [x] Add `write_mode: str = "overwrite"` after `owner_guid` (last field preserves
       positional backward compat since all existing callers use keyword args or the
       frozen default).
-- [ ] Update the docstring to document the two valid values.
-- [ ] Confirm no existing `PlannedOverwrite(...)` call site breaks (grep for
+- [x] Update the docstring to document the two valid values.
+- [x] Confirm no existing `PlannedOverwrite(...)` call site breaks (grep for
       `PlannedOverwrite(` and verify all use keyword args or omit write_mode).
 
 ---
@@ -173,9 +173,9 @@ def fingerprint_with_owner(fn, obj, owner_guid_override, ws_handle=None):
 **File**: `src/gramtrans/Lib/matcher.py`, new function after line ~170.
 
 **Checklist**:
-- [ ] Function is pure (no side effects, no LCM imports).
-- [ ] Export via `__all__` if matcher.py uses one; otherwise leave as module-level.
-- [ ] Unit test: `fingerprint_with_owner(fingerprint_for_msa, fake_msa, "new-guid")`
+- [x] Function is pure (no side effects, no LCM imports).
+- [x] Export via `__all__` if matcher.py uses one; otherwise leave as module-level.
+- [x] Unit test: `fingerprint_with_owner(fingerprint_for_msa, fake_msa, "new-guid")`
       returns a tuple with index 1 == "new-guid" and all other indices unchanged.
 
 ---
@@ -214,9 +214,9 @@ No behavior change; this task is a pure refactor that creates the shared call si
 T-FR008.
 
 **Checklist**:
-- [ ] Existing Layer-3 execution tests (if any) pass unchanged after extraction.
-- [ ] The helper is private (underscore prefix).
-- [ ] Docstring names the two call sites: normal add path (here) and merge-into path
+- [x] Existing Layer-3 execution tests (if any) pass unchanged after extraction.
+- [x] The helper is private (underscore prefix).
+- [x] Docstring names the two call sites: normal add path (here) and merge-into path
       (T-FR008).
 
 ---
@@ -254,12 +254,12 @@ applying entry-level fields at line 1331, add a read of `overwrite.match_via` an
    `_execute_layer3` (or re-derived from context available there).
 
 **Checklist**:
-- [ ] `write_mode="overwrite"` path: `fill_gaps=False` -> behavior byte-for-byte
+- [x] `write_mode="overwrite"` path: `fill_gaps=False` -> behavior byte-for-byte
       identical to pre-feature for all existing ENTRY overwrites.
-- [ ] `write_mode="merge"` path: fill-gaps kwarg is passed; T-S3 tests confirm.
-- [ ] `match_via="guid"` path: no `_populate_entry_children` call (existing behavior).
-- [ ] `match_via="identity_remap"` path: children created under `tgt_entry`.
-- [ ] Missing `tgt_entry` (GUID lookup fails): Warning logged, return early, no crash.
+- [x] `write_mode="merge"` path: fill-gaps kwarg is passed; T-S3 tests confirm.
+- [x] `match_via="guid"` path: no `_populate_entry_children` call (existing behavior).
+- [x] `match_via="identity_remap"` path: children created under `tgt_entry`.
+- [x] Missing `tgt_entry` (GUID lookup fails): Warning logged, return early, no crash.
 
 ---
 
@@ -282,9 +282,9 @@ The `identity_remap` dict (`build_run_plan` line 75) is already passed into `Run
 at line 175. This task ensures it flows into the walker so T-FR001 can write into it.
 
 **Checklist**:
-- [ ] No callers of `_plan_layer3_for_pos` other than `build_run_plan` (grep to
+- [x] No callers of `_plan_layer3_for_pos` other than `build_run_plan` (grep to
       confirm); if any exist, add `identity_remap={}` default to preserve compat.
-- [ ] Existing planner tests pass unchanged (the extra parameter with an empty dict
+- [x] Existing planner tests pass unchanged (the extra parameter with an empty dict
       is a no-op).
 
 ---
@@ -382,24 +382,24 @@ with these differences:
   `_match_msas_by_fingerprint` and `_match_allomorphs_by_fingerprint`.
 
 **Checklist**:
-- [ ] Function is private (underscore prefix).
-- [ ] `fingerprint_with_owner` is imported from `matcher.py` at call sites.
-- [ ] All MSA/allomorph/PhEnvironment plan items emitted with `owner_guid=tgt_entry_guid`.
-- [ ] No mutation of source or target project objects (planner-only, preview pass).
-- [ ] Called from the identity-remap branch in T-FR001 when `tgt_entry_for_remap is not None`.
+- [x] Function is private (underscore prefix).
+- [x] `fingerprint_with_owner` is imported from `matcher.py` at call sites.
+- [x] All MSA/allomorph/PhEnvironment plan items emitted with `owner_guid=tgt_entry_guid`.
+- [x] No mutation of source or target project objects (planner-only, preview pass).
+- [x] Called from the identity-remap branch in T-FR001 when `tgt_entry_for_remap is not None`.
 
 **Checklist** (T-FR001 overall):
-- [ ] `similar_resolution_for` returns `None` for non-SIMILAR / unresolved entries:
+- [x] `similar_resolution_for` returns `None` for non-SIMILAR / unresolved entries:
       falls through to Phase-0 path unchanged.
-- [ ] `create_new` resolution: falls through to Phase-0 path unchanged.
-- [ ] `overwrite` resolution, target lacks entry GUID: identity-remap PlannedOverwrite
+- [x] `create_new` resolution: falls through to Phase-0 path unchanged.
+- [x] `overwrite` resolution, target lacks entry GUID: identity-remap PlannedOverwrite
       emitted.
-- [ ] `merge` resolution, target lacks entry GUID: identity-remap PlannedOverwrite with
+- [x] `merge` resolution, target lacks entry GUID: identity-remap PlannedOverwrite with
       `write_mode="merge"` emitted.
-- [ ] `identity_remap[entry_guid] == resolution.target_guid` after plan build.
-- [ ] Phase-1 same-GUID overwrite path (entry_is_overwrite=True) takes priority:
+- [x] `identity_remap[entry_guid] == resolution.target_guid` after plan build.
+- [x] Phase-1 same-GUID overwrite path (entry_is_overwrite=True) takes priority:
       no resolution read for entries already in target by GUID.
-- [ ] `_plan_identity_remap_children` called when `tgt_entry_for_remap is not None`;
+- [x] `_plan_identity_remap_children` called when `tgt_entry_for_remap is not None`;
       skipped (children deferred to executor) when resolved target not yet in index.
 
 ---
@@ -436,9 +436,9 @@ def _apply_props_loop(item, props, target_ws_by_id, fill_gaps=False):
 **Reinstall after edit**: `pip install -e D:/Github/_Projects/_LEX/flexicon`
 
 **Checklist**:
-- [ ] `_apply_props_loop` has no reference to `self` or `self.project`.
-- [ ] `ApplySyncableProperties` behavior is byte-for-byte identical (pure refactor).
-- [ ] All 8 Grammar subclass `super()` calls unchanged (they call `ApplySyncableProperties`,
+- [x] `_apply_props_loop` has no reference to `self` or `self.project`.
+- [x] `ApplySyncableProperties` behavior is byte-for-byte identical (pure refactor).
+- [x] All 8 Grammar subclass `super()` calls unchanged (they call `ApplySyncableProperties`,
       not `_apply_props_loop` directly).
 
 ---
@@ -466,9 +466,9 @@ Write a parametrized unit test covering all three value shapes:
 | bool/int | any target value | `setattr` called (fill_gaps=False) |
 
 **Checklist**:
-- [ ] All six parameter combinations have an assertion.
-- [ ] Test imports `_apply_props_loop` directly from `BaseOperations`.
-- [ ] Test is marked `not integration` (no LCM fixture needed).
+- [x] All six parameter combinations have an assertion.
+- [x] Test imports `_apply_props_loop` directly from `BaseOperations`.
+- [x] Test is marked `not integration` (no LCM fixture needed).
 
 ---
 
@@ -488,10 +488,10 @@ assert:
    fill-gaps guards did not fire).
 
 **Checklist**:
-- [ ] Baseline captured as a fixture (dict of expected actions/overwrites/skips) before
+- [x] Baseline captured as a fixture (dict of expected actions/overwrites/skips) before
       any feature-013 code lands.
-- [ ] `assert plan_actions == baseline_actions` (not just len check).
-- [ ] Test marked `not integration`.
+- [x] `assert plan_actions == baseline_actions` (not just len check).
+- [x] Test marked `not integration`.
 
 ---
 

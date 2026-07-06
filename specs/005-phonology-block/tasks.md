@@ -29,9 +29,9 @@ description: "Phase 3a — Phonology Block tasks"
 
 **Purpose**: Add enum members + stub callback registrations. No business logic yet.
 
-- [ ] T001 Add 5 `GrammarCategory` enum members (`PHONOLOGICAL_FEATURES`, `PHONEMES`, `NATURAL_CLASSES`, `PHONOLOGICAL_RULES`, `STRATA`) in `src/gramtrans/Lib/models.py` per data-model.md E-3a-1
-- [ ] T002 Add 6 new registry entries to `LEAF_CATEGORIES` in `src/gramtrans/Lib/categories.py` — one per (phon_features, phonemes, natural_classes, ph_environment relocation, phon_rules, strata) — each pointing at 5 placeholder functions that raise `NotImplementedError("Phase 3a stub")`
-- [ ] T003 Confirm `src/gramtrans/Lib/preview.py.build_run_plan` iterates the `LEAF_CATEGORIES` registry via the existing dispatch (read-only check; no edit expected; if a special-case branch is missing, add it)
+- [x] T001 Add 5 `GrammarCategory` enum members (`PHONOLOGICAL_FEATURES`, `PHONEMES`, `NATURAL_CLASSES`, `PHONOLOGICAL_RULES`, `STRATA`) in `src/gramtrans/Lib/models.py` per data-model.md E-3a-1
+- [x] T002 Add 6 new registry entries to `LEAF_CATEGORIES` in `src/gramtrans/Lib/categories.py` — one per (phon_features, phonemes, natural_classes, ph_environment relocation, phon_rules, strata) — each pointing at 5 placeholder functions that raise `NotImplementedError("Phase 3a stub")`
+- [x] T003 Confirm `src/gramtrans/Lib/preview.py.build_run_plan` iterates the `LEAF_CATEGORIES` registry via the existing dispatch (read-only check; no edit expected; if a special-case branch is missing, add it)
 
 ---
 
@@ -41,13 +41,13 @@ description: "Phase 3a — Phonology Block tasks"
 
 **⚠️ CRITICAL**: Stories US1–US4 cannot begin writing execute callbacks until this phase is complete.
 
-- [ ] T004 [P] MCP-probe `IPhPhonemeFactory` constructor signatures via `flextools_get_object_api(object_type='IPhPhonemeFactory')`; record Guid-overload availability in a new `specs/005-phonology-block/probe-results.md` file
-- [ ] T005 [P] MCP-probe `IPhNCSegmentsFactory` and `IPhNCFeaturesFactory` constructor signatures; append findings to `probe-results.md`
-- [ ] T006 [P] MCP-probe `IPhEnvironmentFactory.Create` signatures (verify the existing Phase 0 GUID-preservation still works); append to `probe-results.md`
-- [ ] T007 [P] MCP-probe `IPhRegularRuleFactory` / `IPhSegmentRuleFactory` / `IPhMetathesisRuleFactory`; append to `probe-results.md`
-- [ ] T008 [P] MCP-probe `IMoStratumFactory` constructor signatures + relevant Stratum properties; append to `probe-results.md`
-- [ ] T009 [P] MCP-probe `IFsClosedFeatureFactory` for the phonological-feature subsystem; confirm the same factory serves both the phon and inflection systems or whether a separate one exists; append to `probe-results.md`
-- [ ] T010 Wait/check on flexlibs#196 — if `StratumOperations` lands in flexicon fork before T035, update T035-T038 task descriptions to use `project.Strata.*` instead of the `GetService` workaround
+- [x] T004 [P] MCP-probe `IPhPhonemeFactory` constructor signatures via `flextools_get_object_api(object_type='IPhPhonemeFactory')`; record Guid-overload availability in a new `specs/005-phonology-block/probe-results.md` file
+- [x] T005 [P] MCP-probe `IPhNCSegmentsFactory` and `IPhNCFeaturesFactory` constructor signatures; append findings to `probe-results.md`
+- [x] T006 [P] MCP-probe `IPhEnvironmentFactory.Create` signatures (verify the existing Phase 0 GUID-preservation still works); append to `probe-results.md`
+- [x] T007 [P] MCP-probe `IPhRegularRuleFactory` / `IPhSegmentRuleFactory` / `IPhMetathesisRuleFactory`; append to `probe-results.md`
+- [x] T008 [P] MCP-probe `IMoStratumFactory` constructor signatures + relevant Stratum properties; append to `probe-results.md`
+- [x] T009 [P] MCP-probe `IFsClosedFeatureFactory` for the phonological-feature subsystem; confirm the same factory serves both the phon and inflection systems or whether a separate one exists; append to `probe-results.md`
+- [x] T010 Wait/check on flexlibs#196 — if `StratumOperations` lands in flexicon fork before T035, update T035-T038 task descriptions to use `project.Strata.*` instead of the `GetService` workaround
 
 **Checkpoint**: T004-T009 outputs land in `probe-results.md`. T010 is gated on external flexicon PR.
 
@@ -61,32 +61,32 @@ description: "Phase 3a — Phonology Block tasks"
 
 ### Phon Features (#2)
 
-- [ ] T011 [P] [US1] Implement `phon_features_enumerate_source` in `src/gramtrans/Lib/categories.py` — walks the phonological feature subsystem, returns iterable of `IFsClosedFeature` objects
-- [ ] T012 [P] [US1] Implement `phon_features_plan_action` and `phon_features_execute_action` in `src/gramtrans/Lib/categories.py` — mirrors existing `inflection_features` callback pattern; creates `IFsClosedFeature` + values via the factory probed in T009
-- [ ] T013 [US1] Unit tests in `tests/unit/test_categories_phon_features.py`: enumerate_source returns expected count, plan_action emits PlannedAction for new + Skip(ALREADY_PRESENT_BY_GUID) for matched
+- [x] T011 [P] [US1] Implement `phon_features_enumerate_source` in `src/gramtrans/Lib/categories.py` — walks the phonological feature subsystem, returns iterable of `IFsClosedFeature` objects
+- [x] T012 [P] [US1] Implement `phon_features_plan_action` and `phon_features_execute_action` in `src/gramtrans/Lib/categories.py` — mirrors existing `inflection_features` callback pattern; creates `IFsClosedFeature` + values via the factory probed in T009
+- [x] T013 [US1] Unit tests in `tests/unit/test_categories_phon_features.py`: enumerate_source returns expected count, plan_action emits PlannedAction for new + Skip(ALREADY_PRESENT_BY_GUID) for matched
 
 ### Phonemes (#3)
 
-- [ ] T014 [P] [US1] Implement `phonemes_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.Phonemes.GetAll()`
-- [ ] T015 [P] [US1] Implement `phonemes_dependencies` and `phonemes_required_writing_systems` — phonemes are leaves dep-wise; WSes come from name multistring
-- [ ] T016 [US1] Implement `phonemes_plan_action` in `src/gramtrans/Lib/categories.py` — uses the GUID-overload probed in T004; falls back to identity_remap if absent
-- [ ] T017 [US1] Implement `phonemes_execute_action` in `src/gramtrans/Lib/categories.py` — creates `IPhPhoneme`, adds to `target.PhonologicalDataOA.PhonemeSetsOS[0].PhonemesOC`, applies syncable properties + Carrier-A residue
-- [ ] T018 [US1] Unit tests in `tests/unit/test_categories_phonemes.py`: GUID-preserving create when factory supports, identity_remap fallback when not, feature struct (FeaturesOA) survives import, name multistring transfers
+- [x] T014 [P] [US1] Implement `phonemes_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.Phonemes.GetAll()`
+- [x] T015 [P] [US1] Implement `phonemes_dependencies` and `phonemes_required_writing_systems` — phonemes are leaves dep-wise; WSes come from name multistring
+- [x] T016 [US1] Implement `phonemes_plan_action` in `src/gramtrans/Lib/categories.py` — uses the GUID-overload probed in T004; falls back to identity_remap if absent
+- [x] T017 [US1] Implement `phonemes_execute_action` in `src/gramtrans/Lib/categories.py` — creates `IPhPhoneme`, adds to `target.PhonologicalDataOA.PhonemeSetsOS[0].PhonemesOC`, applies syncable properties + Carrier-A residue
+- [x] T018 [US1] Unit tests in `tests/unit/test_categories_phonemes.py`: GUID-preserving create when factory supports, identity_remap fallback when not, feature struct (FeaturesOA) survives import, name multistring transfers
 
 ### Natural Classes (#4)
 
-- [ ] T019 [P] [US1] Implement `natural_classes_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.NaturalClasses.GetAll()`, returns both Segments and Features subtypes
-- [ ] T020 [P] [US1] Implement `natural_classes_dependencies` — for IPhNCSegments, returns the GUIDs of phonemes referenced via `SegmentsRC`; for IPhNCFeatures, empty (FeaturesOA is owned, not referenced)
-- [ ] T021 [US1] Implement `natural_classes_plan_action` and `natural_classes_execute_action` — branch on `ICmObject(obj).ClassName` to choose between `IPhNCSegmentsFactory` and `IPhNCFeaturesFactory`
-- [ ] T022 [US1] Unit tests in `tests/unit/test_categories_natural_classes.py`: both subtypes create with correct factory, `SegmentsRC` resolution against the in-flight phoneme plan, `FeaturesOA` survives owned
+- [x] T019 [P] [US1] Implement `natural_classes_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.NaturalClasses.GetAll()`, returns both Segments and Features subtypes
+- [x] T020 [P] [US1] Implement `natural_classes_dependencies` — for IPhNCSegments, returns the GUIDs of phonemes referenced via `SegmentsRC`; for IPhNCFeatures, empty (FeaturesOA is owned, not referenced)
+- [x] T021 [US1] Implement `natural_classes_plan_action` and `natural_classes_execute_action` — branch on `ICmObject(obj).ClassName` to choose between `IPhNCSegmentsFactory` and `IPhNCFeaturesFactory`
+- [x] T022 [US1] Unit tests in `tests/unit/test_categories_natural_classes.py`: both subtypes create with correct factory, `SegmentsRC` resolution against the in-flight phoneme plan, `FeaturesOA` survives owned
 
 ### Phonological Rules (#5) — incl. FR-304 dependency closure
 
-- [ ] T023 [P] [US1] Implement `phon_rules_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.PhonRules.GetAll()`
-- [ ] T024 [US1] Implement `phon_rules_dependencies` in `src/gramtrans/Lib/categories.py` — walks each rule's input segments, output segments, left/right contexts, plus `StratumRA`; returns tuple of referenced GUIDs (phoneme + class + env + stratum)
-- [ ] T025 [US1] Implement `phon_rules_plan_action` in `src/gramtrans/Lib/categories.py` per [contracts/phonology-rule-dependencies.md](contracts/phonology-rule-dependencies.md) — emits `Skip(DEPENDENCY_UNRESOLVED, detail=<unresolved GUIDs>)` when any reference is missing from target AND from the in-flight plan
-- [ ] T026 [US1] Implement `phon_rules_execute_action` — creates the right subtype (regular / segment / metathesis), wires input/output segments + contexts + `StratumRA`, applies residue
-- [ ] T027 [US1] Unit tests in `tests/unit/test_categories_phon_rules.py`: dependency-closure walk identifies all referenced GUIDs, plan_action skips when phoneme deselected, execute wires all four reference types (input, output, left ctx, right ctx)
+- [x] T023 [P] [US1] Implement `phon_rules_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.PhonRules.GetAll()`
+- [x] T024 [US1] Implement `phon_rules_dependencies` in `src/gramtrans/Lib/categories.py` — walks each rule's input segments, output segments, left/right contexts, plus `StratumRA`; returns tuple of referenced GUIDs (phoneme + class + env + stratum)
+- [x] T025 [US1] Implement `phon_rules_plan_action` in `src/gramtrans/Lib/categories.py` per [contracts/phonology-rule-dependencies.md](contracts/phonology-rule-dependencies.md) — emits `Skip(DEPENDENCY_UNRESOLVED, detail=<unresolved GUIDs>)` when any reference is missing from target AND from the in-flight plan
+- [x] T026 [US1] Implement `phon_rules_execute_action` — creates the right subtype (regular / segment / metathesis), wires input/output segments + contexts + `StratumRA`, applies residue
+- [x] T027 [US1] Unit tests in `tests/unit/test_categories_phon_rules.py`: dependency-closure walk identifies all referenced GUIDs, plan_action skips when phoneme deselected, execute wires all four reference types (input, output, left ctx, right ctx)
 - [ ] T028 [US1] Integration test in `tests/integration/test_phase3a_phonology_e2e.py::test_us1_phoneme_nc_rule_round_trip` exercising Scenario A from quickstart (additive happy path)
 - [ ] T029 [US1] Integration test `test_us1_dependency_unresolved_skip` exercising Scenario C (rule references unimported phoneme → DEPENDENCY_UNRESOLVED Skip)
 
@@ -100,10 +100,10 @@ description: "Phase 3a — Phonology Block tasks"
 
 **Independent Test**: Stratum category transfers with source GUIDs preserved; later morphology-block ordering (when Phase 3b lands) finds strata already in target.
 
-- [ ] T030 [P] [US2] If flexlibs#196 has landed: implement `strata_*` callbacks using `project.Strata.*` Operations API. If NOT landed: implement using `project.GetService(IMoStratumFactory)` per research R1, with a TODO comment naming the issue.
-- [ ] T031 [P] [US2] Implement `strata_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.Cache.LangProject.MorphologicalDataOA.StrataOS`
-- [ ] T032 [US2] Implement `strata_plan_action` and `strata_execute_action` — create via factory probed in T008, add to `target.Cache.LangProject.MorphologicalDataOA.StrataOS`, apply Carrier-A residue
-- [ ] T033 [US2] Unit tests in `tests/unit/test_categories_strata.py`: GUID handling, syncable properties (Name + Abbreviation multistring), empty-source returns empty
+- [x] T030 [P] [US2] If flexlibs#196 has landed: implement `strata_*` callbacks using `project.Strata.*` Operations API. If NOT landed: implement using `project.GetService(IMoStratumFactory)` per research R1, with a TODO comment naming the issue.
+- [x] T031 [P] [US2] Implement `strata_enumerate_source` in `src/gramtrans/Lib/categories.py` — iterates `source.Cache.LangProject.MorphologicalDataOA.StrataOS`
+- [x] T032 [US2] Implement `strata_plan_action` and `strata_execute_action` — create via factory probed in T008, add to `target.Cache.LangProject.MorphologicalDataOA.StrataOS`, apply Carrier-A residue
+- [x] T033 [US2] Unit tests in `tests/unit/test_categories_strata.py`: GUID handling, syncable properties (Name + Abbreviation multistring), empty-source returns empty
 - [ ] T034 [US2] Integration test `test_us2_strata_transfer` exercising Scenario A's strata sub-step
 
 **Checkpoint**: US2 ships independently. Strata are in target ready for Phase 3b.
@@ -116,9 +116,9 @@ description: "Phase 3a — Phonology Block tasks"
 
 **Independent Test**: Quickstart Scenario D.
 
-- [ ] T035 [P] [US3] Implement `ph_environment_enumerate_source` standalone in `src/gramtrans/Lib/categories.py` — iterates `source.Environments.GetAll()` (project-wide, not allomorph-bundled)
-- [ ] T036 [US3] Refactor the existing Phase 0/1/2 allomorph closure code in `src/gramtrans/Lib/preview.py` to: (a) skip emitting PlannedAction for an env that's ALREADY in the in-flight plan from the phonology-block enumerate (set-based dedup); (b) keep the create-if-missing fallback path for Phase 0 single-allomorph runs that don't enable the phonology block
-- [ ] T037 [US3] Unit tests in `tests/unit/test_categories_ph_environments.py`: idempotency — when phonology-block has emitted an env action, the allomorph-closure walker does NOT emit a duplicate
+- [x] T035 [P] [US3] Implement `ph_environment_enumerate_source` standalone in `src/gramtrans/Lib/categories.py` — iterates `source.Environments.GetAll()` (project-wide, not allomorph-bundled)
+- [x] T036 [US3] Refactor the existing Phase 0/1/2 allomorph closure code in `src/gramtrans/Lib/preview.py` to: (a) skip emitting PlannedAction for an env that's ALREADY in the in-flight plan from the phonology-block enumerate (set-based dedup); (b) keep the create-if-missing fallback path for Phase 0 single-allomorph runs that don't enable the phonology block
+- [x] T037 [US3] Unit tests in `tests/unit/test_categories_ph_environments.py`: idempotency — when phonology-block has emitted an env action, the allomorph-closure walker does NOT emit a duplicate
 - [ ] T038 [US3] Integration test `test_us3_ph_env_idempotency` exercising Scenario D — phonology runs first, then verb-vertical runs and produces zero new PhEnv creates
 
 **Checkpoint**: US3 ships. The relocation is invisible to existing Phase 0/1/2 callers; existing tests continue to pass.
@@ -131,9 +131,9 @@ description: "Phase 3a — Phonology Block tasks"
 
 **Independent Test**: Run with all six phonology+strata categories enabled against a source whose `PhonologicalDataOA` and `MorphologicalDataOA.StrataOS` are empty.
 
-- [ ] T039 [P] [US4] Verify each `enumerate_source` callback returns `()` (empty tuple) cleanly when the source collection is empty (no exceptions). Add explicit guards if any LCM accessor raises on an empty container.
-- [ ] T040 [US4] Enhance `src/gramtrans/Lib/report.py.render_text_summary` to emit a one-line `[skip] no items in source for X` per zero-source-zero-overwrite-zero-skip category, matching the memo's UX section
-- [ ] T041 [US4] Unit tests in `tests/unit/test_categories_empty_source.py`: each of the six categories with empty source returns `()` from enumerate_source and produces zero plan actions
+- [x] T039 [P] [US4] Verify each `enumerate_source` callback returns `()` (empty tuple) cleanly when the source collection is empty (no exceptions). Add explicit guards if any LCM accessor raises on an empty container.
+- [x] T040 [US4] Enhance `src/gramtrans/Lib/report.py.render_text_summary` to emit a one-line `[skip] no items in source for X` per zero-source-zero-overwrite-zero-skip category, matching the memo's UX section
+- [x] T041 [US4] Unit tests in `tests/unit/test_categories_empty_source.py`: each of the six categories with empty source returns `()` from enumerate_source and produces zero plan actions
 - [ ] T042 [US4] Integration test `test_us4_all_empty_source` exercising the empty-source-everywhere case
 
 **Checkpoint**: US4 ships. Categories without source items are visible in the run report as `[skip] no items in source for X` lines.
@@ -144,11 +144,11 @@ description: "Phase 3a — Phonology Block tasks"
 
 **Purpose**: Regression sweep, live MCP verification, and STATUS handoff.
 
-- [ ] T043 [P] Run the full unit-test suite: `python -m pytest tests/unit -q`; confirm 267 Phase 0/1/2 tests + ~40 new Phase 3a tests all green (target ~307)
+- [x] T043 [P] Run the full unit-test suite: `python -m pytest tests/unit -q`; confirm 267 Phase 0/1/2 tests + ~40 new Phase 3a tests all green (target ~307)
 - [ ] T044 [P] Run the integration suite: `python -m pytest tests/integration -q`; all Phase 3a e2e tests green
 - [ ] T045 Live MCP verification: run quickstart Scenarios A-E in order against Ejagham Mini → Ejagham Full GT-Test via `flextools_run_module`; log results into `specs/005-phonology-block/verification-log.md`
-- [ ] T046 Update `STATUS.md` to mark Phase 3a complete and queue Phase 3b (the morphology block: steps 6-13 and 14-18 of the ordering memo, modulo any already-COMPLETE leaf categories)
-- [ ] T047 Commit in topic-aligned increments: T001-T010 (setup + foundational), then one commit per US (US1, US2, US3, US4), then polish
+- [x] T046 Update `STATUS.md` to mark Phase 3a complete and queue Phase 3b (the morphology block: steps 6-13 and 14-18 of the ordering memo, modulo any already-COMPLETE leaf categories)
+- [x] T047 Commit in topic-aligned increments: T001-T010 (setup + foundational), then one commit per US (US1, US2, US3, US4), then polish
 
 ---
 
