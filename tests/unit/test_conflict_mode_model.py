@@ -1,13 +1,14 @@
-"""Tests for ConflictMode model extension (Phase 3c, Refinement 4).
+"""Tests for ConflictMode model extension (Phase 3c, Refinement 4; updated 022).
 
 Covers:
-- ConflictMode enum {ADD_NEW, MERGE, OVERWRITE}
+- ConflictMode enum {ADD_NEW, LINK, UPDATE, OVERWRITE} (022: MERGE renamed to LINK)
 - category_conflict_modes field on Selection (back-compat)
 - Selection.conflict_mode_for() Layer-1 defaults
 - _DEFAULT_CONFLICT_MODES Layer-1 table correctness
-- Layer-2 per-item IsProtected gating (protected -> MERGE; non-protected -> full set;
+- Layer-2 per-item IsProtected gating (protected -> LINK; non-protected -> full set;
   failed-cast -> permissive)
 - apply_isprotected_layer2 helper
+- Backward-compat shim: persisted "merge" -> LINK (022 T004)
 - Confirm-on-Move gate: excluded_lossy_count() > 0 triggers confirmation
 """
 from __future__ import annotations
@@ -57,14 +58,22 @@ def _ctx():
 # ===========================================================================
 
 class TestConflictModeEnum:
-    def test_three_members(self):
+    def test_four_members(self):
+        """022: enum now has four members (ADD_NEW, LINK, UPDATE, OVERWRITE)."""
         members = list(ConflictMode)
-        assert len(members) == 3
+        assert len(members) == 4
 
     def test_values(self):
         assert ConflictMode.ADD_NEW.value == "add_new"
-        assert ConflictMode.MERGE.value == "merge"
+        assert ConflictMode.LINK.value == "link"      # 022: was MERGE="merge"
+        assert ConflictMode.UPDATE.value == "update"  # 022: new non-destructive intent
         assert ConflictMode.OVERWRITE.value == "overwrite"
+
+    def test_merge_member_absent(self):
+        """022: ConflictMode.MERGE must no longer exist."""
+        assert not hasattr(ConflictMode, "MERGE"), (
+            "ConflictMode.MERGE should have been renamed to LINK in 022"
+        )
 
 
 # ===========================================================================
@@ -93,8 +102,8 @@ class TestSelectionConflictModesBackCompat:
 
     def test_conflict_mode_for_falls_back_to_layer1_default(self):
         sel = Selection()
-        # POS is GOLD_RESERVED -> default MERGE
-        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.MERGE
+        # POS is GOLD_RESERVED -> default LINK (022: was MERGE)
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK
 
     def test_conflict_mode_for_explicit_overrides_default(self):
         sel = Selection(
@@ -102,15 +111,16 @@ class TestSelectionConflictModesBackCompat:
         )
         assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.OVERWRITE
 
-    def test_conflict_mode_for_multi_instance_default_add_new(self):
+    def test_conflict_mode_for_multi_instance_default_update(self):
+        """022: MULTI_INSTANCE default is UPDATE (was ADD_NEW)."""
         sel = Selection()
-        # AFFIXES is MULTI_INSTANCE -> default ADD_NEW
-        assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.ADD_NEW
+        # AFFIXES is MULTI_INSTANCE -> default UPDATE (022 Ruling)
+        assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.UPDATE
 
-    def test_conflict_mode_for_custom_fields_default_merge(self):
+    def test_conflict_mode_for_custom_fields_default_link(self):
         sel = Selection()
-        # CUSTOM_FIELDS: conservative default MERGE
-        assert sel.conflict_mode_for(GrammarCategory.CUSTOM_FIELDS) == ConflictMode.MERGE
+        # CUSTOM_FIELDS: conservative default LINK (022: was MERGE)
+        assert sel.conflict_mode_for(GrammarCategory.CUSTOM_FIELDS) == ConflictMode.LINK
 
 
 # ===========================================================================
@@ -127,7 +137,8 @@ class TestLayer1DefaultTable:
                 f"{cat} missing from _DEFAULT_CONFLICT_MODES"
             )
 
-    def test_multi_instance_default_add_new(self):
+    def test_multi_instance_default_update(self):
+        """022: MULTI_INSTANCE default is UPDATE (was ADD_NEW)."""
         multi = [
             GrammarCategory.AFFIXES,
             GrammarCategory.STEMS,
@@ -144,12 +155,13 @@ class TestLayer1DefaultTable:
             GrammarCategory.STRATA,  # reclassified to MULTI_INSTANCE
         ]
         for cat in multi:
-            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.ADD_NEW, (
-                f"{cat} should be ADD_NEW (MULTI_INSTANCE) but got "
+            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (
+                f"{cat} should be UPDATE (MULTI_INSTANCE default, 022) but got "
                 f"{_DEFAULT_CONFLICT_MODES[cat]}"
             )
 
-    def test_gold_reserved_default_merge(self):
+    def test_gold_reserved_default_link(self):
+        """022: GOLD_RESERVED default is LINK (was MERGE)."""
         gold = [
             GrammarCategory.GRAM_CATEGORIES,
             GrammarCategory.INFLECTION_FEATURES,
@@ -160,17 +172,18 @@ class TestLayer1DefaultTable:
             GrammarCategory.SEMANTIC_DOMAINS,
         ]
         for cat in gold:
-            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.MERGE, (
-                f"{cat} should be MERGE (GOLD_RESERVED) but got "
+            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.LINK, (
+                f"{cat} should be LINK (GOLD_RESERVED, 022) but got "
                 f"{_DEFAULT_CONFLICT_MODES[cat]}"
             )
 
-    def test_custom_fields_conservative_merge(self):
-        assert _DEFAULT_CONFLICT_MODES[GrammarCategory.CUSTOM_FIELDS] == ConflictMode.MERGE
+    def test_custom_fields_conservative_link(self):
+        """022: CUSTOM_FIELDS conservative default is LINK (was MERGE)."""
+        assert _DEFAULT_CONFLICT_MODES[GrammarCategory.CUSTOM_FIELDS] == ConflictMode.LINK
 
-    def test_writing_systems_check_merge(self):
-        # SINGLETON_NONDELETABLE -> MERGE
-        assert _DEFAULT_CONFLICT_MODES[GrammarCategory.WRITING_SYSTEMS_CHECK] == ConflictMode.MERGE
+    def test_writing_systems_check_link(self):
+        """022: SINGLETON_NONDELETABLE -> LINK (was MERGE)."""
+        assert _DEFAULT_CONFLICT_MODES[GrammarCategory.WRITING_SYSTEMS_CHECK] == ConflictMode.LINK
 
 
 # ===========================================================================
@@ -180,30 +193,35 @@ class TestLayer1DefaultTable:
 class TestAllowedModesLayer1:
     """_allowed_modes is in the wizard (Qt) layer; imported lazily here."""
 
-    def test_gold_reserved_only_merge_offered(self):
+    def test_gold_reserved_only_link_offered(self):
+        """022: GOLD_RESERVED offers only LINK (was MERGE)."""
         _allowed_modes, _GOLD_RESERVED = _get_wizard_helpers()
         for cat in _GOLD_RESERVED:
             modes = _allowed_modes(cat)
-            assert modes == [ConflictMode.MERGE], (
-                f"GOLD_RESERVED {cat} should offer only MERGE, got {modes}"
+            assert modes == [ConflictMode.LINK], (
+                f"GOLD_RESERVED {cat} should offer only LINK, got {modes}"
             )
 
-    def test_multi_instance_offers_all_three(self):
+    def test_multi_instance_offers_all_four(self):
+        """022: MULTI_INSTANCE offers ADD_NEW, LINK, UPDATE, OVERWRITE."""
         _allowed_modes, _ = _get_wizard_helpers()
         modes = _allowed_modes(GrammarCategory.AFFIXES)
         assert ConflictMode.ADD_NEW in modes
-        assert ConflictMode.MERGE in modes
+        assert ConflictMode.LINK in modes
+        assert ConflictMode.UPDATE in modes
         assert ConflictMode.OVERWRITE in modes
 
-    def test_custom_fields_only_merge(self):
+    def test_custom_fields_only_link(self):
+        """022: CUSTOM_FIELDS offers only LINK (was MERGE)."""
         _allowed_modes, _ = _get_wizard_helpers()
         modes = _allowed_modes(GrammarCategory.CUSTOM_FIELDS)
-        assert modes == [ConflictMode.MERGE]
+        assert modes == [ConflictMode.LINK]
 
-    def test_slots_offers_all_three(self):
+    def test_slots_offers_all_four(self):
+        """022: SLOTS offers all four modes (was three)."""
         _allowed_modes, _ = _get_wizard_helpers()
         modes = _allowed_modes(GrammarCategory.SLOTS)
-        assert len(modes) == 3
+        assert len(modes) == 4
 
 
 # ===========================================================================
@@ -252,13 +270,13 @@ class TestIsProtectedHelper:
 
 
 class TestApplyIsProtectedLayer2:
-    def test_protected_item_downgrades_to_merge(self):
-        """A protected item -> MERGE regardless of category default."""
+    def test_protected_item_downgrades_to_link(self):
+        """022: A protected item -> LINK (was MERGE) regardless of category default."""
         obj = _FakeLCMObj(True)
         result = apply_isprotected_layer2(
             GrammarCategory.AFFIXES, obj, ConflictMode.ADD_NEW
         )
-        assert result == ConflictMode.MERGE
+        assert result == ConflictMode.LINK
 
     def test_non_protected_item_keeps_current_mode(self):
         """Non-protected item -> current_mode unchanged."""
@@ -279,17 +297,25 @@ class TestApplyIsProtectedLayer2:
     def test_non_protected_full_set_available(self):
         """Non-protected item capped only by Layer 1.  AFFIXES + ADD_NEW -> stays ADD_NEW."""
         obj = _FakeLCMObj(False)
-        for mode in (ConflictMode.ADD_NEW, ConflictMode.MERGE, ConflictMode.OVERWRITE):
+        for mode in (ConflictMode.ADD_NEW, ConflictMode.LINK, ConflictMode.UPDATE, ConflictMode.OVERWRITE):
             result = apply_isprotected_layer2(GrammarCategory.AFFIXES, obj, mode)
             assert result == mode
 
     def test_protected_overrides_overwrite(self):
-        """Protected + OVERWRITE -> downgraded to MERGE."""
+        """Protected + OVERWRITE -> downgraded to LINK (022: was MERGE)."""
         obj = _FakeLCMObj(True)
         result = apply_isprotected_layer2(
             GrammarCategory.POS, obj, ConflictMode.OVERWRITE
         )
-        assert result == ConflictMode.MERGE
+        assert result == ConflictMode.LINK
+
+    def test_protected_overrides_update(self):
+        """Protected + UPDATE -> downgraded to LINK (GOLD safety rail, 022 T013)."""
+        obj = _FakeLCMObj(True)
+        result = apply_isprotected_layer2(
+            GrammarCategory.POS, obj, ConflictMode.UPDATE
+        )
+        assert result == ConflictMode.LINK
 
 
 # ===========================================================================
@@ -316,7 +342,7 @@ class TestConfirmOnMoveGateConflictMode:
         )
         sel = Selection(
             categories={GrammarCategory.AFFIXES: True},
-            category_conflict_modes={GrammarCategory.AFFIXES: ConflictMode.MERGE},
+            category_conflict_modes={GrammarCategory.AFFIXES: ConflictMode.LINK},
         )
         return RunPlan(
             context=_ctx(),
@@ -336,5 +362,70 @@ class TestConfirmOnMoveGateConflictMode:
         assert (plan.excluded_lossy_count() > 0) is True
 
     def test_conflict_modes_preserved_in_selection(self):
+        """022: explicit LINK stored on selection is preserved."""
         plan = self._make_plan(0)
-        assert plan.selection.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.MERGE
+        assert plan.selection.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.LINK
+
+
+# ===========================================================================
+# 022 T004: Backward-compat shim -- persisted "merge" -> LINK
+# ===========================================================================
+
+class TestBackwardCompatShim:
+    """conflict_mode_for MUST remap the legacy "merge" string to LINK (T004)."""
+
+    def test_shim_string_merge_returns_link(self):
+        """A stored string "merge" (old enum value) resolves to ConflictMode.LINK."""
+        sel = Selection(
+            category_conflict_modes={GrammarCategory.POS: "merge"}  # type: ignore[dict-item]
+        )
+        result = sel.conflict_mode_for(GrammarCategory.POS)
+        assert result == ConflictMode.LINK, (
+            f"Backward-compat shim must map 'merge' -> LINK, got {result!r}"
+        )
+
+    def test_shim_does_not_affect_link(self):
+        """A stored ConflictMode.LINK is returned unchanged (no double-mapping)."""
+        sel = Selection(
+            category_conflict_modes={GrammarCategory.POS: ConflictMode.LINK}
+        )
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK
+
+    def test_shim_does_not_affect_update(self):
+        """A stored ConflictMode.UPDATE is returned unchanged."""
+        sel = Selection(
+            category_conflict_modes={GrammarCategory.AFFIXES: ConflictMode.UPDATE}
+        )
+        assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.UPDATE
+
+    def test_shim_does_not_affect_overwrite(self):
+        """A stored ConflictMode.OVERWRITE is returned unchanged."""
+        sel = Selection(
+            category_conflict_modes={GrammarCategory.AFFIXES: ConflictMode.OVERWRITE}
+        )
+        assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.OVERWRITE
+
+
+# ===========================================================================
+# 022 T026: UPDATE semantic tests (moved to test_update_semantic.py)
+# Stub assertion here to confirm UPDATE is available as ConflictMode member.
+# ===========================================================================
+
+class TestUpdateMemberExists:
+    def test_update_is_conflict_mode_member(self):
+        assert ConflictMode.UPDATE.value == "update"
+
+    def test_link_is_conflict_mode_member(self):
+        assert ConflictMode.LINK.value == "link"
+
+    def test_multi_instance_default_is_update(self):
+        """022 Ruling: MULTI_INSTANCE categories default to UPDATE."""
+        sel = Selection()
+        assert sel.conflict_mode_for(GrammarCategory.STEMS) == ConflictMode.UPDATE
+        assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.UPDATE
+
+    def test_gold_default_is_link_not_update(self):
+        """022 Ruling: GOLD_RESERVED categories default to LINK (not UPDATE)."""
+        sel = Selection()
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK
+        assert sel.conflict_mode_for(GrammarCategory.GRAM_CATEGORIES) == ConflictMode.LINK

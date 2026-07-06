@@ -262,7 +262,7 @@ class TestPageScopeConflictCollectSelection:
             GrammarCategory.POS: self._make_combo(CategoryScope.ALL),
         }
         page._conflict_combos = {
-            GrammarCategory.POS: self._make_combo(ConflictMode.MERGE),
+            GrammarCategory.POS: self._make_combo(ConflictMode.LINK),  # 022: was MERGE
         }
         closure_cb = MagicMock()
         closure_cb.isChecked.return_value = True
@@ -275,7 +275,7 @@ class TestPageScopeConflictCollectSelection:
 
         assert isinstance(sel, Selection)
         assert sel.scope_for(GrammarCategory.POS) == CategoryScope.ALL
-        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.MERGE
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK  # 022: was MERGE
 
     def test_collect_selection_no_checked_categories_gives_empty(self):
         page = _bypass(_PageScopeConflict)
@@ -413,19 +413,40 @@ class TestWSHandshakeRetirement:
 
 
 # ===========================================================================
-# Interim MERGE label check (spec section i requirement)
+# 022: LINK label check (replaces interim MERGE label -- spec section i)
 # ===========================================================================
 
-class TestIntermMergeLabel:
-    def test_merge_label_contains_explicit_no_field_update_note(self):
-        """The MERGE control MUST carry an explicit label per spec (i)."""
+class TestLinkLabel:
+    def test_link_label_contains_explicit_no_field_update_note(self):
+        """022: The LINK control (formerly MERGE) MUST carry an explicit label per spec (i)."""
         from gramtrans.Lib.ui.selection_wizard import _CONFLICT_LABELS
-        merge_label = _CONFLICT_LABELS[ConflictMode.MERGE]
-        label_lower = merge_label.lower()
+        assert ConflictMode.LINK in _CONFLICT_LABELS, (
+            "ConflictMode.LINK must be in _CONFLICT_LABELS (022: renamed from MERGE)"
+        )
+        link_label = _CONFLICT_LABELS[ConflictMode.LINK]
+        label_lower = link_label.lower()
         # Must contain "link" and "no field update" or equivalent
         assert "link" in label_lower or "no field" in label_lower, (
-            f"MERGE label must explain 'link existing by ID, else add; no field update' "
-            f"per spec section (i), got: {merge_label!r}"
+            f"LINK label must explain 'link existing by ID, else add; no field update' "
+            f"per spec section (i), got: {link_label!r}"
+        )
+
+    def test_update_label_offered_for_multi_instance(self):
+        """022 T008/T024: UPDATE is offered for MULTI_INSTANCE categories."""
+        from gramtrans.Lib.ui.selection_wizard import _allowed_modes, _CONFLICT_LABELS
+        modes = _allowed_modes(GrammarCategory.AFFIXES)
+        assert ConflictMode.UPDATE in modes, (
+            f"UPDATE must be offered for AFFIXES (MULTI_INSTANCE), got {modes}"
+        )
+        assert ConflictMode.UPDATE in _CONFLICT_LABELS, (
+            "ConflictMode.UPDATE must have a label in _CONFLICT_LABELS"
+        )
+
+    def test_merge_key_absent_from_conflict_labels(self):
+        """022: ConflictMode.MERGE no longer exists, so it can't be in _CONFLICT_LABELS."""
+        from gramtrans.Lib.ui.selection_wizard import _CONFLICT_LABELS
+        assert not hasattr(ConflictMode, "MERGE"), (
+            "ConflictMode.MERGE should be gone in 022 (renamed to LINK)"
         )
 
 

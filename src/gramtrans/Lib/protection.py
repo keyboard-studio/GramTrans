@@ -45,11 +45,11 @@ def apply_isprotected_layer2(
 ) -> "ConflictMode":
     """Apply Layer-2 per-item IsProtected refinement.
 
-    If the item is protected, downgrade to MERGE (link-only) regardless of
-    category default.  Non-protected items keep `current_mode`.
+    If the item is protected, downgrade to LINK (link-only, no field writes)
+    regardless of category default.  Non-protected items keep `current_mode`.
 
     Failed cast / absent attribute -> permissive (return `current_mode` unchanged).
     """
     if _is_protected(lcm_item):
-        return ConflictMode.MERGE
+        return ConflictMode.LINK  # 022: was MERGE; renamed to LINK (same semantics)
     return current_mode

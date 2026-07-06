@@ -30,7 +30,14 @@ if __package__:
         SkipReason,
     )
     from .residue import ImportResidueTag, apply_residue, apply_carrier_b
-    from .conflict import _deterministic_merge, _MergeNotEligible
+    from .conflict import (
+        _deterministic_merge,
+        _MergeNotEligible,
+        apply_update_semantic,
+        compute_disposition,
+        ItemDisposition,
+        _phoneme_env_field_diff_enabled,
+    )
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
@@ -46,7 +53,14 @@ else:
         SkipReason,
     )
     from residue import ImportResidueTag, apply_residue, apply_carrier_b
-    from conflict import _deterministic_merge, _MergeNotEligible
+    from conflict import (  # type: ignore
+        _deterministic_merge,
+        _MergeNotEligible,
+        apply_update_semantic,
+        compute_disposition,
+        ItemDisposition,
+        _phoneme_env_field_diff_enabled,
+    )
     import report as _report_module  # registers RunReport.build_from_plan
 
 
@@ -90,10 +104,23 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         _execute_verb_vertical(plan, source, target, report_sink, tag, pulled_in_guids, pos_guid)
         _execute_layer3(plan, source, target, report_sink, tag, pos_guid)
 
-    # Phase 1 (FR-101): apply OVERWRITE actions. Each PlannedOverwrite
+    # Phase 1 (FR-101): apply OVERWRITE / UPDATE actions.  Each PlannedOverwrite
     # looks up the existing target object by GUID and applies the source's
-    # syncable properties. Pre-overwrite snapshots in the residue carrier
-    # (FR-106) are TODO for Phase 1.1.
+    # syncable properties.  The conflict mode for the category governs which
+    # write semantic is used:
+    #   ConflictMode.UPDATE    -> apply_update_semantic (non-destructive, T012)
+    #   ConflictMode.LINK      -> no field writes (LINK = link by GUID only)
+    #   ConflictMode.OVERWRITE -> _execute_overwrite (destructive, Phase 1)
+    # Pre-overwrite snapshots in the residue carrier (FR-106) are TODO Phase 1.1.
+    # NOTE: AFFIXES/STEMS UPDATE is gated on Phase-3c category engines (features
+    # 007/019) that don't yet emit overwrite-candidates, so UPDATE routing is
+    # presently exercised via GOLD_RESERVED categories (PHONOLOGICAL_FEATURES,
+    # GRAM_CATEGORIES/POS, INFLECTION_FEATURES, VARIANT_TYPES, COMPLEX_FORM_TYPES,
+    # SEMANTIC_DOMAINS).
+    if __package__:
+        from .models import ConflictMode as _ConflictMode
+    else:
+        from models import ConflictMode as _ConflictMode  # type: ignore
     extra_skips = []
     for ow in getattr(plan, "overwrites", ()):
         # identity_remap ENTRY overwrites are handled inside _execute_layer3
@@ -102,10 +129,28 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         if (ow.category in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS)
                 and getattr(ow, "match_via", "guid") == "identity_remap"):
             continue
-        extra_skips.extend(
-            _execute_overwrite(ow, source, target, report_sink, tag, interactive_session)
-            or []
-        )
+        # T012: consult the selection's conflict mode before dispatching.
+        _cat_mode = plan.selection.conflict_mode_for(ow.category)
+        if _cat_mode == _ConflictMode.UPDATE:
+            # Non-destructive UPDATE: compute disposition then apply_update_semantic.
+            # LINK intent: item already present, no field writes.
+            _update_skips = _execute_update_semantic(
+                ow, source, target, report_sink, tag
+            )
+            if _update_skips:
+                extra_skips.extend(_update_skips)
+        elif _cat_mode == _ConflictMode.LINK:
+            # LINK: already in target by GUID — no field writes, just log.
+            report_sink.Info(
+                f"  [{ow.category.value}] LINK mode — item present, no field writes"
+                f"  guid={ow.source_guid[:8]}"
+            )
+        else:
+            # OVERWRITE (or any unknown mode): existing destructive path.
+            extra_skips.extend(
+                _execute_overwrite(ow, source, target, report_sink, tag, interactive_session)
+                or []
+            )
 
     # Phase 3a leaf-category dispatch (execute side): for every
     # PlannedAction whose category is in the leaf set, route through
@@ -167,9 +212,28 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # run report's extra_skips after the leaf loop.
     _exec_skips: list = []
     object.__setattr__(exec_ctx, '_exec_skips', _exec_skips)
+    # C6: categories gated behind the flexicon ITsString.get_String fix.
+    # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
+    # for PHONEMES and PH_ENVIRONMENT is skipped — they remain SELECTOR-ONLY
+    # (Tier C).  The gate is consulted once per execute() call to avoid repeated
+    # importlib.metadata lookups.
+    _FIELD_DIFF_GATED = frozenset((
+        GrammarCategory.PHONEMES,
+        GrammarCategory.PH_ENVIRONMENT,
+    ))
+    _field_diff_ok = _phoneme_env_field_diff_enabled()
+
     leaf_count = 0
     for action in plan.actions:
         if action.category not in _LEAF_DISPATCH_CATEGORIES:
+            continue
+        # C6: version gate — Phoneme/Environment field-diff stays closed until
+        # pyflexicon ships the ITsString.get_String fix (Ruling Y, T014).
+        if action.category in _FIELD_DIFF_GATED and not _field_diff_ok:
+            report_sink.Info(
+                f"  [{action.category.value}] field-diff gated (flexicon version"
+                f" < fix release); selector-only  guid={action.source_guid[:8]}"
+            )
             continue
         try:
             bundle = _for_category(action.category)
@@ -1303,6 +1367,149 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
     )
     tagged = tag.with_snapshot(tgt_pre_props).with_merge_log(log)
     return filtered, tagged, skips
+
+
+def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag):
+    """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
+    PlannedOverwrite whose category mode is ConflictMode.UPDATE.
+
+    Steps:
+    1. Resolve the conflict mode and call compute_disposition (2-way, no prior
+       baseline) to determine SKIP / UPDATE / ADD.
+    2. If disposition is SKIP (all fields identical), log and return.
+    3. If disposition is UPDATE, call apply_update_semantic (non-destructive
+       field writes: never blanks a target field from an empty source).
+
+    The category-tier lookup and per-category ops accessor mirrors _execute_overwrite
+    but uses apply_update_semantic instead of ApplySyncableProperties unconditionally.
+
+    Only categories for which flexicon exposes a syncable-property ops accessor are
+    handled here.  Unknown/unsupported categories fall through to a warning and no-op.
+    """
+    if __package__:
+        from .models import ConflictMode as _ConflictMode
+    else:
+        from models import ConflictMode as _ConflictMode  # type: ignore
+
+    cat = overwrite.category
+    src_guid = overwrite.source_guid
+    tgt_guid = overwrite.target_guid
+
+    # C6 guard: mirrors the leaf-path gate at execute():227 (_FIELD_DIFF_GATED).
+    # Currently LATENT — PHONEMES/PH_ENVIRONMENT don't emit PlannedOverwrite today
+    # (_phonology_simple_plan emits only Skip/PlannedAction) — but guards against
+    # future planner changes that would make this path live and fail-open.
+    if cat in (GrammarCategory.PHONEMES, GrammarCategory.PH_ENVIRONMENT) and not _phoneme_env_field_diff_enabled():
+        report_sink.Info(
+            f"  [{cat.value}] field-diff gated (flexicon version"
+            f" < fix release); selector-only  guid={src_guid[:8]}"
+        )
+        return []
+
+    # Resolve the ops accessor for this category.  We use the same pattern as
+    # _execute_overwrite: switch on category to find source/target objects and
+    # the Operations instance that exposes GetSyncableProperties /
+    # ApplySyncableProperties.
+    ops_key = _OPS_ACCESSOR_FOR_CATEGORY.get(cat)
+    if ops_key is None:
+        # Category not in the UPDATE-capable set; log and skip.
+        report_sink.Info(
+            f"  [{cat.value}] UPDATE mode not wired for this category; no-op"
+            f"  guid={src_guid[:8]}"
+        )
+        return []
+
+    try:
+        src_ops = getattr(source, ops_key, None)
+        tgt_ops = getattr(target, ops_key, None)
+        if src_ops is None or tgt_ops is None:
+            report_sink.Warning(
+                f"  [{cat.value}] UPDATE: ops accessor '{ops_key}' not found on"
+                f" source/target  guid={src_guid[:8]}"
+            )
+            return []
+
+        # Locate the source and target objects by GUID.
+        src_obj = _find_obj_by_guid(src_ops, src_guid)
+        tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid)
+        if src_obj is None or tgt_obj is None:
+            report_sink.Warning(
+                f"  [{cat.value}] UPDATE: source or target object not found"
+                f"  src={src_guid[:8]}  tgt={tgt_guid[:8]}"
+            )
+            return []
+
+        src_props = src_ops.GetSyncableProperties(src_obj)
+        tgt_props = tgt_ops.GetSyncableProperties(tgt_obj)
+
+        # Compute disposition (2-way, no prior baseline).
+        disposition = compute_disposition(
+            src_props=src_props,
+            tgt_props=tgt_props,
+            intent=_ConflictMode.UPDATE,
+        )
+
+        if disposition == ItemDisposition.SKIP:
+            report_sink.Info(
+                f"  [{cat.value}] UPDATE-SKIP (all fields identical)"
+                f"  guid={src_guid[:8]}"
+            )
+            return []
+
+        # UPDATE: non-destructive field writes.
+        written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
+        report_sink.Info(
+            f"  [{cat.value}] UPDATE applied ({written} field(s) written)"
+            f"  guid={src_guid[:8]}"
+        )
+    except Exception as exc:
+        report_sink.Warning(
+            f"  [{cat.value}] _execute_update_semantic raised"
+            f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
+        )
+    return []
+
+
+# Map from GrammarCategory to the project-level ops accessor name (attribute
+# on the source/target FLExProject) that exposes GetSyncableProperties /
+# ApplySyncableProperties for UPDATE-capable categories.
+#
+# Only categories whose flexicon Operations class exposes both methods are
+# listed.  Others (ENTRY, AFFIXES, STEMS, etc.) use identity_remap paths that
+# are already handled by _execute_layer3 / the main overwrite loop.
+_OPS_ACCESSOR_FOR_CATEGORY: dict = {
+    GrammarCategory.GRAM_CATEGORIES:        "POS",
+    GrammarCategory.INFLECTION_FEATURES:    "InflectionFeatures",
+    GrammarCategory.INFLECTION_CLASSES:     "InflectionClasses",
+    GrammarCategory.STEM_NAMES:             "StemNames",
+    GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
+    GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
+    GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
+    GrammarCategory.PHONOLOGICAL_RULES:     "PhonologicalRules",
+    GrammarCategory.PHONEMES:               "Phonemes",
+    GrammarCategory.PH_ENVIRONMENT:         "Environments",
+    GrammarCategory.STRATA:                 "Strata",
+}
+
+
+def _find_obj_by_guid(ops, guid_str: str):
+    """Return the first object in ops.GetAll() whose GUID matches `guid_str`.
+
+    Returns None if not found or if GetAll raises.
+    """
+    try:
+        for obj in ops.GetAll():
+            try:
+                obj_guid = str(getattr(obj, "Guid", None) or "").lower()
+            except Exception:
+                continue
+            if obj_guid == guid_str.lower():
+                return obj
+    except Exception:
+        pass
+    return None
 
 
 def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
