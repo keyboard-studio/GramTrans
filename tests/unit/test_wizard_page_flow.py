@@ -132,6 +132,8 @@ SelectionWizard = _sw_mod.SelectionWizard
 _enumerate_active_ws_ids = _sw_mod._enumerate_active_ws_ids
 _enumerate_ws_by_kind = _sw_mod._enumerate_ws_by_kind
 _allowed_modes = _sw_mod._allowed_modes
+_compute_wizard_plan = _sw_mod._compute_wizard_plan
+build_selection = _sw_mod.build_selection
 
 
 def _bypass(cls):
@@ -448,6 +450,112 @@ class TestLinkLabel:
         assert not hasattr(ConflictMode, "MERGE"), (
             "ConflictMode.MERGE should be gone in 022 (renamed to LINK)"
         )
+
+
+# ===========================================================================
+# _compute_wizard_plan -- POS / grammar-category wiring
+# (fix/wizard-pos-grammar-wiring)
+#
+# Regression: the wizard copied affixes but flagged NO parts-of-speech, so the
+# verb-vertical POS closure walked 0 source POS and affix MSAs were created
+# unwired (PartOfSpeech = None => "no grammatical info").  The fix folds the
+# Skeleton page's pre-checked POS GUIDs into the built Selection as
+# categories[POS]=True + pos_picks, so the closure creates exactly those POSes.
+# ===========================================================================
+
+
+def _affix_only_selection():
+    """A base Selection as the item-picker page would return: affixes only."""
+    return build_selection(
+        PickerState(checked_affixes=frozenset({"aff-1"})),
+        SourceAffixInventory(unbound_affixes=frozenset({"aff-1"})),
+    )
+
+
+class _FakeWizard:
+    """Minimal wizard exposing only the accessors _compute_wizard_plan reads.
+
+    Absent page_* methods (custom_fields / entry_types / rules) are guarded by
+    hasattr in _compute_wizard_plan, so omitting them yields the transfer-all
+    default (no merge) for those blocks -- keeping this fixture tiny.
+    """
+
+    def __init__(self, affix_selection, pos_guids):
+        self._affix_selection = affix_selection
+        self._pos_guids = set(pos_guids)
+
+    def page_project_ws(self):
+        m = MagicMock()
+        m.context.return_value = object()  # non-None context
+        m.ws_mapping.return_value = None
+        return m
+
+    def page_items(self):
+        m = MagicMock()
+        m.collect_selection.return_value = self._affix_selection
+        return m
+
+    def page_phonology(self):
+        return None  # no phonology block
+
+    def page_skeleton(self):
+        m = MagicMock()
+        m.collect_skeleton_picks.return_value = {
+            "pos_guids": set(self._pos_guids),
+            "slot_guids": set(),
+            "template_guids": set(),
+        }
+        return m
+
+
+class TestComputeWizardPlanPosWiring:
+    def _run(self, wizard):
+        """Invoke _compute_wizard_plan with compute_preview stubbed to capture
+        the Selection it receives."""
+        captured = {}
+
+        def _fake_compute_preview(context, selection, ws_mapping):
+            captured["selection"] = selection
+            return ("READY", object())  # non-None payload
+
+        with patch.object(_sw_mod.gt_api, "compute_preview",
+                          side_effect=_fake_compute_preview), \
+             patch.object(_sw_mod.RunReport, "build_from_plan",
+                          return_value=object()), \
+             patch.object(_sw_mod, "_phonology_excluded_lossy_for",
+                          return_value=[]):
+            plan, report = _compute_wizard_plan(wizard)
+        return captured["selection"], plan, report
+
+    def test_skeleton_pos_picks_flag_pos_and_populate_pos_picks(self):
+        """With affixes picked AND the skeleton reporting attaching POSes, the
+        built Selection flags POS and carries those GUIDs as pos_picks (so the
+        verb-vertical closure walks >0 POS)."""
+        wizard = _FakeWizard(_affix_only_selection(), pos_guids={"POS-Verb-1"})
+        selection, plan, report = self._run(wizard)
+
+        assert selection.is_on(GrammarCategory.POS) is True
+        assert selection.pos_picks == frozenset({"pos-verb-1"})  # lower-cased
+        # AFFIXES stays on -- the fix augments, it does not replace.
+        assert selection.is_on(GrammarCategory.AFFIXES) is True
+        assert plan is not None
+
+    def test_no_skeleton_pos_leaves_pos_unflagged(self):
+        """Empty pos_guids must NOT flag POS -- flagging POS with empty picks
+        would make _select_source_poses walk EVERY source POS (over-transfer)."""
+        wizard = _FakeWizard(_affix_only_selection(), pos_guids=set())
+        selection, plan, report = self._run(wizard)
+
+        assert selection.is_on(GrammarCategory.POS) is False
+        assert selection.pos_picks == frozenset()
+
+    def test_does_not_flag_leaf_gram_categories(self):
+        """The fix must NOT enable the leaf GRAM_CATEGORIES pass (which would
+        enumerate ALL source POS); only the dependency-driven POS closure."""
+        wizard = _FakeWizard(_affix_only_selection(), pos_guids={"pos-1"})
+        selection, plan, report = self._run(wizard)
+
+        assert selection.is_on(GrammarCategory.GRAM_CATEGORIES) is False
 
 
 # ===========================================================================
