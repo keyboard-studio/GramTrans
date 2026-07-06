@@ -12,6 +12,17 @@ from __future__ import annotations
 
 import pytest
 
+# Verb-vertical POS-closure planning was superseded by leaf-dispatch
+# (GRAM_CATEGORIES / SLOTS / AFFIX_TEMPLATES) on 2026-07-06 to eliminate a
+# double-dispatch bug (both paths created POS/template/slots -> GUID collisions,
+# broke idempotency). These tests assert the retired closure-on/off semantics.
+# Follow-up: migrate the still-relevant invariants to leaf-dispatch coverage and
+# delete the verb-vertical code + these tests.
+pytestmark = pytest.mark.xfail(
+    reason="verb-vertical POS-closure superseded by leaf-dispatch (2026-07-06)",
+    strict=False,
+)
+
 from gramtrans.Lib import preview as preview_mod
 from gramtrans.Lib.models import (
     GrammarCategory,

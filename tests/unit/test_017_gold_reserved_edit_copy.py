@@ -275,10 +275,14 @@ def _make_tgt_with(kwarg, items):
 
 @pytest.mark.parametrize("category,plan_fn,src_kw,tgt_kw", _CATEGORY_PLAN_FNS)
 def test_a_gold_item_skips_inviolable(category, plan_fn, src_kw, tgt_kw):
-    """Case (a): GOLD item (non-empty CatalogSourceId) -> GOLD_INVIOLABLE."""
+    """Case (a): GOLD item (non-empty CatalogSourceId) present in target ->
+    GOLD_INVIOLABLE (never edited). Item placed IN the target so GRAM_CATEGORIES,
+    which now materializes ABSENT GOLD dependencies (2026-07-06), still skips a
+    PRESENT one; the absent-materialize case is covered in
+    test_categories_gram_categories."""
     item = _make_item("gold-001", catalog_source_id="fPerson")
     src = _make_src_with(src_kw, [item])
-    tgt = _make_tgt_with(tgt_kw, [])
+    tgt = _make_tgt_with(tgt_kw, [item])
     result = plan_fn(item, src, tgt)
     assert isinstance(result, Skip), f"{category}: expected Skip, got {result!r}"
     assert result.reason == SkipReason.GOLD_INVIOLABLE

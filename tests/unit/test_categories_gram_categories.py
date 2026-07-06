@@ -80,11 +80,12 @@ def test_dependencies_returns_empty_tuple() -> None:
     assert tuple(_BUNDLE["dependencies"](piece=cat)) == ()
 
 
-def test_plan_action_gold_object_yields_skip() -> None:
-    """A gram category with non-empty CatalogSourceId IS a GOLD object."""
+def test_plan_action_gold_object_present_in_target_yields_skip() -> None:
+    """A GOLD gram category ALREADY PRESENT in the target is not edited
+    (GOLD_INVIOLABLE)."""
     gold_cat = _FakeCat("aaa-111", catalog_source_id="fPerson")
     src = _FakeProject("src", gram_cats=(gold_cat,))
-    tgt = _FakeProject("tgt")
+    tgt = _FakeProject("tgt", gram_cats=(gold_cat,))  # present in target
     ctx = _ctx(src, tgt)
 
     result = _BUNDLE["plan_action"](piece=gold_cat, context=ctx, ws_mapping=WSMapping())
@@ -92,6 +93,23 @@ def test_plan_action_gold_object_yields_skip() -> None:
     assert isinstance(result, Skip)
     assert result.reason == SkipReason.GOLD_INVIOLABLE
     assert result.category == GrammarCategory.GRAM_CATEGORIES
+
+
+def test_plan_action_gold_object_absent_from_target_is_materialized() -> None:
+    """An ABSENT GOLD gram category (a required dependency -- e.g. a GOLD POS
+    like Numeral referenced by an affix MSA that the target lacks) is CREATED,
+    not skipped (2026-07-06 materialize-absent-gold decision, POS-scoped).
+    Creating a canonical item is not editing one, so Principle I still holds."""
+    gold_cat = _FakeCat("aaa-111", catalog_source_id="fPerson")
+    src = _FakeProject("src", gram_cats=(gold_cat,))
+    tgt = _FakeProject("tgt")  # GOLD dependency absent from target
+    ctx = _ctx(src, tgt)
+
+    result = _BUNDLE["plan_action"](piece=gold_cat, context=ctx, ws_mapping=WSMapping())
+
+    assert isinstance(result, PlannedAction)
+    assert result.category == GrammarCategory.GRAM_CATEGORIES
+    assert result.intended_target_guid == "aaa-111"
 
 
 def test_plan_action_empty_catalog_source_id_is_not_gold() -> None:

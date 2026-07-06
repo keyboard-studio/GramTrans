@@ -163,11 +163,14 @@ def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
     return gaps, conflicts
 
 
-def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
+def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
+                             materialize_absent_gold=False):
     """Shared GOLD_RESERVED plan_action helper (spec 017 FR-E10).
 
     Guard chain (FR-E01 to FR-E03):
-    1. _is_gold -> Skip(GOLD_INVIOLABLE) if GOLD.
+    1. _is_gold -> Skip(GOLD_INVIOLABLE) if GOLD *and present in target*.
+       When `materialize_absent_gold` is True, a GOLD item that is ABSENT from
+       the target falls through to a create instead (see below).
     2. target_iter_fn(context.target_handle) -> scan for GUID.
     3. If absent -> return None (caller emits PlannedAction).
     4. apply_isprotected_layer2 -> if LINK, Skip(ALREADY_PRESENT_BY_GUID)
@@ -180,11 +183,27 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
 
     Returns a Skip, PlannedOverwrite, or None.
     - None means "not present in target" -> caller emits PlannedAction.
+
+    materialize_absent_gold (2026-07-06 decision, gram_categories/POS only):
+        GOLD items are canonical and normally already in the target, so we never
+        edit/overwrite them (GOLD_INVIOLABLE). But a required GOLD *dependency*
+        that is ABSENT (e.g. a GOLD POS like Numeral/Demonstrative referenced by
+        an affix MSA that the target lacks) must be created, or the reference is
+        stranded. When True, an absent GOLD item falls through to a create with
+        its canonical GUID + CatalogSourceId. Creating a canonical item is not
+        editing one, so Principle I (never mutate GOLD) still holds. Default
+        False preserves always-skip for every other GOLD_RESERVED category
+        (notably semantic_domains, whose 1792-item GOLD list must NOT bulk-copy).
     """
+    src_guid = _guid_str_from(piece)
     if _is_gold(piece):
+        if materialize_absent_gold:
+            target_iter = target_iter_fn(context.target_handle)
+            if _find_target_obj_by_guid(target_iter, src_guid) is None:
+                return None  # absent GOLD dependency -> caller creates it
         return Skip(
             category=category,
-            source_guid=_guid_str_from(piece),
+            source_guid=src_guid,
             reason=SkipReason.GOLD_INVIOLABLE,
             detail=(
                 f"Item is a GOLD object (CatalogSourceId="
@@ -193,7 +212,6 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
             ),
         )
 
-    src_guid = _guid_str_from(piece)
     target_iter = target_iter_fn(context.target_handle)
     tgt_obj = _find_target_obj_by_guid(target_iter, src_guid)
 
@@ -351,7 +369,8 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
         return ()
 
     result = _plan_gold_reserved_edit(
-        piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter
+        piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
+        materialize_absent_gold=True,
     )
     if result is not None:
         return result
@@ -1970,6 +1989,46 @@ def _cast_rule_concrete(obj):
         return obj
 
 
+def _cast_msa_concrete(obj):
+    """Cast an MSA to its concrete LCM subclass so subclass-only slots are
+    visible.
+
+    ILexSense.MorphoSyntaxAnalysisRA / ILexEntry.MorphoSyntaxAnalysesOC yield
+    elements typed as the BASE interface (IMoMorphSynAnalysis). pythonnet exposes
+    only the base type's members, so PartOfSpeechRA (IMoInflAffMsa / IMoStemMsa /
+    IMoUnclassifiedAffixMsa) and From/ToPartOfSpeechRA (IMoDerivAffMsa) read back
+    as None off the base ref. That makes _create_msa_for_closure pass pos=None to
+    MSAOperations.CreateInflAff, which raises FP_NullParameterError and drops the
+    whole affix. Casting to the concrete subclass makes those slots visible.
+    Mirrors _cast_rule_concrete (feature 018 fix).
+
+    Safe in the fake-handle unit environment: SIL.LCModel absent (ImportError) or
+    a non-.NET fake object (cast fails) -> returns obj unchanged."""
+    try:
+        from SIL.LCModel import (
+            ICmObject, IMoInflAffMsa, IMoStemMsa, IMoDerivAffMsa,
+            IMoUnclassifiedAffixMsa,
+        )
+    except ImportError:
+        return obj
+    try:
+        class_name = ICmObject(obj).ClassName
+    except (TypeError, AttributeError):
+        return obj
+    iface = {
+        "MoInflAffMsa": IMoInflAffMsa,
+        "MoStemMsa": IMoStemMsa,
+        "MoDerivAffMsa": IMoDerivAffMsa,
+        "MoUnclassifiedAffixMsa": IMoUnclassifiedAffixMsa,
+    }.get(class_name)
+    if iface is None:
+        return obj
+    try:
+        return iface(obj)
+    except Exception:
+        return obj
+
+
 def _rules_enumerate_all(source):
     """Yield every leaf prohibition and compound rule from a source project.
 
@@ -2951,30 +3010,57 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
     if subclass is None:
         return None
 
+    # Cast to the concrete MSA subclass so PartOfSpeechRA / From/ToPartOfSpeechRA
+    # are visible (base-typed refs hide them -> pos=None -> FP_NullParameterError).
+    src_msa = _cast_msa_concrete(src_msa)
     src_g = _guid_str_from(src_msa)
     new_msa = None
+
+    import logging as _logging
+    _mlog = _logging.getLogger("gramtrans.Lib.categories")
+
+    def _pos_guid_of(attr):
+        ref = getattr(src_msa, attr, None)
+        return _guid_str_from(ref) if ref is not None else ""
+
+    def _resolve_or_none(attr, which):
+        """Resolve a required target POS; on failure log (empty vs unresolved)
+        and return None so the caller skips this MSA instead of passing a null
+        POS to MSAOperations (which raises FP_NullParameterError and aborts the
+        whole affix closure)."""
+        pg = _pos_guid_of(attr)
+        tp = _resolve_target_pos(target, pg) if pg else None
+        if tp is None:
+            _mlog.warning(
+                "MSA %s (%s): %s.%s guid=%r %s; skipping this MSA "
+                "(affix keeps its entry/senses/allomorphs).",
+                src_g[:8], subclass, subclass, which, pg,
+                "is empty on source" if not pg else "not resolvable in target",
+            )
+        return tp
+
     if subclass == "MoInflAffMsa":
-        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
-            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
-        tgt_pos = _resolve_target_pos(target, pos_guid)
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        if tgt_pos is None:
+            return None
         # slots=None: SlotsRC deferred to the 17.1 sub-pass (FR-333).
         new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
     elif subclass == "MoStemMsa":
-        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
-            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
-        tgt_pos = _resolve_target_pos(target, pos_guid)
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        if tgt_pos is None:
+            return None
         new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
-        from_pos = _resolve_target_pos(
-            target, _guid_str_from(getattr(src_msa, "FromPartOfSpeechRA", None)))
-        to_pos = _resolve_target_pos(
-            target, _guid_str_from(getattr(src_msa, "ToPartOfSpeechRA", None)))
+        from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
+        to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
+        if from_pos is None or to_pos is None:
+            return None
         new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
     elif subclass == "MoUnclassifiedAffixMsa":
-        pos_guid = _guid_str_from(getattr(src_msa, "PartOfSpeechRA", None)) \
-            if getattr(src_msa, "PartOfSpeechRA", None) is not None else ""
-        tgt_pos = _resolve_target_pos(target, pos_guid)
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        if tgt_pos is None:
+            return None
         new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
 
     if new_msa is None:
@@ -3946,7 +4032,12 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
     try:
         props = source.Phonemes.GetSyncableProperties(src_phon)
         target.Phonemes.ApplySyncableProperties(new_phon, props)
-    except (AttributeError, TypeError):
+    except Exception:
+        # Broadened from (AttributeError, TypeError): flexicon's
+        # GetSyncableProperties raises ITsString.get_String for phonemes until
+        # the fix ships (Ruling Y). The phoneme is already created with its GUID
+        # preserved (above), which is all downstream NC/allomorph wiring needs;
+        # degrade to a GUID-only transfer rather than aborting the create.
         pass
     try:
         apply_carrier_b(new_phon, cache.DefaultAnalWs, tag, strict=False)
@@ -4113,7 +4204,11 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
     try:
         props = source.Environments.GetSyncableProperties(src_env)
         target.Environments.ApplySyncableProperties(new_env, props)
-    except (AttributeError, TypeError):
+    except Exception:
+        # Broadened from (AttributeError, TypeError): GetSyncableProperties
+        # raises ITsString.get_String for environments until the flexicon fix
+        # ships (Ruling Y). The environment is already created GUID-preserved;
+        # degrade to a GUID-only transfer rather than aborting the create.
         pass
     try:
         apply_carrier_b(new_env, cache.DefaultAnalWs, tag, strict=False)

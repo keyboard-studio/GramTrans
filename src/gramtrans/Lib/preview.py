@@ -81,14 +81,25 @@ def build_run_plan(
     # is True and pos_picks is empty). For each POS, walk its closure:
     # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
     # → Allomorphs → PhEnvironments.
+    # SUPERSEDE DECISION (2026-07-06): the Phase-0 verb-vertical closure is
+    # retired in favor of the Phase-3 leaf-dispatch categories, which now own
+    # POS (GRAM_CATEGORIES), templates (AFFIX_TEMPLATES), slots (SLOTS),
+    # affix entries+senses+MSAs+allomorphs (AFFIXES) and environments
+    # (PH_ENVIRONMENT). Running both paths double-transferred those objects and
+    # collided on identical GUIDs (integration harness, run 2026-07-06). This
+    # flag gates the legacy path off; leaf-dispatch below is the single path.
+    # (Supersedes spec 005 FR-311's coexistence mandate — tracked as a spec
+    # amendment.) Flip to True only to A/B against the legacy behavior.
+    _VERB_VERTICAL_ENABLED = False
     _pos_count = 0
-    for src_pos in _select_source_poses(source, selection):
-        _pos_count += 1
-        _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
+    if _VERB_VERTICAL_ENABLED:
+        for src_pos in _select_source_poses(source, selection):
+            _pos_count += 1
+            _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
+            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
     _log.debug(
-        "build_run_plan: verb-vertical closure over %d source POS(es); "
-        "actions so far=%d", _pos_count, len(actions),
+        "build_run_plan: verb-vertical closure enabled=%s over %d source POS(es); "
+        "actions so far=%d", _VERB_VERTICAL_ENABLED, _pos_count, len(actions),
     )
 
     # Phase 3c binding accumulators — written by AFFIXES/STEMS plan_action;

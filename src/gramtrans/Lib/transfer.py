@@ -116,9 +116,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Senses → MSAs → Allomorphs → PhEnvironments. Mid-run exceptions
     # bubble up to the FlexTools runner's UOW, which rolls back the entire
     # transaction (R10).
-    pos_guids = _pos_guids_from_plan(plan)
+    # SUPERSEDE DECISION (2026-07-06): the execute-side verb-vertical is retired
+    # alongside its planning-side counterpart (preview.build_run_plan). Both it
+    # and the leaf-dispatch loop below created POS/templates/slots/affix-closures,
+    # double-transferring the same objects and colliding on identical GUIDs
+    # (integration harness 2026-07-06: 88 affixes x2 = 176 dup-GUID errors).
+    # Leaf-dispatch (AFFIXES/SLOTS/AFFIX_TEMPLATES/GRAM_CATEGORIES/PH_ENVIRONMENT)
+    # is now the single execution path. Keep this flag in lockstep with
+    # preview._VERB_VERTICAL_ENABLED; flip both to True only to A/B the legacy path.
+    _VERB_VERTICAL_ENABLED = False
+    pos_guids = _pos_guids_from_plan(plan) if _VERB_VERTICAL_ENABLED else []
     if not pos_guids:
-        report_sink.Info("[Move] No POSes in plan; nothing to execute.")
+        report_sink.Info("[Move] Verb-vertical superseded; leaf-dispatch is the sole path.")
     for pos_guid in pos_guids:
         _execute_verb_vertical(plan, source, target, report_sink, tag, pulled_in_guids, pos_guid)
         _execute_layer3(plan, source, target, report_sink, tag, pos_guid)
@@ -246,14 +255,15 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     for action in plan.actions:
         if action.category not in _LEAF_DISPATCH_CATEGORIES:
             continue
-        # C6: version gate — Phoneme/Environment field-diff stays closed until
-        # pyflexicon ships the ITsString.get_String fix (Ruling Y, T014).
-        if action.category in _FIELD_DIFF_GATED and not _field_diff_ok:
-            report_sink.Info(
-                f"  [{action.category.value}] field-diff gated (flexicon version"
-                f" < fix release); selector-only  guid={action.source_guid[:8]}"
-            )
-            continue
+        # C6 NOTE: the Phoneme/Environment field-diff gate (_field_diff_ok /
+        # _FIELD_DIFF_GATED) applies ONLY to UPDATE field-diff semantics
+        # (_execute_update_semantic on the overwrite path). It must NOT gate a
+        # plain ADD here: a create has no field-diff, and skipping the create
+        # left phonemes/environments untransferred -> downstream NC/allomorph
+        # references to them failed loud ("no counterpart on target"). Creates
+        # proceed unconditionally; only the create+guid is needed for wiring,
+        # and any ITsString.get_String failure during property-copy is caught
+        # inside the category execute_action after the object is created.
         try:
             bundle = _for_category(action.category)
         except KeyError:
