@@ -321,3 +321,38 @@ def test_unknown_subclass_raises_loudly():
     with patch.dict("sys.modules", {"SIL": None, "SIL.LCModel": None}):
         with pytest.raises(RuntimeError, match="unrecognised ClassName"):
             categories._rule_subclass_info(rule)
+
+
+# =============================================================================
+# Subclass-cast regression (base-interface hides subclass slots)
+# =============================================================================
+# Live-confirmed 2026-07-05 (Esperanto): a base-typed IMoCompoundRule read via
+# pythonnet hides LeftMsaOA/RightMsaOA/etc. (0/5 visible); casting to
+# IMoEndoCompound exposes them (5/5). _cast_rule_concrete performs that cast at
+# the enumerate choke point. In the fake-handle env SIL.LCModel is absent, so the
+# helper must pass objects through UNCHANGED (fakes expose attributes directly).
+
+def test_cast_rule_concrete_passthrough_without_lcm():
+    """_cast_rule_concrete returns fakes unchanged when SIL.LCModel is absent."""
+    rule = FakeRule("aaaa-bbbb", "MoEndoCompound")
+    with patch.dict("sys.modules", {"SIL": None, "SIL.LCModel": None}):
+        assert categories._cast_rule_concrete(rule) is rule
+
+
+def test_enumerate_all_applies_cast(monkeypatch):
+    """_rules_enumerate_all routes every yielded object through _cast_rule_concrete
+    (guards the base-interface-hiding regression)."""
+    seen = []
+
+    def _spy(obj):
+        seen.append(obj)
+        return obj
+
+    monkeypatch.setattr(categories, "_cast_rule_concrete", _spy)
+    endo = FakeRule("11", "MoEndoCompound")
+    allo = FakeRule("22", "MoAlloAdhocProhib")
+    src = FakeSource(adhoc=[allo], compound=[endo])
+    out = list(categories._rules_enumerate_all(src))
+    # every enumerated object passed through the cast helper
+    assert endo in seen and allo in seen
+    assert endo in out and allo in out

@@ -1925,6 +1925,51 @@ def _rule_subclass_info(obj):
 
 # --- T004 -------------------------------------------------------------------
 
+def _cast_rule_concrete(obj):
+    """Cast a rule/prohibition object to its concrete LCM subclass.
+
+    LCM owning collections (AdhocCoProhibitionsOS, CompoundRulesOS, and
+    IMoAdhocProhibGr.MembersOC) yield elements typed as the BASE interface
+    (IMoCompoundRule / IMoAdhocProhib).  pythonnet exposes only the members of
+    that static base type, so subclass-only slots — LeftMsaOA / RightMsaOA /
+    OverridingMsaOA / ToMsaOA (compound) and FirstAllomorphRA / AllomorphsRS /
+    FirstMorphemeRA / MorphemesRS (adhoc) — read back as None off a base-typed
+    reference, silently dropping member/POS wiring and dependencies.
+
+    Casting to the concrete subclass makes those slots visible.  Live-confirmed
+    2026-07-05 (Ejagham Full GT-Test): IMoEndoCompound(base).LeftMsaOA resolves;
+    the base reference returns None.
+
+    Safe in the fake-handle unit environment: SIL.LCModel is absent (ImportError)
+    or the object is not a .NET object (ICmObject cast fails) -> returns obj
+    unchanged, so fake objects (whose attributes are always visible) pass through.
+    """
+    try:
+        from SIL.LCModel import (
+            ICmObject, IMoEndoCompound, IMoExoCompound,
+            IMoAlloAdhocProhib, IMoMorphAdhocProhib, IMoAdhocProhibGr,
+        )
+    except ImportError:
+        return obj
+    try:
+        class_name = ICmObject(obj).ClassName
+    except (TypeError, AttributeError):
+        return obj
+    iface = {
+        "MoEndoCompound": IMoEndoCompound,
+        "MoExoCompound": IMoExoCompound,
+        "MoAlloAdhocProhib": IMoAlloAdhocProhib,
+        "MoMorphAdhocProhib": IMoMorphAdhocProhib,
+        "MoAdhocProhibGr": IMoAdhocProhibGr,
+    }.get(class_name)
+    if iface is None:
+        return obj
+    try:
+        return iface(obj)
+    except Exception:
+        return obj
+
+
 def _rules_enumerate_all(source):
     """Yield every leaf prohibition and compound rule from a source project.
 
@@ -1942,9 +1987,11 @@ def _rules_enumerate_all(source):
 
     getattr/cast guards prevent AttributeError/TypeError from bubbling.
     """
-    # Helper: unwrap flexicon wrapper if present
+    # Helper: unwrap flexicon wrapper (.concrete) if present, then cast the raw
+    # LCM object to its concrete subclass so subclass-only slots are visible
+    # (base-interface-typed OS/OC elements hide them — see _cast_rule_concrete).
     def _unwrap(obj):
-        return getattr(obj, "concrete", obj)
+        return _cast_rule_concrete(getattr(obj, "concrete", obj))
 
     # Recurse into an adhoc collection (list-like or OS)
     def _recurse_adhoc(coll):

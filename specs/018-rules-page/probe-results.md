@@ -160,17 +160,35 @@ hand-wires `StratumRA` after `ApplySyncableProperties`.
 > `MorphRuleOperations` (matches the 8-engine pattern; CLAUDE.md lists
 > `Grammar/MorphRuleOperations.py` as one of the 8 override-declaring classes).
 
-## [DEFERRED FOLLOW-UP GATE] Live write round-trip (T013/T028)
+## [RESOLVED 2026-07-05] Live write validation + base-interface-hiding bug fix
 
-Crew-approved 2026-07-05 with this one item explicitly deferred (does NOT gate merge):
-the live Move-mode write round-trip (source **Esperanto** → fresh throwaway target) is
-not yet run. Blockers: (1) needs a write-enabled FLExTools MCP session; (2) no surveyed
-project has live **exo-compound** or **ad hoc prohibition** data — Esperanto has 5
-MoEndoCompound only. The sole unproven point is whether an owned-atomic MSA's ownership
-(`Create(Guid)` + OA-slot assign) **persists through a Move commit** (read-side ownership
-is live-confirmed above; all engine logic is covered by fake-handle unit tests). Action:
-run in a write-enabled session; if feasible seed the target with exo + adhoc rules so all
-five subclasses get live coverage (SC-001/002/008).
+A write-enabled MCP session against **Ejagham Full GT-Test** (throwaway) ran the live
+validation the crew had deferred. Two outcomes:
+
+**1. OA-ownership persists through commit — CONFIRMED.** Created a MoEndoCompound via
+`IMoEndoCompoundFactory.Create(Guid)` + `IMoStemMsaFactory.Create(Guid)` assigned to
+`LeftMsaOA`, wired `PartOfSpeechRA`, committed, then RE-OPENED in a fresh session: the
+rule + owned MSA persisted GUID-preserved with `owner=MoEndoCompound` and POS intact.
+The `Create(Guid)` + OA-slot-assign idiom is proven end-to-end. (Test object deleted
+afterward; GT-Test left clean.)
+
+**2. BASE-INTERFACE-HIDING BUG found and fixed.** LCM owning collections
+(`CompoundRulesOS`, `AdhocCoProhibitionsOS`, `MembersOC`) yield elements typed as the
+BASE interface (`IMoCompoundRule` / `IMoAdhocProhib`). pythonnet exposes only the base
+type's members, so subclass-only slots — `LeftMsaOA`/`RightMsaOA`/`OverridingMsaOA`/
+`ToMsaOA` (compound) and `FirstAllomorphRA`/`AllomorphsRS`/`FirstMorphemeRA`/`MorphemesRS`
+(adhoc) — read back as **None** off the base reference, silently dropping member/POS
+wiring and dependencies. Live proof on Esperanto's 5 compound rules: base-typed
+`LeftMsaOA` visible **0/5**; after casting to `IMoEndoCompound`, **5/5** (POS resolves).
+Fake-handle unit tests could NOT catch this (fakes are plain Python — attributes always
+visible). **Fix**: `_cast_rule_concrete(obj)` casts each enumerated object to its concrete
+subclass at the `_rules_enumerate_all` choke point (safe no-op in the fake env). Regression
+tests added (`test_cast_rule_concrete_passthrough_without_lcm`, `test_enumerate_all_applies_cast`).
+
+Remaining live gap (minor, non-blocking): a full engine round-trip exercising exo-compound
+and adhoc subclasses has no live source data (Esperanto is endo-only); those stay
+fake-handle + the now-proven cast mechanism. Seed a target with exo/adhoc rules for full
+SC-001/002/008 live coverage if desired.
 
 ## Engine pattern to reuse (from categories.py)
 

@@ -37,12 +37,21 @@ FLExTools MCP) + plan + research + data-model + contract + quickstart + tasks (3
 - The flexicon `AdhocProhibition` wrapper docstrings name **non-existent** properties — the concrete
   LCM interfaces (probed live) are authoritative and used directly.
 
-### ⚠ DEFERRED FOLLOW-UP GATE (T013/T028)
-The **live write round-trip** (Esperanto → throwaway target) is NOT yet run: it needs a
-write-enabled FLExTools MCP session, and no project has live exo/adhoc data. The one unproven
-point is whether owned-atomic MSA ownership **persists through a Move commit** (read-side ownership
-is live-confirmed; all logic is covered by fake-handle unit tests). Schedule a write-enabled
-session; if feasible seed a target with exo + adhoc rules to exercise all five subclasses live.
+### ✅ Live write validation done + base-interface-hiding bug fixed (2026-07-05)
+A write-enabled MCP session on **Ejagham Full GT-Test** (throwaway) validated the deferred gate:
+- **OA-ownership persists through commit — CONFIRMED.** Created MoEndoCompound + owned MoStemMsa
+  via `Create(Guid)` + OA-slot assign, committed, re-opened fresh: rule + MSA persisted
+  GUID-preserved, `owner=MoEndoCompound`, POS wired. Test object deleted; GT-Test left clean.
+- **BUG FOUND + FIXED.** LCM owning collections yield BASE-interface-typed elements
+  (`IMoCompoundRule`/`IMoAdhocProhib`); pythonnet hides subclass slots, so
+  `LeftMsaOA`/`FirstAllomorphRA`/etc. read as None off the base ref — silently dropping
+  member/POS wiring. Live proof: Esperanto base-typed `LeftMsaOA` visible 0/5 → 5/5 after cast.
+  Fixed with `_cast_rule_concrete` at the `_rules_enumerate_all` choke point (+2 regression tests).
+  Fake-handle tests couldn't catch this (fakes expose attributes directly) — the live test did.
+
+Remaining minor gap: a full engine round-trip for **exo-compound** + **adhoc** subclasses has no
+live source data (Esperanto is endo-only); covered by fake-handle tests + the proven cast. Seed a
+target with exo/adhoc rules for complete SC-001/002/008 live coverage if desired.
 
 ## ▶▶▶ Feature 017 — GOLD_RESERVED Edit-Copy (MERGE-per-WS fill-gaps) CREW-APPROVED (2026-07-05)
 
