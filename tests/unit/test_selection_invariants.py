@@ -23,6 +23,40 @@ def test_template_picks_require_templates_category_on() -> None:
         )
 
 
+# 019-stems-item-picker: stem_picks mirrors the affix invariant (T002/T003).
+
+def test_stem_picks_require_stems_category_on() -> None:
+    with pytest.raises(ValueError, match="stem_picks non-empty requires"):
+        Selection(
+            categories={GrammarCategory.STEMS: False},
+            stem_picks=frozenset({"some-guid"}),
+        )
+
+
+def test_stem_picks_require_stems_category_present() -> None:
+    # Category absent entirely (not just False) must also raise.
+    with pytest.raises(ValueError, match="stem_picks non-empty requires"):
+        Selection(stem_picks=frozenset({"some-guid"}))
+
+
+def test_empty_stem_picks_with_category_on_means_all_stems() -> None:
+    # Sentinel: STEMS=True + stem_picks=frozenset() → "all stems".
+    s = Selection(
+        categories={GrammarCategory.STEMS: True},
+        stem_picks=frozenset(),
+    )
+    assert s.stem_picks == frozenset()
+    assert s.categories[GrammarCategory.STEMS] is True
+
+
+def test_stem_picks_valid_when_category_on() -> None:
+    s = Selection(
+        categories={GrammarCategory.STEMS: True},
+        stem_picks=frozenset({"g1", "g2"}),
+    )
+    assert s.stem_picks == frozenset({"g1", "g2"})
+
+
 def test_empty_picks_with_category_on_means_all_in_category() -> None:
     # Sentinel: AFFIXES=True + affix_picks=frozenset() → "all affixes".
     s = Selection(

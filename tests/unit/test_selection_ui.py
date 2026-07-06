@@ -477,3 +477,175 @@ class TestBackCompatRegressionSelectionConstruction:
         """affix_picks still raises if AFFIXES not in categories."""
         with pytest.raises(ValueError):
             Selection(affix_picks=frozenset({"guid-1"}))
+
+
+# ===========================================================================
+# 019 Stems item picker — UI wiring (T007), no-conflict-UI + no-write (T024)
+# ===========================================================================
+#
+# These exercise the offscreen Qt Stems tab. If PyQt6 is unavailable the block
+# is skipped; the pure-logic tests above still run under plain pytest.
+
+import os as _os
+
+_os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+try:
+    from PyQt6 import QtCore, QtWidgets  # noqa: E402
+    from gramtrans.Lib.ui.selection_wizard import _PageItemPicker  # noqa: E402
+    _HAVE_QT = True
+except Exception:  # noqa: BLE001 -- PyQt6 or its native libs unavailable
+    _HAVE_QT = False
+
+from gramtrans.Lib.selection import build_pos_grouped_inventory  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    if not _HAVE_QT:
+        pytest.skip("PyQt6 not available")
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
+
+
+def _make_picker_page():
+    from _fakes_affix import make_infl_entry, make_pos, make_source
+    from _fakes_stem import make_stem_entry
+
+    pv = make_pos("pv", "v", "Verb")
+    pn = make_pos("pn", "n", "Noun")
+    a1 = make_infl_entry("a1", "-s", ["3sg"], pv)
+    s1 = make_stem_entry("s1", "dog", pn, glosses=["dog"])
+    s2 = make_stem_entry("s2", "cat", pn, glosses=["cat"])
+    src = make_source([a1, s1, s2], [pv, pn])
+    affix_inv = build_pos_grouped_inventory(src, want_affix=True)
+    stem_inv = build_pos_grouped_inventory(src, want_affix=False)
+    page = _PageItemPicker()
+    page._inventory = affix_inv
+    page.populate_pos_tree(affix_inv)
+    page._stem_inventory = stem_inv
+    page.populate_stem_tree(stem_inv)
+    return page
+
+
+def _set_checked(page, guid, checked):
+    state = (QtCore.Qt.CheckState.Checked if checked
+             else QtCore.Qt.CheckState.Unchecked)
+    for item in page._stem_guid_to_items.get(guid, []):
+        item.setCheckState(0, state)
+
+
+@pytest.mark.skipif(not _HAVE_QT, reason="PyQt6 not available")
+class TestStemsTabWiring:
+
+    def test_stems_tab_enabled_no_stub(self, qapp):
+        page = _PageItemPicker()
+        # Tab index 1 is the Stems tab; must be enabled and not the stub label.
+        assert page._tabs.isTabEnabled(1) is True
+        assert page._tabs.tabText(1) == "Stems"
+        assert "not yet available" not in page._tabs.tabText(1).lower()
+
+    def test_stems_tab_populated_from_stem_inventory(self, qapp):
+        page = _make_picker_page()
+        # Both stem GUIDs registered as leaf rows.
+        assert set(page._stem_guid_to_items) == {"s1", "s2"}
+        # Affix a1 is NOT in the stem tree.
+        assert "a1" not in page._stem_guid_to_items
+
+    def test_stem_rows_open_preselected(self, qapp):
+        page = _make_picker_page()
+        sel = page.collect_selection()
+        # Rows open checked -> both stems picked by default.
+        assert sel.stem_picks == frozenset({"s1", "s2"})
+        assert sel.categories.get(GrammarCategory.STEMS) is True
+
+    def test_unchecking_stem_row_removes_it(self, qapp):
+        page = _make_picker_page()
+        _set_checked(page, "s2", False)
+        sel = page.collect_selection()
+        assert sel.stem_picks == frozenset({"s1"})
+
+    def test_unchecking_all_stems_clears_category(self, qapp):
+        page = _make_picker_page()
+        _set_checked(page, "s1", False)
+        _set_checked(page, "s2", False)
+        sel = page.collect_selection()
+        assert sel.stem_picks == frozenset()
+        # Empty stem_picks -> STEMS not force-enabled by the stem path.
+        assert sel.categories.get(GrammarCategory.STEMS) is not True
+
+    def test_stem_and_affix_picks_are_disjoint(self, qapp):
+        page = _make_picker_page()
+        sel = page.collect_selection()
+        assert sel.stem_picks.isdisjoint(sel.affix_picks)
+        assert "s1" in sel.stem_picks and "a1" in sel.affix_picks
+
+    def test_stem_row_shows_target_status_column(self, qapp):
+        from _fakes_affix import make_pos, make_source
+        from _fakes_stem import make_stem_entry
+        pn = make_pos("pn", "n", "Noun")
+        s1 = make_stem_entry("s1", "dog", pn, glosses=["dog"])
+        src = make_source([s1], [pn])
+        # source==target -> IN TARGET column.
+        stem_inv = build_pos_grouped_inventory(src, target=src, want_affix=False)
+        page = _PageItemPicker()
+        page._stem_inventory = stem_inv
+        page.populate_stem_tree(stem_inv)
+        item = page._stem_guid_to_items["s1"][0]
+        assert item.text(4) == "IN TARGET"
+
+
+@pytest.mark.skipif(not _HAVE_QT, reason="PyQt6 not available")
+class TestStemsPaneNoConflictUINoWrite:
+    """T024 / FR-012 / FR-008."""
+
+    def test_no_conflict_mode_control_on_pane(self, qapp):
+        page = _make_picker_page()
+        # The item picker has NO ADD_NEW / MERGE / OVERWRITE conflict combos
+        # (those live on the separate scope+conflict page).
+        assert not hasattr(page, "_conflict_combos")
+        labels = []
+        for combo in page.findChildren(QtWidgets.QComboBox):
+            for i in range(combo.count()):
+                labels.append(combo.itemText(i).lower())
+        for forbidden in ("add new", "merge", "overwrite"):
+            assert not any(forbidden in lbl for lbl in labels)
+
+    def test_collect_selection_returns_no_write_actions(self, qapp):
+        page = _make_picker_page()
+        sel = page.collect_selection()
+        # Selection is selection-only: it carries no plan/write actions.
+        assert isinstance(sel, Selection)
+        assert not hasattr(sel, "actions")
+        assert not hasattr(sel, "overwrites")
+
+
+# ---------------------------------------------------------------------------
+# T018a — stem_picks -> compute_plan owned-child closure.
+# ---------------------------------------------------------------------------
+# ARCHITECTURAL GAP (flagged for human decision): the active plan builder
+# (preview.build_run_plan) walks POS closure and plans ALL affix entries for a
+# POS; it does NOT consult selection.affix_picks OR stem_picks. The pick-aware
+# path (categories_affixes.enumerate_source, which is documented to honour
+# affix_picks) is a NotImplementedError stub (T049). Consequently there is no
+# existing path for stem_picks to flow through compute_plan, and tasks.md T018
+# forbids introducing a new plan path. This is marked xfail rather than left
+# failing so the suite stays green while recording the expected behaviour.
+@pytest.mark.xfail(
+    reason="build_run_plan does not consume item picks; pick-aware "
+           "categories_affixes.enumerate_source is a NotImplementedError stub "
+           "(T049). No new plan path permitted per tasks.md T018.",
+    strict=False,
+)
+def test_stem_picks_flow_into_compute_plan_owned_children():
+    sel = Selection(
+        categories={GrammarCategory.STEMS: True},
+        stem_picks=frozenset({"stem-guid-1"}),
+    )
+    # The shared engine would need to consume sel.stem_picks and emit owned-child
+    # plan entries for stem-guid-1. It currently does not.
+    from gramtrans.Lib import categories_affixes
+    pieces = list(categories_affixes.enumerate_source(context=None, selection=sel))
+    assert any("stem-guid-1" in repr(p) for p in pieces)

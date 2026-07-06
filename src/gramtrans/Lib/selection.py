@@ -66,6 +66,41 @@ def _cast(obj, interface_name: str):
         return obj
 
 
+def _partition_entries(entries) -> Tuple[List, List]:
+    """Partition LexEntry objects into ``(affix_entries, stem_entries)`` by
+    morphtype (019-stems-item-picker, FR-002).
+
+    An entry is an **affix** iff ``LexemeFormOA.MorphTypeRA.IsAffixType`` is
+    explicitly true.  Everything else is a **stem**: an ``IsAffixType`` of
+    false, a null ``LexemeFormOA`` or ``MorphTypeRA``, and an uncastable
+    morphtype (``AttributeError``/``TypeError`` while reading ``IsAffixType``)
+    all land in ``stem_entries``.
+
+    NULL-GUARD INVERSION (contract-critical): the affix filter sites use
+    skip-on-exception (``except (...): continue``); the stem side inverts this
+    to **include-on-exception** so a null/uncastable morphtype is never dropped
+    from both tabs.  Do NOT copy the affix skip pattern here.
+
+    Iteration order is preserved within each partition (both tabs list entries
+    in ``LexDbOA.Entries`` order), so callers stay byte-stable.
+    """
+    affix_entries: List = []
+    stem_entries: List = []
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            is_affix = morph_type.IsAffixType
+        except (AttributeError, TypeError):
+            is_affix = False  # include-on-exception -> STEM (FR-002)
+        if is_affix:
+            affix_entries.append(entry)
+        else:
+            stem_entries.append(entry)
+    return affix_entries, stem_entries
+
+
 # ============================================================================
 # POS-Grouped Affix Inventory (specs/008-affix-pos-picker, T008-T010)
 # ============================================================================
@@ -339,14 +374,18 @@ def _hvo(obj) -> int:
 
 def _build_target_sets(
     target,
+    want_affix: bool = True,
 ) -> Tuple[Set[str], Set[str], Dict[str, Tuple[SimilarCandidate, ...]],
            Tuple[SimilarCandidate, ...]]:
     """Build target lookup structures from the target project (FR-018 + spec 011).
 
-    Enumerates the TARGET's affix entries with the same IsAffixType filter +
-    casts used for source entries. The (guids, forms) sets are unchanged so the
-    existing SIMILAR/IN-TARGET status logic (`_entry_status`) keeps working
-    identically; the two new outputs (spec 011 FR-002) add candidate capture.
+    Enumerates the TARGET's entries for the requested partition (``want_affix``
+    True -> affix entries, byte-stable with prior behaviour; False -> stem
+    entries via the shared ``_partition_entries`` include-on-exception rule).
+    Both tabs obtain target-status from this one function -- no duplicate
+    enumeration. The (guids, forms) sets are unchanged in shape so the existing
+    SIMILAR/IN-TARGET status logic (`_entry_status`) keeps working identically;
+    the two new outputs (spec 011 FR-002) add candidate capture.
 
     Returns
     -------
@@ -367,15 +406,10 @@ def _build_target_sets(
     except (AttributeError, TypeError):
         return target_guids, target_forms, {}, ()
 
-    for entry in entries:
-        entry_c = _cast(entry, "ILexEntry")
-        try:
-            form_obj = entry_c.LexemeFormOA
-            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
-            if not morph_type.IsAffixType:
-                continue
-        except (AttributeError, TypeError):
-            continue
+    affix_entries, stem_entries = _partition_entries(entries)
+    selected_entries = affix_entries if want_affix else stem_entries
+
+    for entry in selected_entries:
         try:
             g: Optional[str] = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -598,7 +632,8 @@ def _build_deps_target_sets(
     return (target_feat_guids, target_class_guids, target_stem_guids)
 
 
-def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory:
+def build_pos_grouped_inventory(source, target=None, want_affix: bool = True
+                                ) -> PosGroupedAffixInventory:
     """Build a PosGroupedAffixInventory from the source project.
 
     Parameters
@@ -612,6 +647,12 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
         When supplied, each AffixRow.status is populated as "new" |
         "in_target" | "similar" (FR-018).  When None, status is None for
         every row (back-compat; all existing tests pass unchanged).
+    want_affix:
+        Partition selector (019-stems-item-picker). ``True`` (default) yields
+        the affix inventory grouped by attaches-to/produces POS -- byte-stable
+        with prior behaviour. ``False`` yields the STEM inventory grouped by
+        ``MoStemMsa.PartOfSpeechRA``; only the ``MoStemMsa`` MSA arm is read and
+        non-``MoStemMsa`` arms on a stem entry are skipped, not recast (FR-013).
 
     Returns
     -------
@@ -621,7 +662,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
     # --- FR-018 + spec 011: build target lookup sets + candidate index once ---
     if target is not None:
         (target_guids, target_forms, form_to_candidates,
-         target_affix_candidates) = _build_target_sets(target)
+         target_affix_candidates) = _build_target_sets(target, want_affix=want_affix)
     else:
         target_guids = set()
         target_forms = set()
@@ -638,27 +679,18 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
 
     root_accs, acc_by_guid = _build_pos_tree(pos_possibilities)
 
-    # --- Collect and filter entries ---
+    # --- Collect entries and select the requested partition ---
     try:
         entries = list(source.Cache.LangProject.LexDbOA.Entries)
     except (AttributeError, TypeError):
         entries = []
+    affix_entries, stem_entries = _partition_entries(entries)
+    selected_entries = affix_entries if want_affix else stem_entries
 
     no_pos_rows: List[AffixRow] = []
     no_analysis_rows: List[AffixRow] = []
 
-    for entry in entries:
-        # Filter to affix entries; cast to ILexEntry before reading LexemeFormOA
-        entry_c = _cast(entry, "ILexEntry")
-        try:
-            form_obj = entry_c.LexemeFormOA
-            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
-            is_affix = morph_type.IsAffixType
-            if not is_affix:
-                continue
-        except (AttributeError, TypeError):
-            continue
-
+    for entry in selected_entries:
         try:
             guid = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -704,7 +736,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
             except (AttributeError, TypeError):
                 class_name = None
 
-            if class_name == "MoInflAffMsa":
+            if want_affix and class_name == "MoInflAffMsa":
                 try:
                     msa_c = _cast(msa, "IMoInflAffMsa")
                     pos = msa_c.PartOfSpeechRA
@@ -737,7 +769,39 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                 except (AttributeError, TypeError):
                     pass
 
-            elif class_name == "MoUnclassifiedAffixMsa":
+            elif (not want_affix) and class_name == "MoStemMsa":
+                # 019: stem arm. Group the stem entry by MoStemMsa.PartOfSpeechRA
+                # (single POS). Never cast to IMoInflAffMsa / read SlotsRC (FR-013).
+                try:
+                    msa_c = _cast(msa, "IMoStemMsa")
+                    pos = msa_c.PartOfSpeechRA
+                    if pos is None:
+                        continue
+                    pg = _pos_guid(pos)
+                    if pg is None:
+                        continue
+                    pl = _pos_label(pos)
+                    key = (pg, "attaches")
+                    if key in placed:
+                        if pg in acc_by_guid:
+                            _merge_row_glosses(acc_by_guid[pg].inflectional, guid, glosses)
+                        continue
+                    placed.add(key)
+                    row = AffixRow(guid, form, glosses, "infl", pl, None, "attaches",
+                                  status=entry_st, suggested_target_guid=suggested)
+                    if pg in acc_by_guid:
+                        acc_by_guid[pg].inflectional.append(row)
+                        any_placed = True
+                    else:
+                        new_acc = _PosAccumulator(pg, pl)
+                        acc_by_guid[pg] = new_acc
+                        root_accs.append(new_acc)
+                        new_acc.inflectional.append(row)
+                        any_placed = True
+                except (AttributeError, TypeError):
+                    pass
+
+            elif want_affix and class_name == "MoUnclassifiedAffixMsa":
                 try:
                     msa_c = _cast(msa, "IMoUnclassifiedAffixMsa")
                     pos = msa_c.PartOfSpeechRA
@@ -768,7 +832,7 @@ def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory
                 except (AttributeError, TypeError):
                     pass
 
-            elif class_name == "MoDerivAffMsa":
+            elif want_affix and class_name == "MoDerivAffMsa":
                 try:
                     msa_c = _cast(msa, "IMoDerivAffMsa")
                     from_pos = msa_c.FromPartOfSpeechRA
@@ -1504,17 +1568,24 @@ def build_deps_inventory(
     source,
     affix_picks: FrozenSet[str],
     target=None,
+    stem_picks: Optional[FrozenSet[str]] = None,
 ) -> DepsInventory:
-    """Derive grammatical dependencies from the source and the affix picks.
+    """Derive grammatical dependencies from the source and the picked items.
 
-    For each POS a picked affix attaches to, reads:
+    For each POS a picked affix attaches to (via the affix MSA arms) OR a picked
+    stem carries (via ``MoStemMsa.PartOfSpeechRA``), reads:
       - InflectableFeatsRC  (cast to IPartOfSpeech)
       - InflectionClassesOC (cast to IPartOfSpeech)
       - StemNamesOC         (cast to IPartOfSpeech)
 
+    Deduplicates dependency GUIDs across the affix and stem pick sets: a POS
+    needed by both a picked affix and a picked stem is walked once (FR: shared
+    dependency pulled once).
+
     ExceptionFeaturesOC is NOT read: that property does not exist on the live
-    LCM runtime (hasattr False). Exception-features are per-entry (IMoStemMsa)
-    and are tracked under a separate shared-bug ticket.
+    LCM runtime (hasattr False). Exception-features are per-entry
+    (``MoStemMsa.MsFeaturesOA``, a single ``IFsFeatStruc``) and, for stems, are
+    walked here directly from the stem MSA.
 
     CAST DISCIPLINE: every LCM collection access goes through _cast against the
     declared base interface.  Fakes pass through unchanged; live LCM objects
@@ -1525,14 +1596,24 @@ def build_deps_inventory(
     source:
         Duck-typed source handle.
     affix_picks:
-        frozenset of entry_guid strings.
+        frozenset of affix entry_guid strings.
     target:
         Optional target handle for target-status computation.
+    stem_picks:
+        Optional frozenset of stem entry_guid strings (019). ``None``/empty
+        leaves affix behaviour byte-stable. For each picked stem the walk reads
+        ``MoStemMsa.PartOfSpeechRA`` (POS dep collections), the single
+        ``MoStemMsa.MsFeaturesOA`` (exception/inflection feature), and the
+        None-guarded ``MoStemMsa.InflectionClassRA`` (additive to
+        ``POS.InflectionClassesOC``). A stem MSA is NEVER cast to IMoInflAffMsa
+        and ``SlotsRC`` is never read (FR-013).
 
     Returns
     -------
     DepsInventory
     """
+    stem_picks = stem_picks or frozenset()
+
     if target is not None:
         _tgt_feat_guids, _tgt_class_guids, _tgt_stem_guids = \
             _build_deps_target_sets(target)
@@ -1541,7 +1622,7 @@ def build_deps_inventory(
         _tgt_class_guids = set()
         _tgt_stem_guids = set()
 
-    # Find which POSes the picked affixes attach to.
+    # Find which POSes the picked affixes attach to / picked stems carry.
     picked_pos_guids: Set[str] = set()
     picked_pos_objects: Dict[str, object] = {}  # guid -> pos obj
 
@@ -1550,15 +1631,15 @@ def build_deps_inventory(
     except (AttributeError, TypeError):
         entries = []
 
-    for entry in entries:
-        entry_c = _cast(entry, "ILexEntry")
-        try:
-            form_obj = entry_c.LexemeFormOA
-            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
-            if not morph_type.IsAffixType:
-                continue
-        except (AttributeError, TypeError):
-            continue
+    affix_entries, stem_entries = _partition_entries(entries)
+
+    # Extra per-stem deps (from the stem MSA directly, not the POS): exception/
+    # inflection features (MsFeaturesOA) and inflection classes (InflectionClassRA).
+    stem_extra_feats: Dict[str, object] = {}   # guid -> feat obj
+    stem_extra_classes: Dict[str, object] = {}  # guid -> class obj
+
+    # --- Affix picks: walk affix MSA arms for their attaches-to POS ---
+    for entry in affix_entries:
         try:
             guid = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -1586,6 +1667,64 @@ def build_deps_inventory(
                 if pg and pg not in picked_pos_guids:
                     picked_pos_guids.add(pg)
                     picked_pos_objects[pg] = pos
+            except (AttributeError, TypeError):
+                pass
+
+    # --- Stem picks: walk MoStemMsa for POS + per-stem features / infl class ---
+    for entry in stem_entries:
+        try:
+            guid = str(entry.Guid).lower()
+        except (AttributeError, TypeError):
+            continue
+        if guid not in stem_picks:
+            continue
+        try:
+            msas = list(entry.MorphoSyntaxAnalysesOC)
+        except (AttributeError, TypeError):
+            msas = []
+        for msa in msas:
+            try:
+                class_name = msa.ClassName
+            except (AttributeError, TypeError):
+                continue
+            # FR-013: only MoStemMsa on a stem entry; others skipped, not recast.
+            if class_name != "MoStemMsa":
+                continue
+            msa_c = _cast(msa, "IMoStemMsa")
+            # PartOfSpeechRA -> POS dep collections (shared dedup via picked_pos_*).
+            try:
+                pos = msa_c.PartOfSpeechRA
+                if pos is not None:
+                    pg = _pos_guid(pos)
+                    if pg and pg not in picked_pos_guids:
+                        picked_pos_guids.add(pg)
+                        picked_pos_objects[pg] = pos
+            except (AttributeError, TypeError):
+                pass
+            # MsFeaturesOA -> SINGLE IFsFeatStruc (None-guarded).
+            try:
+                feat = msa_c.MsFeaturesOA
+                if feat is not None:
+                    feat_c = _cast(feat, "IFsFeatStruc")
+                    try:
+                        fg = str(feat_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        fg = None
+                    if fg:
+                        stem_extra_feats.setdefault(fg, feat_c)
+            except (AttributeError, TypeError):
+                pass
+            # InflectionClassRA -> IMoInflClass (READ-IF-PRESENT, None-guarded).
+            try:
+                icls = msa_c.InflectionClassRA
+                if icls is not None:
+                    icls_c = _cast(icls, "IMoInflClass")
+                    try:
+                        ig = str(icls_c.Guid).lower()
+                    except (AttributeError, TypeError):
+                        ig = None
+                    if ig:
+                        stem_extra_classes.setdefault(ig, icls_c)
             except (AttributeError, TypeError):
                 pass
 
@@ -1692,6 +1831,31 @@ def build_deps_inventory(
         except (AttributeError, TypeError):
             pass
 
+    # --- Per-stem features / infl classes read directly off the stem MSA ---
+    # Additive to the POS-derived collections; deduplicated by GUID against
+    # the same seen_* sets so a shared dep is emitted once.
+    for fg, feat_c in stem_extra_feats.items():
+        if fg in seen_feats:
+            continue
+        seen_feats.add(fg)
+        try:
+            fl = feat_c.Name.BestAnalysisAlternative.Text
+        except (AttributeError, TypeError):
+            fl = fg
+        infl_features.append(DepRow(guid=fg, label=fl,
+                                    status=_dep_status_feat(fg)))
+
+    for ig, icls_c in stem_extra_classes.items():
+        if ig in seen_classes:
+            continue
+        seen_classes.add(ig)
+        try:
+            il = icls_c.Name.BestAnalysisAlternative.Text
+        except (AttributeError, TypeError):
+            il = ig
+        infl_classes.append(DepRow(guid=ig, label=il,
+                                   status=_dep_status_class(ig)))
+
     return DepsInventory(
         infl_features=infl_features,
         infl_classes=infl_classes,
@@ -1716,6 +1880,7 @@ def build_excluded_lossy_warnings(
     target_dep_guids: Optional[Set[str]] = None,
     dep_labels: Optional[Dict[str, str]] = None,
     dep_category: Optional["GrammarCategory"] = None,
+    deps_by_stem: Optional[Dict[str, Dict[str, List[str]]]] = None,
 ) -> List:
     """Build EXCLUDED-LOSSY warning list for deselected slots, POS, and deps.
 
@@ -1755,6 +1920,13 @@ def build_excluded_lossy_warnings(
         Dict mapping dep_guid -> human-readable label.
     dep_category:
         GrammarCategory constant for the dep kind (e.g. INFLECTION_FEATURES).
+    deps_by_stem:
+        019. Same shape as ``deps_by_affix`` but keyed by picked-stem GUIDs.
+        Produces STEMS-category, stem-centric warnings that join the SAME
+        aggregated list (FR-009/FR-010): one consolidated Move confirmation
+        across affix and stem strandings, never one prompt per stranded dep.
+        Consumes the shared ``deselected_dep_guids`` / ``target_dep_guids`` /
+        ``dep_labels`` / ``dep_category`` parameters.
 
     Returns
     -------
@@ -1826,6 +1998,33 @@ def build_excluded_lossy_warnings(
                         dep_label=lbl,
                         message=(
                             f"Affix '{affix_guid}' needs dep '{lbl}' "
+                            f"(deselected and absent from target)."
+                        ),
+                    ))
+
+    # --- Stem deps omissions (019, FR-009/FR-010) ---
+    # Mirror the affix deps path but emit STEMS-category, stem-centric warnings.
+    # They join the SAME aggregated list so plan.excluded_lossy_count() shows one
+    # consolidated Move confirmation across affix and stem strandings.
+    if (deps_by_stem is not None and
+            deselected_dep_guids is not None and
+            target_dep_guids is not None and
+            dep_category is not None):
+        absent_deselected_deps = deselected_dep_guids - target_dep_guids
+        _labels = dep_labels or {}
+        for stem_guid, dep_guid_map in deps_by_stem.items():
+            for dep_guid in dep_guid_map:
+                if dep_guid in absent_deselected_deps:
+                    lbl = _labels.get(dep_guid, dep_guid[:8])
+                    warnings.append(ExcludedLossy(
+                        category=GrammarCategory.STEMS,
+                        entry_guid=stem_guid,
+                        entry_label=stem_guid,
+                        dep_category=dep_category,
+                        dep_guid=dep_guid,
+                        dep_label=lbl,
+                        message=(
+                            f"Stem '{stem_guid}' needs dep '{lbl}' "
                             f"(deselected and absent from target)."
                         ),
                     ))
