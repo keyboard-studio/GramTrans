@@ -13,7 +13,10 @@ this builder with the full FR-004 category set.
 """
 from __future__ import annotations
 
+import logging
 from typing import Iterable, List, Optional, Tuple
+
+_log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
@@ -78,9 +81,15 @@ def build_run_plan(
     # is True and pos_picks is empty). For each POS, walk its closure:
     # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
     # → Allomorphs → PhEnvironments.
+    _pos_count = 0
     for src_pos in _select_source_poses(source, selection):
+        _pos_count += 1
         _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
         _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
+    _log.debug(
+        "build_run_plan: verb-vertical closure over %d source POS(es); "
+        "actions so far=%d", _pos_count, len(actions),
+    )
 
     # Phase 3c binding accumulators — written by AFFIXES/STEMS plan_action;
     # consumed by AFFIX_TEMPLATES (17.1 sub-pass, US2) and STEMS (post-pass A, US3).
@@ -147,6 +156,9 @@ def build_run_plan(
             pieces = list(bundle["enumerate_source"](context, selection))
         except Exception:
             pieces = []
+        # Persist/over-transfer diagnostics: how many items this category
+        # enumerated and how many actions it contributes to the plan.
+        _cat_actions_before = len(actions)
         for piece in pieces:
             try:
                 result = bundle["plan_action"](piece, context, ws_mapping)
@@ -165,6 +177,11 @@ def build_run_plan(
                 overwrites.append(result)
             elif isinstance(result, PlannedAction):
                 actions.append(result)
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "build_run_plan leaf category=%s  enumerated=%d actions+=%d",
+                cat.value, len(pieces), len(actions) - _cat_actions_before,
+            )
 
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
@@ -173,6 +190,10 @@ def build_run_plan(
         context, selection, actions, excluded_lossy, source, target
     )
 
+    _log.debug(
+        "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d",
+        len(actions), len(skips), len(overwrites), len(excluded_lossy),
+    )
     return RunPlan(
         context=context,
         selection=selection,
