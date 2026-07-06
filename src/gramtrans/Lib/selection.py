@@ -209,6 +209,26 @@ def _pos_label(pos) -> str:
     return "(unnamed POS)"
 
 
+def _feat_label(feat_c) -> Optional[str]:
+    """Extract a human label from an IFsClosedFeature/IFsSymFeatVal object.
+
+    Tries Abbreviation first, then Name; skips the LCM placeholder '***'.
+    Cast to IFsClosedFeature (or IFsSymFeatVal for values) before calling.
+    Returns None when both fields are empty/missing (caller falls back to GUID).
+    """
+    for attr in ("Abbreviation", "Name"):
+        try:
+            ms = getattr(feat_c, attr, None)
+            if ms is None:
+                continue
+            text = ms.BestAnalysisAlternative.Text
+            if text and text not in ("***", ""):
+                return text
+        except (AttributeError, TypeError):
+            continue
+    return None
+
+
 def _pos_guid(pos) -> Optional[str]:
     """Return the GUID string of a POS object, or None.
 
@@ -580,10 +600,10 @@ def _build_deps_target_sets(
     def _walk_pos_deps(pos_list):
         for pos in pos_list:
             pos_c = _cast(pos, "IPartOfSpeech")
-            # InflectableFeatsRC
+            # InflectableFeatsRC — items are IFsClosedFeature, not IFsFeatStruc
             try:
                 for feat in pos_c.InflectableFeatsRC:
-                    feat_c = _cast(feat, "IFsFeatStruc")
+                    feat_c = _cast(feat, "IFsClosedFeature")
                     try:
                         fg = str(feat_c.Guid).lower()
                     except (AttributeError, TypeError):
@@ -1194,6 +1214,7 @@ class DepRow:
     label: str
     preselected: bool = True   # all deps preselected by default (AS-NEEDED)
     status: Optional[str] = None
+    depth: int = 0             # nesting depth: 0 = feature/class/stem, 1 = value child
 
 
 @dataclass(frozen=True)
@@ -1759,11 +1780,13 @@ def build_deps_inventory(
         # CAST DISCIPLINE: cast to IPartOfSpeech before reading dep collections
         pos_c = _cast(pos, "IPartOfSpeech")
 
-        # InflectableFeatsRC
+        # InflectableFeatsRC — items are IFsClosedFeature (feature DEFINITIONS),
+        # NOT IFsFeatStruc.  Cast to IFsClosedFeature so .Name/.Abbreviation and
+        # .ValuesOC are accessible.  Each value (IFsSymFeatVal) is appended at depth=1.
         try:
             feats_rc = pos_c.InflectableFeatsRC
             for feat in feats_rc:
-                feat_c = _cast(feat, "IFsFeatStruc")
+                feat_c = _cast(feat, "IFsClosedFeature")
                 try:
                     fg = str(feat_c.Guid).lower()
                 except (AttributeError, TypeError):
@@ -1774,12 +1797,29 @@ def build_deps_inventory(
                 if fg in seen_feats:
                     continue
                 seen_feats.add(fg)
-                try:
-                    fl = feat_c.Name.BestAnalysisAlternative.Text
-                except (AttributeError, TypeError):
+                fl = _feat_label(feat_c)
+                if fl is None:
                     fl = fg
-                infl_features.append(DepRow(guid=fg, label=fl,
+                infl_features.append(DepRow(guid=fg, label=fl, depth=0,
                                             status=_dep_status_feat(fg)))
+                # Append child values (IFsSymFeatVal) at depth=1
+                try:
+                    for val in feat_c.ValuesOC:
+                        val_c = _cast(val, "IFsSymFeatVal")
+                        try:
+                            vg = str(val_c.Guid).lower()
+                        except (AttributeError, TypeError):
+                            try:
+                                vg = str(val.Guid).lower()
+                            except (AttributeError, TypeError):
+                                continue
+                        vl = _feat_label(val_c)
+                        if vl is None:
+                            vl = vg
+                        infl_features.append(DepRow(guid=vg, label=vl, depth=1,
+                                                    status=_dep_status_feat(vg)))
+                except (AttributeError, TypeError):
+                    pass
         except (AttributeError, TypeError):
             pass
 
@@ -1798,9 +1838,8 @@ def build_deps_inventory(
                 if cg in seen_classes:
                     continue
                 seen_classes.add(cg)
-                try:
-                    cl = cls_c.Name.BestAnalysisAlternative.Text
-                except (AttributeError, TypeError):
+                cl = _feat_label(cls_c)
+                if cl is None:
                     cl = cg
                 infl_classes.append(DepRow(guid=cg, label=cl,
                                            status=_dep_status_class(cg)))
@@ -1822,9 +1861,8 @@ def build_deps_inventory(
                 if sg in seen_stems:
                     continue
                 seen_stems.add(sg)
-                try:
-                    sl = sn_c.Name.BestAnalysisAlternative.Text
-                except (AttributeError, TypeError):
+                sl = _feat_label(sn_c)
+                if sl is None:
                     sl = sg
                 stem_names.append(DepRow(guid=sg, label=sl,
                                          status=_dep_status_stem(sg)))
@@ -1838,9 +1876,8 @@ def build_deps_inventory(
         if fg in seen_feats:
             continue
         seen_feats.add(fg)
-        try:
-            fl = feat_c.Name.BestAnalysisAlternative.Text
-        except (AttributeError, TypeError):
+        fl = _feat_label(feat_c)
+        if fl is None:
             fl = fg
         infl_features.append(DepRow(guid=fg, label=fl,
                                     status=_dep_status_feat(fg)))
@@ -1849,9 +1886,8 @@ def build_deps_inventory(
         if ig in seen_classes:
             continue
         seen_classes.add(ig)
-        try:
-            il = icls_c.Name.BestAnalysisAlternative.Text
-        except (AttributeError, TypeError):
+        il = _feat_label(icls_c)
+        if il is None:
             il = ig
         infl_classes.append(DepRow(guid=ig, label=il,
                                    status=_dep_status_class(ig)))

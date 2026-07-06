@@ -801,6 +801,9 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         )
         if stem_inventory is not None:
             self.populate_stem_tree(stem_inventory)
+        # Wire stem tree selection to the shared preview handler (Lane 4).
+        if self._stem_tree.receivers(self._stem_tree.currentItemChanged) == 0:
+            self._stem_tree.currentItemChanged.connect(self._on_tree_selection_changed)
 
     # T009/T010: helper methods
     def _candidate_list(self):
@@ -904,7 +907,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             self._pane.clear()
             return
         kind = current.data(0, _KIND_ROLE)
-        if kind != "affix":
+        if kind not in ("affix", "stem"):
             # Group or subgroup header -> clear pane
             self._pane.clear()
             return
@@ -2171,9 +2174,16 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                 )
             else:
                 grammar_cat = _SECTION_CAT.get(section_label)
+                # Build nested tree: depth-stack pattern (mirrors entry-types at
+                # selection_wizard.py:3523-3548).  depth=0 rows attach to the
+                # section header; depth=1+ rows attach to the nearest shallower item.
+                parent_stack = [(-1, section_item)]  # sentinel
                 for row in rows:
+                    while len(parent_stack) > 1 and parent_stack[-1][0] >= row.depth:
+                        parent_stack.pop()
+                    tree_parent = parent_stack[-1][1]
                     row_item = QtWidgets.QTreeWidgetItem(
-                        section_item,
+                        tree_parent,
                         [row.label, _STATUS_LABELS.get(row.status or "", "")]
                     )
                     set_ws_runs(row_item, 0, ((row.label, WsRole.ANALYSIS),))
@@ -2189,6 +2199,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
                     cs = (QtCore.Qt.CheckState.Checked if row.preselected
                           else QtCore.Qt.CheckState.Unchecked)
                     row_item.setCheckState(0, cs)
+                    parent_stack.append((row.depth, row_item))
 
     # ------------------------------------------------------------------
     def _get_source(self):

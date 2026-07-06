@@ -16,7 +16,10 @@ Design constants (plan.md):
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import List, Optional, Tuple
+
+_log = logging.getLogger(__name__)
 
 if __package__:
     from ..models import SimilarResolution
@@ -344,6 +347,10 @@ if _QT_AVAILABLE:
                 html_str = to_html(preview, registry)
                 self._browser.setHtml(html_str)
             except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "_render_preview: failed for category=%r source=%r: %s: %s",
+                    category, source_guid, type(exc).__name__, exc,
+                )
                 self._browser.setHtml(
                     f"<p><em>Preview error: {exc}</em></p>"
                 )
