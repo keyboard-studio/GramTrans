@@ -112,6 +112,11 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     #   ConflictMode.LINK      -> no field writes (LINK = link by GUID only)
     #   ConflictMode.OVERWRITE -> _execute_overwrite (destructive, Phase 1)
     # Pre-overwrite snapshots in the residue carrier (FR-106) are TODO Phase 1.1.
+    # NOTE: AFFIXES/STEMS UPDATE is gated on Phase-3c category engines (features
+    # 007/019) that don't yet emit overwrite-candidates, so UPDATE routing is
+    # presently exercised via GOLD_RESERVED categories (PHONOLOGICAL_FEATURES,
+    # GRAM_CATEGORIES/POS, INFLECTION_FEATURES, VARIANT_TYPES, COMPLEX_FORM_TYPES,
+    # SEMANTIC_DOMAINS).
     if __package__:
         from .models import ConflictMode as _ConflictMode
     else:
@@ -1389,6 +1394,17 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     cat = overwrite.category
     src_guid = overwrite.source_guid
     tgt_guid = overwrite.target_guid
+
+    # C6 guard: mirrors the leaf-path gate at execute():227 (_FIELD_DIFF_GATED).
+    # Currently LATENT — PHONEMES/PH_ENVIRONMENT don't emit PlannedOverwrite today
+    # (_phonology_simple_plan emits only Skip/PlannedAction) — but guards against
+    # future planner changes that would make this path live and fail-open.
+    if cat in (GrammarCategory.PHONEMES, GrammarCategory.PH_ENVIRONMENT) and not _phoneme_env_field_diff_enabled():
+        report_sink.Info(
+            f"  [{cat.value}] field-diff gated (flexicon version"
+            f" < fix release); selector-only  guid={src_guid[:8]}"
+        )
+        return []
 
     # Resolve the ops accessor for this category.  We use the same pattern as
     # _execute_overwrite: switch on category to find source/target objects and
