@@ -66,6 +66,41 @@ def _cast(obj, interface_name: str):
         return obj
 
 
+def _partition_entries(entries) -> Tuple[List, List]:
+    """Partition LexEntry objects into ``(affix_entries, stem_entries)`` by
+    morphtype (019-stems-item-picker, FR-002).
+
+    An entry is an **affix** iff ``LexemeFormOA.MorphTypeRA.IsAffixType`` is
+    explicitly true.  Everything else is a **stem**: an ``IsAffixType`` of
+    false, a null ``LexemeFormOA`` or ``MorphTypeRA``, and an uncastable
+    morphtype (``AttributeError``/``TypeError`` while reading ``IsAffixType``)
+    all land in ``stem_entries``.
+
+    NULL-GUARD INVERSION (contract-critical): the affix filter sites use
+    skip-on-exception (``except (...): continue``); the stem side inverts this
+    to **include-on-exception** so a null/uncastable morphtype is never dropped
+    from both tabs.  Do NOT copy the affix skip pattern here.
+
+    Iteration order is preserved within each partition (both tabs list entries
+    in ``LexDbOA.Entries`` order), so callers stay byte-stable.
+    """
+    affix_entries: List = []
+    stem_entries: List = []
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            is_affix = morph_type.IsAffixType
+        except (AttributeError, TypeError):
+            is_affix = False  # include-on-exception -> STEM (FR-002)
+        if is_affix:
+            affix_entries.append(entry)
+        else:
+            stem_entries.append(entry)
+    return affix_entries, stem_entries
+
+
 # ============================================================================
 # POS-Grouped Affix Inventory (specs/008-affix-pos-picker, T008-T010)
 # ============================================================================
