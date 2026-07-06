@@ -8,6 +8,13 @@
 
 **Input**: User description: "Expand the merge preview pane's field gathering to a full nested view for entry-category items (affixes and stems). Today the gather returns a flat field/value map built only from entry-level scalar properties plus custom fields; an affix preview shows essentially only the Lexeme Form even though FLEx shows a rich nested structure (Morph Type, Sense Gloss/Definition/Grammatical Info, multiple Allomorphs with forms/morph-types/environments/comments, MSA Slots and category info) — all of which Move actually transfers. The preview must faithfully represent what Move transfers. Also fix a bug where multi-string custom fields are silently dropped, and ensure all string values render as text."
 
+## Clarifications
+
+### Session 2026-07-05
+
+- Q: When previewing an entry that exists in the target (overwrite/merge), how should per-field NEW / IN TARGET / SIMILAR status apply to child content when source and target have different numbers of senses/allomorphs? → A: Match children between source and target by **visual fingerprint** (form/content), then compute per-field status on matched pairs; unmatched source children are all-NEW; unmatched target children are shown as target-only.
+- Q: How deep should the sense's Grammatical Info (MSA) be represented? → A: Show the FLEx-style **label plus slots/category** (e.g. `n:NC`, slot `NC`, category info); full MSA breakdown (inflection features, from/to POS) is out of scope.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See an affix's real content in the preview (Priority: P1)
@@ -99,6 +106,12 @@ grammatical info appear as distinct, ordered entries.
 - **Comparison against a target**: when previewing an affix that already exists in the target
   (overwrite/merge), the per-field NEW / IN TARGET / SIMILAR status must remain meaningful for the
   newly added nested fields, not just entry-level fields.
+- **Child count mismatch**: source has more (or fewer) senses/allomorphs than the target. Children
+  are paired by visual fingerprint; unmatched source children render all-NEW, unmatched target
+  children render as target-only. No pairing is forced between non-matching children.
+- **Ambiguous fingerprint match**: two source children share a fingerprint, or a source child could
+  match multiple target children. The pairing must be deterministic (e.g. first-unused wins in source
+  order) so the preview is stable across runs.
 - **Grammatical info / MSA with no readable label**: shows a best-effort label or is suppressed,
   never an object identifier.
 
@@ -110,7 +123,9 @@ grammatical info appear as distinct, ordered entries.
   child objects (senses, allomorphs, and the grammatical info / MSA), not only the entry's own
   scalar fields and not only custom fields.
 - **FR-002**: For each **sense**, the preview MUST include (when non-empty): gloss, definition, and
-  grammatical info (the sense's part-of-speech / MSA label as shown in FLEx, e.g. `n:NC`).
+  grammatical info (the sense's part-of-speech / MSA label as shown in FLEx, e.g. `n:NC`). The
+  grammatical-info representation is **label + slots/category** (see FR-004); the deeper MSA
+  breakdown (inflection features, from/to POS) is out of scope.
 - **FR-003**: For the entry and each **allomorph** (the lexeme-form allomorph and every alternate
   form), the preview MUST include (when non-empty): the allomorph form, its morph type, its
   environments, and its comment.
@@ -132,8 +147,11 @@ grammatical info appear as distinct, ordered entries.
 - **FR-010**: The nested gathering MUST apply uniformly to all **entry-category** previews (affixes
   and stems), producing consistent structure across both.
 - **FR-011**: The preview's existing **diff/compare** behavior (per-field NEW / IN TARGET / SIMILAR
-  status when a target match exists) MUST remain correct for the expanded set of nested fields, so
-  overwrite and merge previews reflect field-level differences on child content too.
+  status when a target match exists) MUST extend to nested fields. Source and target children of the
+  same kind MUST be paired by **visual fingerprint** (their form/content), and per-field status MUST
+  be computed on each matched pair. A source child with no fingerprint match in the target MUST be
+  shown with all its fields as NEW; a target child with no source match MUST be shown as target-only.
+  Child pairing MUST NOT rely on child GUID identity (child GUIDs are not stable across projects).
 - **FR-012**: A single unreadable or malformed field or child MUST NOT abort the whole preview; the
   failure MUST be contained and the remainder of the entry MUST still render (graceful degradation).
 - **FR-013**: The preview MUST NOT retain live database objects after gathering; the gathered
@@ -147,7 +165,9 @@ grammatical info appear as distinct, ordered entries.
   Comprises the entry's own non-empty fields plus an ordered set of child groups.
 - **Child group**: a labeled, ordered collection representing one sense or one allomorph (or the
   grammatical info), each carrying its own non-empty fields. Multiple groups of the same kind are
-  distinguished by source order (e.g. Sense 1, Sense 2; Allomorph 1, Allomorph 2).
+  distinguished by source order (e.g. Sense 1, Sense 2; Allomorph 1, Allomorph 2). For
+  target-comparison previews, each source child group carries a **fingerprint** used to pair it with
+  a target child group of the same kind.
 - **Field entry**: a single label/value pair within the entry or a child group, where the value is
   always readable text (or a structured multi-writing-system text set), and empties are suppressed.
 - **Read-failure notice**: a visible marker attached to a specific field that could not be read,
@@ -187,8 +207,10 @@ grammatical info appear as distinct, ordered entries.
   already used for standard multi-string fields.
 - **A prior fix** already normalizes custom-field single-strings to text; this feature extends the same
   normalization to child standard fields and to the multi-string custom-field read path.
-- **Diff/compare scope**: field-level status (NEW / IN TARGET / SIMILAR) extends to nested fields; the
-  top-level item's overall match identity (by GUID then fingerprint) is unchanged.
+- **Diff/compare scope**: field-level status (NEW / IN TARGET / SIMILAR) extends to nested fields. The
+  top-level item's overall match identity (by GUID then fingerprint) is unchanged, but **child**
+  groups are paired by visual fingerprint only — not by child GUID — because child object GUIDs are
+  not stable across the source/target project pair.
 - **Test projects**: Ejagham Full GT-Test (and its Mini pair) provide affixes with senses, MSAs,
   multiple allomorphs, and multi-string custom fields suitable for validation.
 
@@ -200,6 +222,8 @@ grammatical info appear as distinct, ordered entries.
   phonological rules) — their existing gather paths are not part of this expansion.
 - Reordering or restructuring the diff pane's visual layout beyond what is needed to show ordered
   child groups.
+- Deep MSA/grammatical-info breakdown beyond label + slots/category — inflection features and
+  from/to POS detail are not shown in the preview (see FR-002).
 
 ## Dependencies
 
