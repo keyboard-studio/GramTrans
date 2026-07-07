@@ -594,7 +594,14 @@ class CreateDefinitionAction:
                   by _CustomFieldRecord.guid).
     owner_class : one of "LexEntry", "LexSense", "LexExampleSentence", "MoForm"
     field_name  : field label as reported by source GetAllFields
-    field_type  : CellarPropertyType integer (13=String, 14=MultiString, …)
+    field_type  : CellarPropertyType integer (13=String, 14=MultiString, …).
+                  NEVER 0/Nil: LibLCM's commit serializer
+                  (BackendProvider.GetFlidTypeAsString) throws on types it
+                  cannot write, and its error path (ReportProblem ->
+                  Control.Invoke) wedges headless hosts forever.
+                  _ensure_custom_fields enforces this fail-loud.
+    field_ws    : wsSelector magic value from the source MDC (e.g. -1
+                  kwsAnal, -3 kwsAnals); 0 when the source did not specify.
     list_root_guid : GUID string of the possibility-list root for list-typed
                   fields; empty string for all other types.
     summary     : human-readable one-liner for the preview pane / report log.
@@ -606,6 +613,7 @@ class CreateDefinitionAction:
     field_type: int
     list_root_guid: str
     summary: str
+    field_ws: int = 0
 
 
 @dataclass(frozen=True)

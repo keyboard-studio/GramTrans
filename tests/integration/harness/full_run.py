@@ -30,7 +30,10 @@ from typing import Optional, Tuple
 
 from gramtrans.Lib import api
 from gramtrans.Lib.debuglog import DEBUG_ENV
-from gramtrans.Lib.models import GrammarCategory, RunPlan, RunReport, Selection
+from gramtrans.Lib.models import (
+    GrammarCategory, RunPlan, RunReport, Selection,
+    WSKind, WSMapping, WSMappingEntry,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +142,9 @@ def run_full_transfer(
     source read-only, binds the target for write, computes the preview plan,
     and executes the move. Returns ``(plan, report)``.
 
-    The source handle is closed in a finally block; the target handle is owned
-    by the engine (execute_move's PATH-CLOSE-REBIND branch closes it for the
-    custom-field path).
+    The source handle is closed in a finally block; the target handle is
+    closed there too (execute_move never closes the caller's handle -- on the
+    custom-field path it persists via in-session checkpoints instead).
     """
     # Ensure the export/persist diagnostics fire for this run.
     os.environ.setdefault(DEBUG_ENV, "1")
@@ -161,7 +164,21 @@ def run_full_transfer(
         context = api.bind_target(stub, choice)
 
         selection = build_full_selection()
-        state, plan = api.compute_preview(context, selection, ws_mapping=None)
+        # Map the source's default vernacular WS -> the target's default
+        # vernacular WS (identity for the default vern). Not customizable: the
+        # coverage/full-run harness always uses the default vernacular on both
+        # sides. GetDefaultVernacularWS() returns a (language-tag, Name) tuple.
+        src_vern_tag = source_handle.GetDefaultVernacularWS()[0]
+        tgt_vern_tag = context.target_handle.GetDefaultVernacularWS()[0]
+        ws_mapping = WSMapping(entries=(
+            WSMappingEntry(
+                source_ws_id=src_vern_tag,
+                source_ws_kind=WSKind.VERNACULAR,
+                target_ws_id=tgt_vern_tag,
+                create_in_target=False,
+            ),
+        ))
+        state, plan = api.compute_preview(context, selection, ws_mapping=ws_mapping)
         if state is not api.PreviewState.PREVIEW_READY:
             raise RuntimeError(
                 "[ERROR] compute_preview did not return PREVIEW_READY; got %r"
@@ -172,18 +189,23 @@ def run_full_transfer(
         report = api.execute_move(context, plan)
         return plan, report
     finally:
-        # The harness IS the host here: FLEx only persists writes on
-        # CloseProject(). api.execute_move deliberately leaves closing the
-        # target to the caller on the non-custom-field path (in production
-        # gramtrans._run_gui does it), so we MUST close the target handle to
-        # flush writes to disk before any reopen/count. On the custom-field
-        # PATH-CLOSE-REBIND path execute_move already closed this handle
-        # internally, so this is a safe no-op there.
+        # The harness IS the host here: on the plain path FLEx only persists
+        # writes on CloseProject() (in production gramtrans._run_gui does it),
+        # so we close the target to flush before any reopen/count. On the
+        # custom-field path execute_move has ALREADY persisted schema+values
+        # via in-session checkpoints. The watcher labels a co-held hang in
+        # the log after the deadline (it cannot abort the call -- LCM thread
+        # affinity forbids off-thread closes); a raised close error is
+        # warning-grade here.
         if context is not None:
             try:
-                context.target_handle.CloseProject()
-            except Exception:  # noqa: BLE001
-                pass
+                api._close_project_watchdog(
+                    context.target_handle,
+                    api._SCHEMA_CLOSE_TIMEOUT_S,
+                    "harness target handle",
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] target CloseProject failed/timed out: {exc}")
         try:
             source_handle.CloseProject()
         except Exception:  # noqa: BLE001

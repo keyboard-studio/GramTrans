@@ -738,7 +738,7 @@ class _CustomFieldRecord:
 
     __slots__ = (
         "guid", "Guid", "owner_class", "name", "field_id",
-        "field_type", "list_root_guid",
+        "field_type", "list_root_guid", "ws_selector",
     )
 
     def __init__(
@@ -748,6 +748,7 @@ class _CustomFieldRecord:
         field_id: int = 0,
         field_type: int = 0,
         list_root_guid: str = "",
+        ws_selector: int = 0,
     ):
         # Synthetic identity: custom fields have no LCM Guid.  Use
         # "cf:<owner>:<name>" as the canonical key.
@@ -758,6 +759,7 @@ class _CustomFieldRecord:
         self.field_id = field_id
         self.field_type = field_type
         self.list_root_guid = list_root_guid
+        self.ws_selector = ws_selector
 
     @property
     def concrete(self):
@@ -805,15 +807,56 @@ def custom_field_type_label(field_type: int) -> str:
     return _CELLAR_TYPE_LABELS.get(field_type, f"Type {field_type}")
 
 
+_EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _harvest_field_shape(project, flid):
+    """Pull ``(field_type, ws_selector, list_root_guid)`` for a custom field
+    straight from the live metadata cache.
+
+    The shipping flexicon ``CustomFields.GetAllFields`` returns bare 2-tuples
+    ``(flid, label)`` with NO type information. Defaulting the type to 0
+    (CellarPropertyType.Nil) is catastrophic: AddCustomField happily stores a
+    Nil-typed field in memory, and then LibLCM's commit serializer
+    (BackendProvider.GetFlidTypeAsString) throws "Property element name not
+    recognized" while writing <AdditionalFields>; its catch path
+    (ReportProblem -> WinForms Control.Invoke) marshals to a message pump a
+    headless host does not have, wedging the commit writer FOREVER and
+    deadlocking every subsequent Save/Close. Diagnosed live from managed
+    stacks; see specs/016-custom-fields-wizard-tab/probe-results.md addendum.
+
+    Returns (0, 0, "") when the MDC is unreachable (host-free unit tests).
+    """
+    try:
+        from SIL.LCModel.Infrastructure import IFwMetaDataCacheManaged  # noqa: PLC0415
+        mdc = IFwMetaDataCacheManaged(project.Cache.MetaDataCacheAccessor)
+        # GetFieldType carries flag bits above the type nibble; mask to the
+        # pure CellarPropertyType exactly like FLEx's FieldDescription does.
+        field_type = int(mdc.GetFieldType(flid)) & 0x1F
+        ws_selector = int(mdc.GetFieldWs(flid))
+        list_root_guid = ""
+        try:
+            root = str(mdc.GetFieldListRoot(flid))
+            if root and root.lower() != _EMPTY_GUID:
+                list_root_guid = root
+        except Exception:  # noqa: BLE001 -- non-list fields may throw
+            pass
+        return field_type, ws_selector, list_root_guid
+    except Exception:  # noqa: BLE001 -- no live LCM (unit tests) / bad flid
+        return 0, 0, ""
+
+
 def _enumerate_custom_fields(project):
     """Yield _CustomFieldRecord for every custom field on the supported
     owner classes.  Read-only -- safe inside the Phase-1 UoW envelope
     (no _EnsureWriteEnabled guard on CustomFieldOperations.GetAllFields).
 
-    ``GetAllFields(cls)`` must yield 4-tuples
-    ``(field_id, name, field_type, list_root_guid)`` per the T001 fake
-    contract.  The legacy 2-tuple shape ``(field_id, name)`` is handled
-    defensively for backward compatibility.
+    ``GetAllFields(cls)`` may yield 4-tuples
+    ``(field_id, name, field_type, list_root_guid)`` (the T001 fake
+    contract) or the shipping flexicon 2-tuple shape ``(field_id, name)``.
+    For 2-tuples the field shape is harvested from the live MDC via
+    ``_harvest_field_shape`` -- see its docstring for why a defaulted type
+    of 0/Nil must never reach AddCustomField.
     """
     cf_ops = getattr(project, "CustomFields", None)
     if cf_ops is None:
@@ -821,19 +864,23 @@ def _enumerate_custom_fields(project):
     for cls in _CUSTOM_FIELD_OWNER_CLASSES:
         try:
             for row in cf_ops.GetAllFields(cls):
+                ws_selector = 0
                 if len(row) >= 4:
                     field_id, label, field_type, list_root_guid = (
                         row[0], row[1], row[2], row[3]
                     )
+                    list_root_guid = list_root_guid or ""
                 else:
-                    # Legacy 2-tuple path (existing fakes / older flexicon).
+                    # Shipping-flexicon 2-tuple path: enrich from the MDC.
                     field_id, label = row[0], row[1]
-                    field_type = 0
-                    list_root_guid = ""  # normalized from None; str default per _CustomFieldRecord
+                    field_type, ws_selector, list_root_guid = (
+                        _harvest_field_shape(project, field_id)
+                    )
                 yield _CustomFieldRecord(
                     cls, label, field_id,
                     field_type=field_type,
                     list_root_guid=list_root_guid,
+                    ws_selector=ws_selector,
                 )
         except Exception:
             # Class missing or read error -- continue with other classes.
@@ -997,6 +1044,7 @@ def custom_fields_plan_action(piece, context, ws_mapping):
             f"Create custom field {piece.owner_class}.{piece.name!r} "
             f"(type {piece.field_type}) in target via MDC AddCustomField."
         ),
+        field_ws=getattr(piece, "ws_selector", 0),
     )
 
 
