@@ -559,20 +559,38 @@ class TestCustomFieldExtraction:
         assert "CustomField.MyEntryField" in props, f"Got keys: {list(props)}"
         assert props["CustomField.MyEntryField"] == {"en": "entry custom value"}
 
-    def test_sense_custom_field_prefixed(self):
-        """Child sense custom fields have 'Sense.' prefix."""
+    def test_append_custom_fields_is_object_level_only(self):
+        """_append_custom_fields adds only the object's OWN custom fields; child
+        (sense/allomorph/example) fields are gathered by _gather_entry_nested."""
         handle, entry = self._make_handle_with_custom_fields()
         props: dict = {}
         _append_custom_fields(handle, entry, "entry", props)
-        assert "Sense.MySenseField" in props, f"Got keys: {list(props)}"
-        assert props["Sense.MySenseField"] == {"en": "sense custom value"}
+        assert list(props) == ["CustomField.MyEntryField"]
 
-    def test_example_custom_field_prefixed(self):
-        """Grandchild example custom fields have 'Example.' prefix."""
+    def test_sense_custom_field_nested_last_in_sense(self):
+        """Sense custom fields nest under their sense, after the standard fields."""
+        from gramtrans.Lib.merge_preview import _gather_entry_nested
         handle, entry = self._make_handle_with_custom_fields()
-        props: dict = {}
-        _append_custom_fields(handle, entry, "entry", props)
-        assert "Example.MyExampleField" in props, f"Got keys: {list(props)}"
+        props, meta = _gather_entry_nested(handle, entry, [])
+        hits = [k for k, v in props.items() if v == {"en": "sense custom value"}]
+        assert hits, f"sense CF not nested; keys={list(props)}"
+        dn, sk, indent, group = meta[hits[0]]
+        assert dn == "MySenseField"
+        assert group == "Sense 1"
+        assert indent == 1
+        assert sk[1] >= 10  # sorts after Gloss/Definition/Grammatical Info
+
+    def test_example_custom_field_nested_under_sense(self):
+        """Example custom fields nest under the owning sense, after sense CF."""
+        from gramtrans.Lib.merge_preview import _gather_entry_nested
+        handle, entry = self._make_handle_with_custom_fields()
+        props, meta = _gather_entry_nested(handle, entry, [])
+        hits = [k for k, v in props.items() if v == {"en": "example custom value"}]
+        assert hits, f"example CF not nested; keys={list(props)}"
+        dn, sk, indent, group = meta[hits[0]]
+        assert dn.startswith("Example:")
+        assert group == "Sense 1"
+        assert indent == 1
 
     def test_itsstring_value_normalized_to_text(self):
         """String-type custom fields returning a raw ITsString carrier are

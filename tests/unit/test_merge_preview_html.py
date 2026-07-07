@@ -214,6 +214,41 @@ class TestColorStrikeIndent:
 # ============================================================================
 
 
+class TestWsCodeAndReplacement:
+    """WS codes render as grey subscripts (shown once); changing fields render
+    as a single old -> new replacement."""
+
+    def test_ws_code_is_subscript_not_brackets(self):
+        seg = DiffSegment(text="[en] hello", kind=SegmentKind.UNCHANGED, ws_role=WsRole.ANALYSIS)
+        html_out = to_html(_make_preview("Gloss", [seg]), _make_registry())
+        assert ">en</sub>" in html_out       # WS code is a subscript
+        assert "[en]" not in html_out        # the bracket form is gone
+        assert "hello" in html_out
+
+    def test_replacement_shows_one_ws_code_and_arrow(self):
+        rem = DiffSegment(text="[etu] old", kind=SegmentKind.REMOVED, ws_role=WsRole.VERNACULAR)
+        add = DiffSegment(text="[etu] new", kind=SegmentKind.ADDED, ws_role=WsRole.VERNACULAR)
+        html_out = to_html(_make_preview("Form", [rem, add]), _make_registry())
+        assert html_out.count(">etu</sub>") == 1   # WS code NOT duplicated
+        assert "→" in html_out                 # replacement arrow
+        assert "line-through" in html_out           # old struck through
+        assert "color:#1a7f1a" in html_out          # new is green
+        assert "old" in html_out and "new" in html_out
+
+    def test_plain_str_replacement_has_arrow_no_ws_code(self):
+        rem = DiffSegment(text="ubd stem", kind=SegmentKind.REMOVED, ws_role=None)
+        add = DiffSegment(text="prefix", kind=SegmentKind.ADDED, ws_role=None)
+        html_out = to_html(_make_preview("Morph Type", [rem, add]), WsFontRegistry.empty())
+        assert "→" in html_out
+        assert "<sub" not in html_out
+
+    def test_two_distinct_ws_each_shown_once(self):
+        a = DiffSegment(text="[etu] fém", kind=SegmentKind.UNCHANGED, ws_role=WsRole.VERNACULAR)
+        b = DiffSegment(text="[en] stool", kind=SegmentKind.UNCHANGED, ws_role=WsRole.ANALYSIS)
+        html_out = to_html(_make_preview("LexemeForm", [a, b]), _make_registry())
+        assert ">etu</sub>" in html_out and ">en</sub>" in html_out
+
+
 class TestChromePath:
     def test_none_role_no_font_family(self):
         """ws_role=None → registry returns None → no font-family in span (test cell 11)."""

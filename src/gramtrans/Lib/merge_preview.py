@@ -97,6 +97,12 @@ class FieldDiff:
     ``sort_key`` (tie-break ``field_name``).
 
     ``indent`` (existing): nesting depth (0 = entry-level, 1 = child).
+
+    ``group`` (new, spec-023 nesting): the child-group header this field
+    belongs under, e.g. ``"Sense 1"`` / ``"Allomorph 2"``.  Empty string means
+    the field renders flush-left with no header (entry-level scalars).  The
+    renderer emits one bold header row per contiguous run of a non-empty
+    ``group`` value, then indents that run's fields beneath it.
     """
 
     field_name: str
@@ -104,6 +110,7 @@ class FieldDiff:
     indent: int = 0
     display_name: str = ""
     sort_key: tuple = ()
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -360,9 +367,11 @@ def diff_props(
     an optional ``WsRole`` (from ``ws_role_map``).
 
     ``meta`` (spec-023, optional): ``{machine_key: (display_name, sort_key,
-    indent)}`` produced by ``_gather_entry_nested``.  When present, stamps
-    ``display_name``/``sort_key``/``indent`` onto each emitted ``FieldDiff``
-    for that key.  When ``None`` behavior is identical to today (G8).
+    indent, group)}`` produced by ``_entry_scalar_meta`` (entry scalars) and
+    ``_gather_entry_nested`` (nested children).  When present, stamps
+    ``display_name``/``sort_key``/``indent``/``group`` onto each emitted
+    ``FieldDiff`` for that key (a legacy 3-tuple without ``group`` is
+    tolerated).  When ``None`` behavior is identical to today (G8).
 
     Guarantees (FR-002 – FR-006):
     - ``tgt_props is None`` -> every field/value ``added`` (SC-001, FR-002).
@@ -380,15 +389,25 @@ def diff_props(
     notes: list[str] = []
 
     def _make_fd(key: str, segs: list[DiffSegment]) -> FieldDiff:
-        """Build a FieldDiff, stamping meta if present."""
+        """Build a FieldDiff, stamping meta if present.
+
+        Meta entries are ``(display_name, sort_key, indent[, group])``; a
+        legacy 3-tuple (no group) is tolerated so older callers keep working.
+        """
         if meta and key in meta:
-            dn, sk, ind = meta[key]
+            entry = meta[key]
+            if len(entry) >= 4:
+                dn, sk, ind, grp = entry[0], entry[1], entry[2], entry[3]
+            else:
+                dn, sk, ind = entry
+                grp = ""
             return FieldDiff(
                 field_name=key,
                 segments=tuple(segs),
                 indent=ind,
                 display_name=dn,
                 sort_key=sk,
+                group=grp,
             )
         return FieldDiff(field_name=key, segments=tuple(segs))
 
@@ -522,6 +541,27 @@ _KIND_STYLE: dict[SegmentKind, str] = {
 }
 
 
+def _fallback_label(field_name: str) -> str:
+    """Human label for a FieldDiff that carries no ``display_name``.
+
+    Nested-child machine keys look like ``"sense\\x1f<token>\\x1fGloss"``; the
+    ``\\x1f`` separators render as tofu boxes if shown raw.  Strip to the final
+    field segment (``"Gloss"``) so a missing meta entry never leaks a key.
+    """
+    if "\x1f" in field_name:
+        return field_name.split("\x1f")[-1] or field_name
+    return field_name
+
+
+def _fallback_group(field_name: str) -> str:
+    """Group header for a machine-keyed FieldDiff lacking a ``group`` (e.g. a
+    target-only child with no meta): the kind segment, title-cased."""
+    if "\x1f" in field_name:
+        kind = field_name.split("\x1f", 1)[0]
+        return kind.capitalize() if kind else ""
+    return ""
+
+
 def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
     """Render a ``MergePreview`` to escaped, colorized, font-aware HTML.
 
@@ -536,15 +576,33 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
     """
     parts: list[str] = ["<div class='merge-preview'>"]
 
+    current_group: str | None = None
     for fd in preview.fields:
+        # Emit a bold header row when entering a new non-empty child group.
+        # Fields are already sorted by sort_key, so a group's members are
+        # contiguous and groups only ever advance (never revisited).
+        # Fallbacks fire ONLY when a field carries no meta at all (no
+        # display_name): a machine-keyed field with an *explicit* empty group
+        # (e.g. the lexeme form's promoted Morph Type) must stay header-less.
+        has_meta = bool(fd.display_name)
+        group = fd.group if has_meta else (fd.group or _fallback_group(fd.field_name))
+        if group != current_group:
+            current_group = group
+            if group:
+                # Divider + bold header visually separates each child section
+                # (Sense 1, Allomorph 2, …) so adjacent groups don't blur.
+                parts.append(
+                    f"<div style='margin-top:8px;margin-bottom:2px;padding-top:4px;"
+                    f"border-top:1px solid #3a3a3a;'>"
+                    f"<b>{html.escape(group)}</b></div>"
+                )
         indent_px = fd.indent * 16
-        label = fd.display_name if fd.display_name else fd.field_name
+        label = fd.display_name or _fallback_label(fd.field_name)
         parts.append(
             f"<div style='margin-left:{indent_px}px;margin-bottom:4px;'>"
             f"<b>{html.escape(label)}</b>: "
         )
-        for seg in fd.segments:
-            parts.append(_render_segment(seg, registry))
+        parts.append(_render_field_body(fd.segments, registry))
         parts.append("</div>")
 
     if preview.notes:
@@ -557,24 +615,102 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
     return "".join(parts)
 
 
-def _render_segment(seg: DiffSegment, registry: WsFontRegistry) -> str:
-    """Render one ``DiffSegment`` as an HTML span."""
-    kind_style = _KIND_STYLE.get(seg.kind, "")
+# Writing-system tag rendered as a small grey subscript before its value, e.g.
+# "[etu] fém" -> a grey subscript "etu" then "fém".  Shown ONCE per WS run.
+_WS_CODE_STYLE = "color:#888888;font-size:0.7em;vertical-align:sub;"
+# Replacement arrow between a struck-through old value and its new value.
+_ARROW_HTML = "<span style='color:#888888;'> → </span>"
 
-    # Resolve font from role via registry (A2: rtl resolved here)
-    font: WsFont | None = registry.font_for(seg.ws_role)
+
+def _split_ws_prefix(text: str) -> tuple[str, str]:
+    """Split a leading ``"[ws] "`` tag off a segment's text.
+
+    Returns ``(ws_id, value)``; ``("", text)`` when there is no tag.  The tag
+    is baked into segment text by the multistring builders; the renderer pulls
+    it back out so the code can be shown as a subscript (and de-duplicated).
+    """
+    if text.startswith("[") and "] " in text:
+        close = text.index("] ")
+        wid = text[1:close]
+        if "[" not in wid:  # guard against a value that itself contains "] "
+            return wid, text[close + 2:]
+    return "", text
+
+
+def _ws_code_html(wid: str) -> str:
+    return f"<sub style='{_WS_CODE_STYLE}'>{html.escape(wid)}</sub> "
+
+
+def _value_span(value: str, kind: SegmentKind, ws_role: "WsRole | None",
+                registry: WsFontRegistry) -> str:
+    """Render one value (WS tag already stripped) as a colorized, font-aware span."""
+    kind_style = _KIND_STYLE.get(kind, "")
+    font: WsFont | None = registry.font_for(ws_role)
     font_style = ""
     dir_attr = ""
     if font is not None:
         font_style = f"font-family:'{html.escape(font.font_name)}';font-size:{font.size_pt}pt;"
         if font.rtl:
             dir_attr = " dir='rtl'"
-
     style = kind_style + font_style
-    escaped = html.escape(seg.text)
+    escaped = html.escape(value)
     if style or dir_attr:
         return f"<span style='{style}'{dir_attr}>{escaped}</span>"
     return f"<span>{escaped}</span>"
+
+
+def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
+    """Render a field's segments, showing each WS code once and collapsing a
+    removed+added pair into a single ``old → new`` replacement.
+
+    - A ``[ws]`` tag is rendered as a grey subscript, emitted only when the WS
+      changes (so a replacement shows one code, not two).
+    - A ``REMOVED`` segment immediately followed by an ``ADDED`` segment with the
+      same WS renders as ``old`` (struck) → ``new`` (green).
+    """
+    out: list[str] = []
+    last_wid: str | None = None
+    i = 0
+    n = len(segments)
+
+    def _emit_ws(wid: str) -> None:
+        nonlocal last_wid
+        if wid and wid != last_wid:
+            if out:  # gap between distinct WS runs
+                out.append("<span>&#160;&#160;</span>")
+            out.append(_ws_code_html(wid))
+            last_wid = wid
+        elif not wid:
+            last_wid = None
+
+    while i < n:
+        seg = segments[i]
+        wid, val = _split_ws_prefix(seg.text)
+        nxt = segments[i + 1] if i + 1 < n else None
+        if seg.kind == SegmentKind.REMOVED and nxt is not None and nxt.kind == SegmentKind.ADDED:
+            wid2, val2 = _split_ws_prefix(nxt.text)
+            if wid2 == wid:
+                _emit_ws(wid)
+                out.append(_value_span(val, SegmentKind.REMOVED, seg.ws_role, registry))
+                out.append(_ARROW_HTML)
+                out.append(_value_span(val2, SegmentKind.ADDED, nxt.ws_role, registry))
+                i += 2
+                continue
+        _emit_ws(wid)
+        out.append(_value_span(val, seg.kind, seg.ws_role, registry))
+        i += 1
+    return "".join(out)
+
+
+def _render_segment(seg: DiffSegment, registry: WsFontRegistry) -> str:
+    """Render one ``DiffSegment`` as an HTML span (WS tag -> grey subscript).
+
+    Retained for callers/tests that render a single segment; ``to_html`` uses
+    ``_render_field_body`` so it can de-duplicate WS codes and form replacements.
+    """
+    wid, val = _split_ws_prefix(seg.text)
+    prefix = _ws_code_html(wid) if wid else ""
+    return prefix + _value_span(val, seg.kind, seg.ws_role, registry)
 
 
 # ============================================================================
@@ -894,12 +1030,19 @@ def _find_target_template_by_guid(target: Any, guid: str, owner_pos_guid: str) -
 # ---- Direct-read fallbacks for gap categories (T026) -----------------------
 
 
-def _direct_read_gap(obj: Any, include_optional_bool: bool = False) -> dict[str, Any] | None:
+def _direct_read_gap(
+    obj: Any,
+    include_optional_bool: bool = False,
+    ws_defs: list[tuple[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """Read Name / Abbreviation / Description from a gap-category object.
 
     Returns ``{field: {ws_id: text}}`` shape (FR-008), or None on hard failure.
     Optional slot bool (``IMoAffixSlot.Optional``) is included when
-    ``include_optional_bool=True``.
+    ``include_optional_bool=True``.  ``ws_defs`` (from ``_ws_defs(handle)``) is
+    forwarded to ``_ms_to_dict`` so multistrings are read via the reliable
+    ``get_String(ws_handle)`` path rather than ``GetStringFromIndex`` (which
+    returns a ``(tss, ws_handle)`` tuple that the old code mis-parsed).
     """
     if obj is None:
         return None
@@ -909,36 +1052,7 @@ def _direct_read_gap(obj: Any, include_optional_bool: bool = False) -> dict[str,
             prop = getattr(obj, field_name, None)
             if prop is None:
                 continue
-            ws_dict: dict[str, str] = {}
-            # Try get_String(ws_handle) approach first; fall back to StringCount
-            try:
-                count = getattr(prop, "StringCount", None)
-                if count is not None:
-                    for i in range(count):
-                        try:
-                            tss = prop.GetStringFromIndex(i)
-                            ws_obj = (
-                                getattr(tss, "WritingSystem", None)
-                                or getattr(tss, "get_WritingSystem", lambda: None)()
-                            )
-                            if ws_obj is not None:
-                                wid = _safe_ws_id(ws_obj)
-                                if wid:
-                                    ws_dict[wid] = str(getattr(tss, "Text", "") or "")
-                        except Exception:
-                            continue
-                else:
-                    # Duck-typed: try dict-like access
-                    if hasattr(prop, "items"):
-                        for k, v in prop.items():
-                            ws_dict[str(k)] = str(v)
-            except Exception:
-                if hasattr(prop, "items"):
-                    try:
-                        for k, v in prop.items():
-                            ws_dict[str(k)] = str(v)
-                    except Exception:
-                        pass
+            ws_dict = _ms_to_dict(prop, ws_defs)
             if ws_dict:
                 result[field_name] = ws_dict
 
@@ -952,6 +1066,29 @@ def _direct_read_gap(obj: Any, include_optional_bool: bool = False) -> dict[str,
         return None
 
     return result if result else None
+
+
+def _ws_defs(handle: Any) -> list[tuple[str, Any]]:
+    """Return ``[(ws_id, ws_handle), …]`` for the project, or ``[]`` on failure.
+
+    Mirrors flexicon's ``GetSyncableProperties``, which enumerates
+    ``project.WritingSystems.GetAll()`` and keys each alternative by
+    ``ws.Id`` using ``ws.Handle``.  Computed once per gather/read and threaded
+    into ``_ms_to_dict`` so multistrings resolve correctly.
+    """
+    out: list[tuple[str, Any]] = []
+    try:
+        ws_ops = getattr(handle, "WritingSystems", None)
+        if ws_ops is None:
+            return out
+        for ws in ws_ops.GetAll() or []:
+            wid = _safe_ws_id(ws)
+            wh = getattr(ws, "Handle", None)
+            if wid and wh is not None:
+                out.append((wid, wh))
+    except Exception as _exc:
+        logging.debug("_ws_defs: could not enumerate writing systems: %s", _exc)
+    return out
 
 
 # ---- Per-category ops table (T022, module-level injectable) -----------------
@@ -1081,9 +1218,11 @@ def props_for(
     When ``None``, the module-level ``_PROPS_TABLE`` is used.
 
     ``meta_out`` (spec-023, optional): if supplied and category resolves to
-    ``"entry"``, the nested-gather meta ``{machine_key: (display_name,
-    sort_key, indent)}`` is written into this dict in-place so the caller
-    can pass it to ``diff_props(meta=...)``.
+    ``"entry"``, ordering/label meta ``{key: (display_name, sort_key, indent,
+    group)}`` is written into this dict in-place — covering both the entry
+    scalars (FieldWorks order, via ``_entry_scalar_meta``) and the nested
+    children (via ``_gather_entry_nested``) — so the caller can pass it to
+    ``diff_props(meta=...)``.
 
     Guarantees (FR-007, FR-008, SC-005):
     - Covered category: returns ``GetSyncableProperties(obj)`` dict; builds the
@@ -1103,17 +1242,41 @@ def props_for(
 
     ops_attr, finder_fn, needs_owner, is_gap = entry
 
+    # -- Inflection features: features + their symbolic values ----------------
+    # Dedicated path: the item is an IFsClosedFeature or IFsSymFeatVal, whose
+    # Name/Abbreviation/Description (and a feature's Values) GetSyncableProperties
+    # does not read (it targets inflection *classes*).
+    if resolved == "inflection_feature":
+        try:
+            obj = _find_inflection_feature_or_value(handle, guid)
+            raw = _read_inflection_feature(obj, _ws_defs(handle))
+            if raw is None:
+                return None
+            filtered = _filter_props(raw)
+            if meta_out is not None:
+                meta_out.update(_grammar_scalar_meta(list(filtered.keys())))
+            return filtered
+        except Exception as _exc:
+            logging.warning(
+                "props_for: inflection-feature read failed for guid=%r: %s: %s",
+                guid, type(_exc).__name__, _exc,
+            )
+            return None
+
     # -- Gap category: direct-read fallback -----------------------------------
     if is_gap:
         include_bool = resolved == "slot"
         try:
             obj = _find_gap_object(handle, resolved, guid, owner_guid)
-            raw = _direct_read_gap(obj, include_optional_bool=include_bool)
+            raw = _direct_read_gap(obj, include_optional_bool=include_bool, ws_defs=_ws_defs(handle))
             if raw is None:
                 return None
             # R-b + R-c filtering applied after direct-read; custom fields not
             # applicable to gap categories (no GetAllFields equivalent).
-            return _filter_props(raw)
+            filtered = _filter_props(raw)
+            if meta_out is not None:
+                meta_out.update(_grammar_scalar_meta(list(filtered.keys())))
+            return filtered
         except Exception as _exc:
             logging.warning(
                 "props_for: gap direct-read failed for category=%r guid=%r: %s: %s",
@@ -1143,6 +1306,20 @@ def props_for(
         if raw is None:
             return None
 
+        # Natural class: GetSyncableProperties returns members as bare-GUID
+        # "PhonemeGuids" (dropped by the key filter).  Resolve them (and any
+        # feature-based constraints) to human labels the pane can show.
+        if resolved == "natural_class":
+            _enrich_natural_class(obj, raw)
+
+        # Phoneme: GetSyncableProperties returns "Features" as a list of
+        # {"FeatureGuid":…, "ValueGuid":…} specs (feature/value GUIDs that
+        # ApplySyncableProperties rewires against the target feature system).
+        # "Features" does NOT end in "Guid", so the R-c key filter keeps it and
+        # the pane would render raw GUID dicts.  Resolve to human labels.
+        if resolved == "phoneme":
+            _enrich_phoneme(obj, raw)
+
         # R-a: append custom fields (never replaces standard fields; exception-safe)
         _append_custom_fields(handle, obj, resolved, raw)
 
@@ -1155,6 +1332,9 @@ def props_for(
         # Child machine keys (fingerprint-derived, contain \x1f) never collide
         # with scalar property names.
         if resolved == "entry" and meta_out is not None:
+            # Stamp FieldWorks ordering + labels onto the entry-level scalars
+            # (standard props + custom fields) already in `filtered`.
+            meta_out.update(_entry_scalar_meta(list(filtered.keys())))
             try:
                 child_notes: list[str] = []
                 child_props, child_meta = _gather_entry_nested(handle, obj, child_notes)
@@ -1168,6 +1348,9 @@ def props_for(
                     "props_for: _gather_entry_nested failed for guid=%r: %s: %s",
                     guid, type(_ne).__name__, _ne,
                 )
+        elif meta_out is not None:
+            # Non-entry grammar object: Name/Abbreviation/Description-first order.
+            meta_out.update(_grammar_scalar_meta(list(filtered.keys())))
         return filtered
     except Exception as _exc:
         logging.warning(
@@ -1363,11 +1546,11 @@ def _filter_props(props: dict[str, Any]) -> dict[str, Any]:
 # ============================================================================
 # Namespacing scheme:
 #   - Object-level custom fields (e.g. LexEntry): key = "CustomField.<FieldName>"
-#     (prefixed to avoid collisions with standard props such as "Name")
-#   - Child-object custom fields:
-#       LexSense children  -> "Sense.<FieldName>"
-#       MoForm children    -> "Allomorph.<FieldName>"
-#       LexExampleSentence -> "Example.<FieldName>"
+#     (prefixed to avoid collisions with standard props such as "Name").
+#   - Child-object custom fields (an entry's senses / allomorphs / examples) are
+#     NOT flattened here; _gather_entry_nested emits them as nested child fields
+#     keyed on their owning sense/allomorph token, so each renders last within
+#     its own section (FLEx convention).
 # Custom fields always pass R-c (user-editable by definition); R-b still applies.
 
 # Maps category key -> owner_class string for GetAllFields
@@ -1421,44 +1604,434 @@ def _read_custom_fields(handle: Any, obj: Any, owner_class: str, prefix: str) ->
 # ============================================================================
 # spec-023: Nested entry gather
 # ============================================================================
-# KeyMeta = (display_name: str, sort_key: tuple, indent: int)
+# KeyMeta = (display_name: str, sort_key: tuple, indent: int, group: str)
 # Returned in the meta dict alongside props so diff_props can stamp FieldDiffs.
 #
-# Kind rank for sort_key[0]: entry=0, sense=1, msa=2, allomorph=3
-# (matches FLEx top-to-bottom layout per data-model.md §3).
+# sort_key = ((kind_rank, ordinal), field_order).  Kind rank orders the whole
+# preview top-to-bottom, mirroring FieldWorks' LexEntry "detail/Normal" layout
+# (fieldworks/DistFiles/Language Explorer/Configuration/Parts/LexEntry.fwlayout):
+#   entry scalars (0) -> Senses (1) -> AlternateForms/allomorphs (2).
+# Grammatical info (MSA) is NOT a separate rank: FLEx shows it inside each
+# sense (LexSense.fwlayout MsaCombo), so it is emitted as a sense field
+# (field_order after Definition) and nests under its own sense.
 # ============================================================================
 
-_KIND_RANK: dict[str, int] = {"entry": 0, "sense": 1, "msa": 2, "allomorph": 3}
+_KIND_RANK: dict[str, int] = {"entry": 0, "sense": 1, "allomorph": 2}
 
 
-def _ms_to_dict(prop: Any) -> dict[str, str]:
-    """Coerce an IMultiUnicode / IMultiString prop to {ws_id: text} dict.
+# Entry-level scalar ordering + labels, mirroring the FieldWorks LexEntry
+# "detail/Normal" layout part order (LexEntry.fwlayout:5).  Only the fields
+# GetSyncableProperties actually emits for a LexEntry are listed; the rest of
+# the FLEx layout (dialect labels, complex forms, pronunciations, etymologies)
+# is not part of the transfer payload.
+_ENTRY_SCALAR_ORDER: dict[str, int] = {
+    "LexemeForm": 0,
+    "CitationForm": 1,
+    "Comment": 2,
+    "LiteralMeaning": 3,
+    "Bibliography": 4,
+}
+_ENTRY_SCALAR_LABELS: dict[str, str] = {
+    "LexemeForm": "Lexeme Form",
+    "CitationForm": "Citation Form",
+    "Comment": "Note",  # FLEx labels the entry-level Comment field "Note"
+    "LiteralMeaning": "Literal Meaning",
+    "Bibliography": "Bibliography",
+}
+_ENTRY_SCALAR_UNKNOWN_ORDER = 80  # standard-but-unlisted scalar: after known
+_CUSTOM_FIELD_ORDER = 90          # object-level custom fields: after standard
 
-    Returns {} on any failure.  Same strategy as _direct_read_gap but
-    returns a plain dict rather than nesting under a field name.
+
+def _entry_scalar_meta(keys: list[str]) -> dict[str, Any]:
+    """Build ``{key: (display_name, sort_key, indent, group)}`` for entry scalars.
+
+    Covers standard entry properties (ordered per FieldWorks) and object-level
+    custom fields.  Custom fields sort last, matching FLEx's placement of the
+    custom-field block after the standard entry fields.  Nested-child keys
+    (which contain the ``\\x1f`` unit separator) are skipped —
+    ``_gather_entry_nested`` owns those, including *child* custom fields, which
+    now nest last within their own sense/allomorph section.  All scalars use
+    kind_rank 0 so they sort before any nested child group.
+    """
+    meta: dict[str, Any] = {}
+    for key in keys:
+        if "\x1f" in key:
+            continue  # nested-child machine key — handled by _gather_entry_nested
+        # Object-level custom field: CustomField.<f>
+        if key.startswith("CustomField."):
+            fname = key[len("CustomField."):]
+            meta[key] = (fname, ((0, 0), _CUSTOM_FIELD_ORDER), 0, "")
+            continue
+        # Standard entry scalar
+        order = _ENTRY_SCALAR_ORDER.get(key, _ENTRY_SCALAR_UNKNOWN_ORDER)
+        label = _ENTRY_SCALAR_LABELS.get(key, key)
+        meta[key] = (label, ((0, 0), order), 0, "")
+    return meta
+
+
+# Generic display order for non-entry grammar objects (POS, phonemes, natural
+# classes, inflection features, environments, …).  Name -> Abbreviation ->
+# Description first (FLEx's own field order for a possibility-like item), then
+# derived member/feature/value lists, then everything else alphabetically.
+_GRAMMAR_FIELD_ORDER: dict[str, int] = {
+    "Name": 0,
+    "Abbreviation": 1,
+    "Description": 2,
+    "Members": 3,
+    "Features": 4,
+    "Values": 5,
+}
+_GRAMMAR_FIELD_UNKNOWN_ORDER = 50
+
+
+def _grammar_scalar_meta(keys: list[str]) -> dict[str, Any]:
+    """Ordering meta for a non-entry grammar object's flat fields.
+
+    Name/Abbreviation/Description lead (so a field with an abbreviation or
+    description always shows in FLEx order), followed by derived
+    Members/Features/Values, custom fields, then any remaining fields
+    alphabetically (tie-broken by ``field_name`` in ``diff_props``).
+    """
+    meta: dict[str, Any] = {}
+    for key in keys:
+        if "\x1f" in key:
+            continue
+        if key.startswith("CustomField."):
+            fname = key[len("CustomField."):]
+            meta[key] = (fname, ((0, 0), _CUSTOM_FIELD_ORDER), 0, "")
+            continue
+        order = _GRAMMAR_FIELD_ORDER.get(key, _GRAMMAR_FIELD_UNKNOWN_ORDER)
+        meta[key] = (key, ((0, 0), order), 0, "")
+    return meta
+
+
+# ============================================================================
+# Object enrichment: natural-class members/features, inflection-feature values
+# ============================================================================
+# These read reference/owning collections that GetSyncableProperties either
+# omits (feature-based NC features), returns as bare GUIDs the filter drops
+# (segment-based NC PhonemeGuids), or resolves against the wrong object type
+# (inflection features vs. inflection classes).  All reads are duck-typed and
+# guarded so headless fakes and edge objects never raise.
+
+
+def _lcm_cast(obj: Any, iface_name: str) -> Any:
+    """Best-effort cast of an LCM object to an interface by name.
+
+    Returns ``obj`` unchanged when SIL.LCModel is unavailable (headless tests)
+    or the cast fails, so duck-typed fakes keep working.
+    """
+    if obj is None:
+        return obj
+    try:
+        import SIL.LCModel as _lcm  # lazy; absent in headless test env
+
+        iface = getattr(_lcm, iface_name, None)
+        if iface is not None:
+            return iface(obj)
+    except Exception:
+        pass
+    return obj
+
+
+def _short_guid(obj: Any) -> str:
+    """Return an 8-char GUID prefix for a last-resort label."""
+    g = _obj_guid(obj)
+    return g[:8] if g else "?"
+
+
+def _phoneme_label(ph: Any) -> str:
+    """Grapheme label for a phoneme.
+
+    A phoneme's grapheme lives in its (vernacular) ``Name``; the analysis
+    alternative is frequently empty, which is why reading only the best
+    *analysis* string yields a bare GUID for graphemes like ``bh``/``ny``.
+    Order: vernacular Name -> analysis Name -> first code representation ->
+    short GUID.
+    """
+    name = getattr(ph, "Name", None)
+    if isinstance(name, dict):  # duck-typed fake
+        val = next(iter(name.values()), "")
+        if val:
+            return str(val)
+    for alt in ("BestVernacularAlternative", "BestAnalysisAlternative"):
+        try:
+            best = getattr(name, alt, None)
+            txt = getattr(best, "Text", None) if best is not None else None
+            if txt and txt != "***":
+                return txt
+        except Exception:
+            pass
+    try:
+        for code in getattr(ph, "CodesOS", None) or []:
+            rep = getattr(code, "Representation", None)
+            for alt in ("BestVernacularAlternative", "BestAnalysisAlternative"):
+                best = getattr(rep, alt, None)
+                txt = getattr(best, "Text", None) if best is not None else None
+                if txt and txt != "***":
+                    return txt
+    except Exception:
+        pass
+    return _short_guid(ph)
+
+
+def _natural_class_members(nc: Any) -> list[str]:
+    """Ordered grapheme labels of a segment-based natural class's phonemes."""
+    out: list[str] = []
+    seg_nc = _lcm_cast(nc, "IPhNCSegments")
+    try:
+        for ph in getattr(seg_nc, "SegmentsRC", None) or []:
+            out.append(_phoneme_label(_lcm_cast(ph, "IPhPhoneme")))
+    except Exception as _e:
+        logging.debug("_natural_class_members: read failed: %s", _e)
+    return out
+
+
+def _natural_class_features(nc: Any) -> list[str]:
+    """Feature-spec labels for a feature-based natural class (IPhNCFeatures).
+
+    Returns ``["feature=value", …]`` (or bare feature names when the value is
+    unreadable).  Empty for segment-based classes or on any read failure.
+    """
+    out: list[str] = []
+    feat_nc = _lcm_cast(nc, "IPhNCFeatures")
+    fs = getattr(feat_nc, "FeaturesOA", None)
+    if fs is None:
+        return out
+    try:
+        for spec in getattr(fs, "FeatureSpecsOC", None) or []:
+            fname = _best_analysis_text(getattr(getattr(spec, "FeatureRA", None), "Name", None))
+            val = ""
+            v = getattr(spec, "ValueRA", None)
+            if v is not None:
+                val = (_best_analysis_text(getattr(v, "Abbreviation", None))
+                       or _best_analysis_text(getattr(v, "Name", None)))
+            if fname or val:
+                out.append(f"{fname}={val}" if (fname and val) else (fname or val))
+    except Exception as _e:
+        logging.debug("_natural_class_features: read failed: %s", _e)
+    return out
+
+
+def _enrich_natural_class(nc: Any, raw: dict[str, Any]) -> None:
+    """Replace the dropped ``PhonemeGuids`` with resolved Members / Features.
+
+    Mutates ``raw`` in place: removes the raw-GUID key and adds a human
+    ``Members`` list (segment-based) and/or ``Features`` list (feature-based).
+    """
+    raw.pop("PhonemeGuids", None)
+    try:
+        members = _natural_class_members(nc)
+        if members:
+            raw["Members"] = members
+    except Exception as _e:  # pragma: no cover — defensive
+        logging.debug("_enrich_natural_class: members failed: %s", _e)
+    try:
+        features = _natural_class_features(nc)
+        if features:
+            raw["Features"] = features
+    except Exception as _e:  # pragma: no cover — defensive
+        logging.debug("_enrich_natural_class: features failed: %s", _e)
+
+
+def _closed_value_label(spec: Any) -> str:
+    """Human ``"feature:value"`` label for one ``IFsClosedValue`` feature spec.
+
+    Prefers FieldWorks' own ``LongName`` (e.g. ``"high:+"``) — the exact string
+    FLEx shows for a spec in a phoneme's feature structure.  Falls back to
+    reconstructing ``<feat-abbr>:<value-abbr>`` (or names) from
+    ``FeatureRA``/``ValueRA`` when ``LongName`` is unreadable (headless fakes /
+    edge objects).  Returns ``""`` when nothing is readable.
+    """
+    cv = _lcm_cast(spec, "IFsClosedValue")
+    try:
+        ln = getattr(cv, "LongName", None)
+        if isinstance(ln, str) and ln.strip():
+            return ln.strip()
+    except Exception:
+        pass
+    feat = getattr(cv, "FeatureRA", None)
+    val = getattr(cv, "ValueRA", None)
+    fname = (_best_analysis_text(getattr(feat, "Abbreviation", None))
+             or _best_analysis_text(getattr(feat, "Name", None)))
+    vname = (_best_analysis_text(getattr(val, "Abbreviation", None))
+             or _best_analysis_text(getattr(val, "Name", None)))
+    if fname and vname:
+        return f"{fname}:{vname}"
+    return fname or vname
+
+
+def _phoneme_feature_labels(ph: Any) -> list[str]:
+    """Sorted ``"feature:value"`` labels for a phoneme's phonological features.
+
+    Reads the phoneme's owned feature structure
+    (``FeaturesOA.FeatureSpecsOC``) and renders each closed-value spec via
+    ``_closed_value_label``.  The result is **sorted**: ``FeatureSpecsOC`` is an
+    *unordered* collection, so two reads (or source vs target) would otherwise
+    differ only in spec order and manufacture spurious diff noise.
+    """
+    out: list[str] = []
+    fs = getattr(ph, "FeaturesOA", None)
+    if fs is None:
+        return out
+    try:
+        for spec in getattr(fs, "FeatureSpecsOC", None) or []:
+            label = _closed_value_label(spec)
+            if label:
+                out.append(label)
+    except Exception as _e:
+        logging.debug("_phoneme_feature_labels: read failed: %s", _e)
+    return sorted(out)
+
+
+def _enrich_phoneme(ph: Any, raw: dict[str, Any]) -> None:
+    """Replace the raw ``Features`` GUID-spec list with resolved labels.
+
+    ``PhonemeOperations.GetSyncableProperties`` returns ``Features`` as a list
+    of ``{"FeatureGuid":…, "ValueGuid":…}`` dicts (the feature/value GUIDs
+    ``ApplySyncableProperties`` rewires against the target project's feature
+    system).  Since ``"Features"`` doesn't end in ``"Guid"``, the R-c key filter
+    keeps it and the pane renders the raw GUID dicts.  Mutates ``raw`` in place:
+    drops the backward-compat ``FeaturesGuid`` scalar and rewrites ``Features``
+    to a sorted list of ``"feature:value"`` labels (FLEx's own feature-struct
+    display).  If no label resolves, the raw list is dropped rather than leaking
+    ``{"FeatureGuid":…}`` dicts into the pane.
+    """
+    raw.pop("FeaturesGuid", None)
+    if "Features" not in raw:
+        return
+    try:
+        labels = _phoneme_feature_labels(ph)
+    except Exception as _e:  # pragma: no cover — defensive
+        logging.debug("_enrich_phoneme: feature read failed: %s", _e)
+        labels = []
+    if labels:
+        raw["Features"] = labels
+    else:
+        raw.pop("Features", None)
+
+
+def _find_inflection_feature_or_value(handle: Any, guid: str) -> Any:
+    """Locate an inflection feature (IFsClosedFeature) OR one of its symbolic
+    values (IFsSymFeatVal) by GUID.
+
+    The picker tree lists both features (depth 0) and their values (depth 1),
+    so a preview lookup must search both.  ``InflectionFeatures.FeatureGetAll``
+    returns only the feature definitions; values live in ``ValuesOC`` (the
+    ``FeatureGetValues`` wrapper returns nothing on the installed build, so we
+    read ``ValuesOC`` directly via a guarded cast).
+    """
+    try:
+        feats = handle.InflectionFeatures.FeatureGetAll()
+    except Exception:
+        return None
+    for feat in feats or []:
+        if _guid_eq(_obj_guid(feat), guid):
+            return _unwrap(feat)
+        closed = _lcm_cast(feat, "IFsClosedFeature")
+        try:
+            for val in getattr(closed, "ValuesOC", None) or []:
+                if _guid_eq(_obj_guid(val), guid):
+                    return _unwrap(val)
+        except Exception:
+            continue
+    return None
+
+
+def _read_inflection_feature(
+    obj: Any, ws_defs: list[tuple[str, Any]] | None = None
+) -> dict[str, Any] | None:
+    """Read Name / Abbreviation / Description of a feature or value, plus (for a
+    closed feature) the list of its symbolic value labels.
+
+    GetSyncableProperties on InflectionFeatureOperations targets inflection
+    *classes* (IMoInflClass), not IFsClosedFeature/IFsSymFeatVal, so it returns
+    nothing for these objects — hence the empty preview this replaces.
+    """
+    if obj is None:
+        return None
+    result: dict[str, Any] = {}
+    for field_name in ("Name", "Abbreviation", "Description"):
+        prop = getattr(obj, field_name, None)
+        if prop is None:
+            continue
+        d = _ms_to_dict(prop, ws_defs)
+        if d:
+            result[field_name] = d
+    # Values (present only on closed features, not on individual values)
+    closed = _lcm_cast(obj, "IFsClosedFeature")
+    labels: list[str] = []
+    try:
+        for val in getattr(closed, "ValuesOC", None) or []:
+            sv = _lcm_cast(val, "IFsSymFeatVal")
+            label = (_best_analysis_text(getattr(sv, "Abbreviation", None))
+                     or _best_analysis_text(getattr(sv, "Name", None)))
+            if label:
+                labels.append(label)
+    except Exception as _e:
+        logging.debug("_read_inflection_feature: ValuesOC read failed: %s", _e)
+    if labels:
+        result["Values"] = labels
+    return result if result else None
+
+
+def _ms_to_dict(prop: Any, ws_defs: list[tuple[str, Any]] | None = None) -> dict[str, str]:
+    """Coerce an IMultiUnicode / IMultiString prop to a ``{ws_id: text}`` dict.
+
+    Returns ``{}`` on any failure.  ``ws_defs`` is ``[(ws_id, ws_handle), …]``
+    from ``_ws_defs(handle)``.
+
+    Reading strategy (in order):
+    1. duck-typed dict (test fakes);
+    2. **WS enumeration** — ``prop.get_String(ws_handle)`` for each ws in
+       ``ws_defs``.  This is the reliable path and mirrors flexicon's own
+       ``GetSyncableProperties``;
+    3. ``StringCount`` / ``GetStringFromIndex`` fallback.  Note that on the
+       installed build ``GetStringFromIndex(i)`` returns a ``(tss, ws_handle)``
+       **tuple**, not the string — the previous code mis-read that tuple and
+       silently produced ``{}`` (the cause of empty affix/stem previews).
     """
     ws_dict: dict[str, str] = {}
     if prop is None:
         return ws_dict
-    # Duck-typed dict (test fakes)
+    # 1. Duck-typed dict (test fakes)
     if isinstance(prop, dict):
         return {str(k): str(v) for k, v in prop.items() if v}
+
+    # 2. WS enumeration via get_String(ws_handle) — the reliable path.
+    if ws_defs:
+        try:
+            from SIL.LCModel.Core.KernelInterfaces import ITsString  # lazy
+        except Exception:
+            ITsString = None  # type: ignore[assignment]
+        for wid, wh in ws_defs:
+            try:
+                tss = prop.get_String(wh)
+                text = ITsString(tss).Text if ITsString is not None else getattr(tss, "Text", None)
+                if text and text != "***":
+                    ws_dict[wid] = text
+            except Exception:
+                continue
+        if ws_dict:
+            return ws_dict
+
+    # 3. StringCount / GetStringFromIndex fallback (handles the tuple return).
     try:
         count = getattr(prop, "StringCount", None)
         if count is not None:
             for i in range(count):
                 try:
-                    tss = prop.GetStringFromIndex(i)
+                    res = prop.GetStringFromIndex(i)
+                    tss = res[0] if isinstance(res, tuple) else res
                     ws_obj = (
                         getattr(tss, "WritingSystem", None)
                         or getattr(tss, "get_WritingSystem", lambda: None)()
                     )
-                    if ws_obj is not None:
-                        wid = _safe_ws_id(ws_obj)
-                        if wid:
-                            text = str(getattr(tss, "Text", "") or "")
-                            if text:
-                                ws_dict[wid] = text
+                    wid = _safe_ws_id(ws_obj) if ws_obj is not None else ""
+                    if wid:
+                        text = str(getattr(tss, "Text", "") or "")
+                        if text and text != "***":
+                            ws_dict[wid] = text
                 except Exception:
                     continue
         elif hasattr(prop, "items"):
@@ -1586,20 +2159,22 @@ def _gather_entry_nested(
         from .fingerprints import (  # lazy; Qt-free
             allomorph_token_from_obj,
             sense_token,
-            msa_token,
             machine_key,
         )
     else:
         from fingerprints import (  # type: ignore
             allomorph_token_from_obj,
             sense_token,
-            msa_token,
             machine_key,
         )
 
     props: dict[str, Any] = {}
     meta: dict[str, Any] = {}
     ws_handle = _default_vern_ws(handle)
+    # Enumerated once; forwarded to every multistring read so Gloss/Definition/
+    # Form/Comment resolve via get_String(ws_handle) rather than the broken
+    # GetStringFromIndex tuple path.
+    ws_defs = _ws_defs(handle)
 
     # ------------------------------------------------------------------
     # Helper: register one child field
@@ -1611,16 +2186,25 @@ def _gather_entry_nested(
         value: Any,
         kind_rank: int,
         ordinal: int,
-        field_order: int,
-        display_prefix: str,
+        field_order: float,
+        group_label: str,
+        indent: int = 1,
     ) -> None:
+        """Register one non-empty child field.
+
+        ``field_label`` is BOTH the machine-key component and the display
+        label (e.g. ``"Gloss"``); ``group_label`` is the header the field
+        nests under (e.g. ``"Sense 1"``); ``indent`` is 0 for entry-level
+        fields promoted out of a child (e.g. the lexeme form's morph type).
+        Source and target run identical code, so matched children share a
+        machine key and join per-field.
+        """
         if _is_empty_value(value):
             return
         mk = machine_key(kind, tok, field_label)
         props[mk] = value
-        dn = f"{display_prefix} > {field_label}"
         sk = ((kind_rank, ordinal), field_order)
-        meta[mk] = (dn, sk, 1)
+        meta[mk] = (field_label, sk, indent, group_label)
 
     # ------------------------------------------------------------------
     # Senses
@@ -1655,13 +2239,16 @@ def _gather_entry_nested(
         ordinal = s_idx + 1
         gloss_text = sense_gloss_raw[s_idx]
         tok = sense_token(gloss_text, gloss_ordinals[s_idx])
-        display_prefix = f"Sense {ordinal}"
+        group_label = f"Sense {ordinal}"
+
+        # Field order mirrors LexSense.fwlayout detail/Normal:
+        #   Gloss -> Definition -> Grammatical Info (MsaCombo).
 
         # Gloss
         try:
             gloss_prop = getattr(sense, "Gloss", None)
             if gloss_prop is not None:
-                _add_child("sense", tok, "Gloss", _ms_to_dict(gloss_prop), 1, ordinal, 0, display_prefix)
+                _add_child("sense", tok, "Gloss", _ms_to_dict(gloss_prop, ws_defs), 1, ordinal, 0, group_label)
         except Exception as _e:
             notes_out.append(f"Sense {ordinal} Gloss: could not read ({type(_e).__name__})")
 
@@ -1669,50 +2256,85 @@ def _gather_entry_nested(
         try:
             def_prop = getattr(sense, "Definition", None)
             if def_prop is not None:
-                _add_child("sense", tok, "Definition", _ms_to_dict(def_prop), 1, ordinal, 1, display_prefix)
+                _add_child("sense", tok, "Definition", _ms_to_dict(def_prop, ws_defs), 1, ordinal, 1, group_label)
         except Exception as _e:
             notes_out.append(f"Sense {ordinal} Definition: could not read ({type(_e).__name__})")
 
-        # MSA label
+        # Grammatical Info (MSA) — FLEx shows this inside the sense (MsaCombo),
+        # so it is a sense field keyed on the sense token, not a separate group.
         try:
             msa_obj = getattr(sense, "MorphoSyntaxAnalysisRA", None)
             if msa_obj is not None:
                 label = _msa_label_for_gather(msa_obj)
                 if label:
-                    msa_tok = msa_token(label)
-                    _add_child("msa", msa_tok, "GramInfo", label, 2, ordinal, 0, f"{display_prefix} > Gram. Info")
+                    _add_child("sense", tok, "Grammatical Info", label, 1, ordinal, 2, group_label)
         except Exception as _e:
-            notes_out.append(f"Sense {ordinal} GramInfo: could not read ({type(_e).__name__})")
+            notes_out.append(f"Sense {ordinal} Grammatical Info: could not read ({type(_e).__name__})")
+
+        # Sense custom fields — last within the sense (FLEx convention).
+        try:
+            cf = _read_custom_fields(handle, sense, "LexSense", "")
+            for i, fname in enumerate(sorted(cf)):
+                _add_child("sense", tok, fname, cf[fname], 1, ordinal, 10 + i, group_label)
+        except Exception as _e:
+            notes_out.append(f"Sense {ordinal} custom fields: could not read ({type(_e).__name__})")
+
+        # Example custom fields — deeper still; shown after the sense's own
+        # custom fields, prefixed so their origin is clear.
+        try:
+            ex_cf: dict[str, Any] = {}
+            for ex in getattr(sense, "ExamplesOS", None) or []:
+                ex_cf.update(_read_custom_fields(handle, ex, "LexExampleSentence", ""))
+            for i, fname in enumerate(sorted(ex_cf)):
+                _add_child("sense", tok, f"Example: {fname}", ex_cf[fname], 1, ordinal, 30 + i, group_label)
+        except Exception as _e:
+            notes_out.append(f"Sense {ordinal} example custom fields: could not read ({type(_e).__name__})")
 
     # ------------------------------------------------------------------
-    # Allomorphs (LexemeForm + AlternateForms)
+    # Lexeme form — NOT an allomorph.  Its form is already the entry-level
+    # "Lexeme Form" scalar (from GetSyncableProperties), so repeating it as
+    # "Allomorph 1 > Form" is redundant AND causes source/target to split into
+    # two unmatched allomorphs when the form changes (dragging the unchanged
+    # Morph Type along as a duplicate).  Instead, surface just its morph type
+    # as an entry-level field, mirroring FLEx (the morph type sits beside the
+    # headword).  A fixed join token makes source/target always pair up.
     # ------------------------------------------------------------------
-    allos: list[Any] = []
     try:
         lf = getattr(obj, "LexemeFormOA", None)
         if lf is not None:
-            allos.append(lf)
+            mt_label = _morph_type_label(lf)
+            if mt_label:
+                _add_child("lexeme", ("lexeme_form",), "Morph Type", mt_label,
+                           0, 0, 0.5, "", indent=0)
     except Exception as _e:
-        notes_out.append(f"LexemeForm: could not read ({type(_e).__name__})")
+        notes_out.append(f"LexemeForm morph type: could not read ({type(_e).__name__})")
+
+    # ------------------------------------------------------------------
+    # Allomorphs = AlternateForms only (FLEx's "Allomorphs" section).
+    # ------------------------------------------------------------------
     try:
-        alt_forms = list(getattr(obj, "AlternateFormsOS", []) or [])
-        allos.extend(alt_forms)
+        allos = list(getattr(obj, "AlternateFormsOS", []) or [])
     except Exception as _e:
+        allos = []
         notes_out.append(f"AlternateForms: could not read list ({type(_e).__name__})")
 
     for a_idx, allo in enumerate(allos):
         ordinal = a_idx + 1
-        display_prefix = f"Allomorph {ordinal}"
+        group_label = f"Allomorph {ordinal}"
         try:
             tok = allomorph_token_from_obj(allo, ws_handle)
         except Exception:
             tok = ("allomorph", "", "")
 
+        # Field order mirrors MoStemAllomorph / MoAffixAllomorph detail/Normal
+        # (Morphology.fwlayout): Form -> Morph Type -> Environments (PhoneEnv);
+        # Comment is appended last (not in the FLEx allomorph detail layout).
+
         # Form (multi-WS dict)
         try:
             form_prop = getattr(allo, "Form", None)
             if form_prop is not None:
-                _add_child("allomorph", tok, "Form", _ms_to_dict(form_prop), 3, ordinal, 0, display_prefix)
+                _add_child("allomorph", tok, "Form", _ms_to_dict(form_prop, ws_defs), 2, ordinal, 0, group_label)
         except Exception as _e:
             notes_out.append(f"Allomorph {ordinal} Form: could not read ({type(_e).__name__})")
 
@@ -1720,15 +2342,15 @@ def _gather_entry_nested(
         try:
             mt_label = _morph_type_label(allo)
             if mt_label:
-                _add_child("allomorph", tok, "MorphType", mt_label, 3, ordinal, 1, display_prefix)
+                _add_child("allomorph", tok, "Morph Type", mt_label, 2, ordinal, 1, group_label)
         except Exception as _e:
-            notes_out.append(f"Allomorph {ordinal} MorphType: could not read ({type(_e).__name__})")
+            notes_out.append(f"Allomorph {ordinal} Morph Type: could not read ({type(_e).__name__})")
 
         # Environments
         try:
             envs = _env_labels(allo)
             if envs:
-                _add_child("allomorph", tok, "Environments", envs, 3, ordinal, 2, display_prefix)
+                _add_child("allomorph", tok, "Environments", envs, 2, ordinal, 2, group_label)
         except Exception as _e:
             notes_out.append(f"Allomorph {ordinal} Environments: could not read ({type(_e).__name__})")
 
@@ -1736,57 +2358,35 @@ def _gather_entry_nested(
         try:
             comment_prop = getattr(allo, "Comment", None)
             if comment_prop is not None:
-                _add_child("allomorph", tok, "Comment", _ms_to_dict(comment_prop), 3, ordinal, 3, display_prefix)
+                _add_child("allomorph", tok, "Comment", _ms_to_dict(comment_prop, ws_defs), 2, ordinal, 3, group_label)
         except Exception as _e:
             notes_out.append(f"Allomorph {ordinal} Comment: could not read ({type(_e).__name__})")
+
+        # Allomorph custom fields — last within the allomorph (FLEx convention).
+        try:
+            cf = _read_custom_fields(handle, allo, "MoForm", "")
+            for i, fname in enumerate(sorted(cf)):
+                _add_child("allomorph", tok, fname, cf[fname], 2, ordinal, 10 + i, group_label)
+        except Exception as _e:
+            notes_out.append(f"Allomorph {ordinal} custom fields: could not read ({type(_e).__name__})")
 
     return props, meta
 
 
 def _append_custom_fields(handle: Any, obj: Any, category: str, props: dict[str, Any]) -> None:
-    """Append custom fields (and child custom fields for entry) to props in-place.
+    """Append an object's OWN custom fields to ``props`` in-place (prefix
+    ``CustomField.``).
 
-    Never raises. Silently skips if the category has no known owner_class.
+    Child custom fields (of an entry's senses/allomorphs/examples) are NOT
+    added here: they are gathered by ``_gather_entry_nested`` so each nests
+    last within its own sense/allomorph section (FLEx convention).  Never
+    raises; silently skips a category with no known owner_class.
     """
     try:
         owner_class = _CUSTOM_FIELD_OWNER_CLASS.get(category)
         if owner_class is None:
             return
-
-        # Object-level custom fields — prefix "CustomField."
-        obj_cf = _read_custom_fields(handle, obj, owner_class, "CustomField.")
-        props.update(obj_cf)
-
-        # Child walks: only for "entry" (LexEntry children)
-        if category == "entry":
-            # Senses -> "Sense.<FieldName>"
-            try:
-                for sense in getattr(obj, "SensesOS", ()):
-                    cf = _read_custom_fields(handle, sense, "LexSense", "Sense.")
-                    for k, v in cf.items():
-                        if k not in props:  # first sense wins on collision
-                            props[k] = v
-            except Exception as _e:
-                logging.debug("_append_custom_fields: SensesOS walk error: %s", _e)
-            # AlternateForms -> "Allomorph.<FieldName>"
-            try:
-                for form in getattr(obj, "AlternateFormsOS", ()):
-                    cf = _read_custom_fields(handle, form, "MoForm", "Allomorph.")
-                    for k, v in cf.items():
-                        if k not in props:
-                            props[k] = v
-            except Exception as _e:
-                logging.debug("_append_custom_fields: AlternateFormsOS walk error: %s", _e)
-            # Examples (via senses) -> "Example.<FieldName>"
-            try:
-                for sense in getattr(obj, "SensesOS", ()):
-                    for ex in getattr(sense, "ExamplesOS", ()):
-                        cf = _read_custom_fields(handle, ex, "LexExampleSentence", "Example.")
-                        for k, v in cf.items():
-                            if k not in props:
-                                props[k] = v
-            except Exception as _e:
-                logging.debug("_append_custom_fields: ExamplesOS walk error: %s", _e)
+        props.update(_read_custom_fields(handle, obj, owner_class, "CustomField."))
     except Exception as _exc:
         logging.debug("_append_custom_fields: outer failure: %s", _exc)
 
@@ -1867,10 +2467,17 @@ class MergePreviewService:
         else:
             tgt_props = self._fetch_props("target", category, target_guid, owner_guid)
 
-        # spec-023: pass source-side meta (nested child ordering/labels) to diff_props.
-        # Target meta is not needed — diff_props uses the source meta to label all
-        # matched keys (both source-only and matched pairs share the same key).
-        src_meta = self._meta_cache.get(("source", category, source_guid, owner_guid))
+        # spec-023: pass nested-child ordering/labels meta to diff_props.
+        # Merge target meta UNDER source meta: matched/source keys keep their
+        # source labels, while target-ONLY keys (e.g. a target sense whose gloss
+        # differs from every source sense, so it joins on a different token) get
+        # their target label instead of leaking a raw machine key into the pane.
+        src_meta = self._meta_cache.get(("source", category, source_guid, owner_guid)) or {}
+        combined_meta: dict[str, Any] = {}
+        if tgt_props is not None:
+            tgt_meta = self._meta_cache.get(("target", category, target_guid, owner_guid)) or {}
+            combined_meta.update(tgt_meta)
+        combined_meta.update(src_meta)  # source wins on shared keys
 
         preview = diff_props(
             src_props or {},
@@ -1878,7 +2485,7 @@ class MergePreviewService:
             mode,
             self._ws_role_of,
             status=status,
-            meta=src_meta if src_meta else None,
+            meta=combined_meta if combined_meta else None,
         )
         self._preview_cache[key] = preview
         return preview
@@ -1896,28 +2503,26 @@ class MergePreviewService:
     ) -> dict[str, Any] | None:
         """Fetch and cache a property dict (dicts only, never LCM objects).
 
-        For entry-category fetches, also populates ``_meta_cache`` with the
-        nested-gather meta (spec-023, G3).
+        Also populates ``_meta_cache`` with the ordering/label meta: entry
+        scalars + nested children for entries, and Name/Abbreviation/Description
+        ordering for every other category (spec-023, G3).
         """
         cache_key: tuple[str, str, str, str] = (side, category, guid, owner_guid)
         if cache_key in self._props_cache:
             return self._props_cache[cache_key]
 
         handle = self._source if side == "source" else self._target
-        # For entry category, collect nested-child meta alongside props.
-        resolved = _resolve_category_key(category)
-        collect_meta = resolved == "entry"
-        meta_buf: dict[str, Any] = {} if collect_meta else {}  # always a new dict
+        # Collect ordering meta for all categories (entry adds nested meta too).
+        meta_buf: dict[str, Any] = {}
         result = props_for(
             handle,
             category,
             guid,
             owner_guid=owner_guid,
             ops_table=self._ops_table,
-            meta_out=meta_buf if collect_meta else None,
+            meta_out=meta_buf,
         )
         # Cache dicts only; never retain LCM handles (FR-012)
         self._props_cache[cache_key] = result
-        if collect_meta:
-            self._meta_cache[cache_key] = meta_buf if meta_buf else None
+        self._meta_cache[cache_key] = meta_buf if meta_buf else None
         return result
