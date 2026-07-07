@@ -29,8 +29,12 @@ class _FakeOps:
     def __init__(self):
         self.written = {}
 
-    def ApplySyncableProperties(self, tgt_obj, props):
+    def ApplySyncableProperties(self, tgt_obj, props, ws_map=None, fill_gaps=False):
+        # Signature matches flexicon BaseOperations.ApplySyncableProperties
+        # (item, props, ws_map=None, fill_gaps=False); apply_update_semantic now
+        # forwards ws_map, so the fake must accept it.
         self.written.update(props)
+        self.ws_map = ws_map
 
 
 class _FakeTgtObj:

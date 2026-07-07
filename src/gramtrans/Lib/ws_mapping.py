@@ -63,6 +63,28 @@ def required_ws_set(pairs: Iterable[Tuple[str, WSKind]]) -> FrozenSet[Tuple[str,
     return frozenset(pairs)
 
 
+def to_ws_map_dict(ws_mapping) -> dict:
+    """Flatten a `WSMapping` into the ``{source_ws_id: target_ws_id}`` dict that
+    flexicon's ``BaseOperations.ApplySyncableProperties(item, props, ws_map=...)``
+    expects.
+
+    ApplySyncableProperties applies each multilingual value under the target WS
+    whose Id equals the *mapped* source Id (identity when no mapping), and
+    SILENTLY SKIPS any value whose mapped target WS Id is absent from the target
+    project. So a source vernacular Id (e.g. ``mgz``) that has no counterpart in
+    the target is dropped and the field lands empty — unless a mapping entry
+    routes it to a target WS that exists (e.g. ``mgz`` -> ``etu``). This helper
+    produces that dict once so the execute layer can pass it to every
+    ApplySyncableProperties call.
+
+    Returns ``{}`` for a None / empty mapping (identity behavior downstream).
+    """
+    if ws_mapping is None:
+        return {}
+    entries = getattr(ws_mapping, "entries", None) or ()
+    return {e.source_ws_id: e.target_ws_id for e in entries if e.target_ws_id}
+
+
 def validate(ws_mapping: WSMapping,
              required: FrozenSet[Tuple[str, WSKind]],
              *, strict_overspec: bool = False) -> None:

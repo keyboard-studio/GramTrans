@@ -508,7 +508,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 
     # Apply syncable properties (Name, Abbreviation, Description, etc.).
     src_props = source.POS.GetSyncableProperties(src_obj)
-    target.POS.ApplySyncableProperties(new_pos, src_props)
+    target.POS.ApplySyncableProperties(new_pos, src_props, ws_map=ws_mapping)
 
     apply_carrier_b(new_pos, ws, tag)
     return new_pos
@@ -1120,7 +1120,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 
     # Apply syncable properties.
     src_props = source.InflectionFeatures.GetSyncableProperties(src_obj)
-    target.InflectionFeatures.ApplySyncableProperties(new_ic, src_props)
+    target.InflectionFeatures.ApplySyncableProperties(new_ic, src_props, ws_map=ws_mapping)
 
     apply_carrier_b(new_ic, ws, tag)
     return new_ic
@@ -2913,12 +2913,16 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
     lex_db = ILexDb(cache.LangProject.LexDbOA)
+    # WS remap (source_ws_id -> target_ws_id) so vernacular/analysis content
+    # under a source WS Id the target lacks is remapped rather than silently
+    # dropped. Attached to exec_ctx by transfer.execute(); None outside a run.
+    ws_map = getattr(context, "_ws_map", None)
 
     entry_factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
     new_entry = entry_factory.Create(DotNetGuid.Parse(src_guid), lex_db)
     try:
         props = context.source_handle.LexEntry.GetSyncableProperties(src_entry)
-        target.LexEntry.ApplySyncableProperties(new_entry, props)
+        target.LexEntry.ApplySyncableProperties(new_entry, props, ws_map=ws_map)
     except (AttributeError, TypeError):
         pass
     apply_residue(new_entry, ws, tag)
@@ -2943,7 +2947,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
             continue
         try:
             sprops = context.source_handle.Senses.GetSyncableProperties(src_sense)
-            target.Senses.ApplySyncableProperties(new_sense, sprops)
+            target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
         # MSA for this sense (create once per source MSA guid).
@@ -2983,6 +2987,9 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
     entry_ie = ILexEntry(new_entry)
+    # WS remap so the vernacular lexeme-form / allomorph content lands under a
+    # target WS instead of being silently dropped (see _walk_lex_entry_closure).
+    ws_map = getattr(context, "_ws_map", None)
 
     def _mk(src_allo, is_lexeme_form):
         subclass = _dispatch_allomorph_subclass(_class_name_of(src_allo))
@@ -3006,7 +3013,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
             pass
         try:
             aprops = context.source_handle.Allomorphs.GetSyncableProperties(src_allo)
-            target.Allomorphs.ApplySyncableProperties(new_allo, aprops)
+            target.Allomorphs.ApplySyncableProperties(new_allo, aprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
         apply_residue(new_allo, ws, tag)
@@ -3645,7 +3652,7 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                                "IMoInflAffixTemplateFactory", src_guid)
             try:
                 props = source.MorphRules.GetSyncableProperties(src_tpl)
-                target.MorphRules.ApplySyncableProperties(new_tpl, props)
+                target.MorphRules.ApplySyncableProperties(new_tpl, props, ws_map=ws_mapping)
             except (AttributeError, TypeError):
                 pass
             new_typed = IMoInflAffixTemplate(new_tpl)
@@ -3859,7 +3866,19 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
                 except (AttributeError, TypeError):
                     return ()
             return ()
-        result = _plan_gold_reserved_edit(piece, category, context, _target_iter)
+        # GOLD is a LINKING mechanism, not a copy constraint (user ruling
+        # 2026-07-06): an absent GOLD phonological feature MUST be migrated,
+        # keeping its GOLD GUID, so it links to the FW catalog on the target
+        # side too — otherwise phonemes whose owned feature structures point at
+        # it are stranded (the "phon features not copied / not on phonemes"
+        # bug). materialize_absent_gold=True makes an absent GOLD item fall
+        # through to a GUID-preserving create; a GOLD item ALREADY present in
+        # the target is still skipped (it is already linked). This mirrors the
+        # gram_categories/POS decision of the same date.
+        result = _plan_gold_reserved_edit(
+            piece, category, context, _target_iter,
+            materialize_absent_gold=True,
+        )
         if result is not None:
             return result
         src_guid = _guid_str_from(piece)
@@ -4002,7 +4021,7 @@ def phonological_features_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.PhonFeatures.GetSyncableProperties(src_feat)
-        target.PhonFeatures.ApplySyncableProperties(new_feat, props)
+        target.PhonFeatures.ApplySyncableProperties(new_feat, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
     try:
@@ -4060,7 +4079,7 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.Phonemes.GetSyncableProperties(src_phon)
-        target.Phonemes.ApplySyncableProperties(new_phon, props)
+        target.Phonemes.ApplySyncableProperties(new_phon, props, ws_map=ws_mapping)
     except Exception:
         # Broadened from (AttributeError, TypeError): flexicon's
         # GetSyncableProperties raises ITsString.get_String for phonemes until
@@ -4140,7 +4159,7 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.NaturalClasses.GetSyncableProperties(src_nc)
-        target.NaturalClasses.ApplySyncableProperties(new_nc, props)
+        target.NaturalClasses.ApplySyncableProperties(new_nc, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
     # PhNCSegments: wire SegmentsRC to target-side phonemes by GUID.
@@ -4232,7 +4251,7 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.Environments.GetSyncableProperties(src_env)
-        target.Environments.ApplySyncableProperties(new_env, props)
+        target.Environments.ApplySyncableProperties(new_env, props, ws_map=ws_mapping)
     except Exception:
         # Broadened from (AttributeError, TypeError): GetSyncableProperties
         # raises ITsString.get_String for environments until the flexicon fix
@@ -4290,7 +4309,7 @@ def strata_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.Strata.GetSyncableProperties(src_stratum)
-        target.Strata.ApplySyncableProperties(new_stratum, props)
+        target.Strata.ApplySyncableProperties(new_stratum, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
     try:
@@ -4425,7 +4444,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     )
     try:
         props = source.PhonRules.GetSyncableProperties(src_rule)
-        target.PhonRules.ApplySyncableProperties(new_rule, props)
+        target.PhonRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
     except Exception:
         # PhonologicalRuleOperations does not implement GetSyncableProperties
         # (flexicon exposes only GetAll), so the base class raises

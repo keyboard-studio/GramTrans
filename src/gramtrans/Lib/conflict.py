@@ -632,7 +632,8 @@ def compute_disposition(
     return ItemDisposition.SKIP
 
 
-def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj) -> int:
+def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
+                          ws_map=None) -> int:
     """Apply the non-destructive UPDATE write semantic (022 FR-003, T011).
 
     Iterates the syncable-property keys present in both src_props and tgt_props.
@@ -647,6 +648,9 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj) -> int
         tgt_props: dict returned by GetSyncableProperties on the target object.
         ops: the Operations instance (must expose ApplySyncableProperties).
         tgt_obj: the target LCM object to write to.
+        ws_map: optional {source_ws_id: target_ws_id} dict forwarded to
+            ApplySyncableProperties so multilingual values under a source WS Id
+            the target lacks are remapped instead of silently dropped.
 
     Returns:
         int: number of fields written (0 if all-identical or all-empty-source).
@@ -661,7 +665,7 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj) -> int
             continue  # non-destructive: never blank from empty source
         # Source differs and is non-empty -> write.
         try:
-            ops.ApplySyncableProperties(tgt_obj, {key: src_val})
+            ops.ApplySyncableProperties(tgt_obj, {key: src_val}, ws_map=ws_map)
             written += 1
         except (AttributeError, TypeError):
             pass  # best-effort; caller's error handling covers the rest

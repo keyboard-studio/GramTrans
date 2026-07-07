@@ -41,6 +41,7 @@ if __package__:
         ItemDisposition,
         _phoneme_env_field_diff_enabled,
     )
+    from .ws_mapping import to_ws_map_dict
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
@@ -64,6 +65,7 @@ else:
         ItemDisposition,
         _phoneme_env_field_diff_enabled,
     )
+    from ws_mapping import to_ws_map_dict  # type: ignore
     import report as _report_module  # registers RunReport.build_from_plan
 
 
@@ -90,6 +92,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     """
     start = time.time()
 
+    # WS remap dict (source_ws_id -> target_ws_id) applied by every
+    # ApplySyncableProperties call. Without it, multilingual values under a
+    # source WS Id the target lacks (e.g. source vernacular ``mgz`` vs target
+    # ``etu``) are SILENTLY DROPPED and the field lands empty. Computed once;
+    # threaded to the create path via exec_ctx._ws_map and to the
+    # overwrite/update path via the ws_map= parameter.
+    ws_map = to_ws_map_dict(getattr(plan, "ws_mapping", None))
+
     if _log.isEnabledFor(logging.DEBUG):
         _log.debug(
             "execute: entry  mode=MOVE tag=%r actions=%d overwrites=%d skips=%d "
@@ -107,8 +117,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     leaf_failed = 0
 
     # Build index of source actions for quick lookup of pulled-in flag.
+    # plan.actions is heterogeneous: CreateDefinitionAction has no
+    # `pulled_in_by`, so read it defensively (see report.py for the same guard).
     pulled_in_guids = frozenset(
-        a.source_guid for a in plan.actions if a.pulled_in_by
+        a.source_guid for a in plan.actions if getattr(a, "pulled_in_by", ())
     )
 
     # Find every POS the plan touches (as action or skip) and execute its
@@ -163,7 +175,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             # Non-destructive UPDATE: compute disposition then apply_update_semantic.
             # LINK intent: item already present, no field writes.
             _update_skips = _execute_update_semantic(
-                ow, source, target, report_sink, tag
+                ow, source, target, report_sink, tag, ws_map=ws_map
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -176,7 +188,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         else:
             # OVERWRITE (or any unknown mode): existing destructive path.
             extra_skips.extend(
-                _execute_overwrite(ow, source, target, report_sink, tag, interactive_session)
+                _execute_overwrite(ow, source, target, report_sink, tag, interactive_session, ws_map=ws_map)
                 or []
             )
 
@@ -235,6 +247,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # plan.msa_slot_bindings / plan.lexentry_ref_bindings / plan.identity_remap.
     # RunContext is frozen=True; use object.__setattr__ to attach dynamic attr.
     object.__setattr__(exec_ctx, '_run_plan', plan)
+    # WS remap dict read by the create-path ApplySyncableProperties calls
+    # (categories.py) that only receive `context`, not the ws_map arg.
+    object.__setattr__(exec_ctx, '_ws_map', ws_map)
     # Phase 3c: collector for execute-time skips emitted by tail blocks
     # (AFFIX_TEMPLATES 17.1 sub-pass, STEMS post-pass A) — folded into the
     # run report's extra_skips after the leaf loop.
@@ -274,7 +289,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             action.category.value, action.source_guid,
         )
         try:
-            bundle["execute_action"](action, exec_ctx, plan.ws_mapping, tag)
+            bundle["execute_action"](action, exec_ctx, ws_map, tag)
             leaf_count += 1
             leaf_succeeded += 1
         except Exception as exc:
@@ -1423,7 +1438,8 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
     return filtered, tagged, skips
 
 
-def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag):
+def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
+                             ws_map=None):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -1511,7 +1527,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             return []
 
         # UPDATE: non-destructive field writes.
-        written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj)
+        written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map)
         cache = getattr(target, "Cache")
         apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
         report_sink.Info(
@@ -1571,7 +1587,7 @@ def _find_obj_by_guid(ops, guid_str: str):
 
 
 def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
-                       interactive_session=None):
+                       interactive_session=None, ws_map=None):
     """Apply a single PlannedOverwrite: look up the target object by GUID,
     pull source's syncable properties, and apply them via flexicon's
     `ApplySyncableProperties`.
@@ -1600,7 +1616,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             src_props, tgt_pre_props, tag, log,
             GrammarCategory.POS, overwrite.target_guid, tag.run_id,
         )
-        target.POS.ApplySyncableProperties(tgt_obj, src_props)
+        target.POS.ApplySyncableProperties(tgt_obj, src_props, ws_map=ws_map)
         cache = getattr(target, "Cache")
         apply_residue(tgt_obj, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
@@ -1629,7 +1645,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             return
         tgt_pre_props = target.MorphRules.GetSyncableProperties(tgt_tpl)
         src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
-        target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props)
+        target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props, ws_map=ws_map)
         cache = getattr(target, "Cache")
         apply_residue(tgt_tpl, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  Template overwritten  guid={src_guid}")
@@ -1697,7 +1713,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             cat, overwrite.target_guid, tag.run_id,
         )
         target.LexEntry.ApplySyncableProperties(
-            tgt_entry, src_props,
+            tgt_entry, src_props, ws_map=ws_map,
             fill_gaps=(getattr(overwrite, "write_mode", "overwrite") == "merge"),
         )
         cache = getattr(target, "Cache")
@@ -1753,7 +1769,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             src_props, tgt_pre_props, tag, log,
             GrammarCategory.SENSE, overwrite.target_guid, tag.run_id,
         )
-        target.Senses.ApplySyncableProperties(tgt_sense, src_props)
+        target.Senses.ApplySyncableProperties(tgt_sense, src_props, ws_map=ws_map)
         cache = getattr(target, "Cache")
         apply_residue(tgt_sense, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
@@ -1873,7 +1889,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 src_props, tgt_pre_props, tag, log,
                 GrammarCategory.ALLOMORPH, overwrite.target_guid, tag.run_id,
             )
-            target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props)
+            target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props, ws_map=ws_map)
         cache = getattr(target, "Cache")
         apply_residue(tgt_allo, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
@@ -1900,7 +1916,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_env is not None:
             try:
                 src_props = source.Environments.GetSyncableProperties(src_env)
-                target.Environments.ApplySyncableProperties(tgt_env, src_props)
+                target.Environments.ApplySyncableProperties(tgt_env, src_props, ws_map=ws_map)
             except AttributeError:
                 pass
         cache = getattr(target, "Cache")

@@ -21,6 +21,7 @@ from __future__ import annotations
 import enum
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -56,6 +57,56 @@ else:
     from debuglog import enable_from_env as _enable_debug_logging  # type: ignore
 
 _log = logging.getLogger(__name__)
+
+# PATH-CLOSE-REBIND anti-deadlock backstop.
+#
+# FLExProject.CloseProject() "saves pending changes and disposes the LCM object"
+# (releasing the file lock). When the target is co-held by another process (a
+# second FLExTools/MCP session or the FLEx GUI), the shared-XML-backend Save
+# inside CloseProject can block INDEFINITELY -- the deadlock that froze
+# coverage_report.py mid-run on the custom-field schema-write handle. A
+# co-holder is NOT reliably detectable up front: co-open succeeds and the Palaso
+# FileLock records only one owner (probe-results.md op 009). So rather than
+# hanging forever we bound every write-handle close and FAIL LOUD.
+_SCHEMA_CLOSE_TIMEOUT_S = float(
+    os.environ.get("GRAMTRANS_SCHEMA_CLOSE_TIMEOUT", "90")
+)
+
+
+def _close_project_watchdog(proj, timeout_s: float, what: str) -> None:
+    """Call ``proj.CloseProject()`` under a bounded watchdog.
+
+    Runs CloseProject on a daemon thread; if it does not return within
+    ``timeout_s`` seconds, raises ``RuntimeError`` instead of hanging forever.
+    The daemon thread is abandoned on timeout (a wedged .NET call cannot be
+    safely aborted from Python) but, being a daemon, will not block interpreter
+    exit. Any exception raised by CloseProject itself is re-raised on the
+    caller's thread, preserving the previous propagate-on-error behavior.
+    """
+    result: dict = {}
+
+    def _runner() -> None:
+        try:
+            proj.CloseProject()
+            result["ok"] = True
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on caller thread
+            result["exc"] = exc
+
+    t = threading.Thread(
+        target=_runner, name=f"gramtrans-close-{what}", daemon=True
+    )
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        raise RuntimeError(
+            f"CloseProject() for {what} did not complete within {timeout_s:g}s "
+            f"-- the target is almost certainly open in another process (a "
+            f"second FLExTools/MCP session or the FLEx GUI). Close every other "
+            f"holder of the project and re-run. (Adjust the deadline via the "
+            f"GRAMTRANS_SCHEMA_CLOSE_TIMEOUT env var.)"
+        )
+    if "exc" in result:
+        raise result["exc"]
 
 
 # ============================================================================
@@ -392,7 +443,10 @@ def _ensure_custom_fields(target_project_name: str,
             created, id(proj),
         )
     finally:
-        proj.CloseProject()
+        # Bounded close: a co-held target makes this Save/dispose hang forever.
+        _close_project_watchdog(
+            proj, _SCHEMA_CLOSE_TIMEOUT_S, "custom-field schema write"
+        )
     _log.debug(
         "_ensure_custom_fields: schema-write handle id=%s CloseProject() returned",
         id(proj),
@@ -537,9 +591,17 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
                 id(fresh_target),
             )
             try:
-                fresh_target.CloseProject()
-            except Exception:
-                pass  # don't let a close error mask the execute result/exception
+                # Bounded close (same co-held-hang risk as the schema handle);
+                # a close failure/timeout must not mask the execute result.
+                _close_project_watchdog(
+                    fresh_target, _SCHEMA_CLOSE_TIMEOUT_S,
+                    "fresh target write handle",
+                )
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "execute_move PATH-CLOSE-REBIND: fresh_target close "
+                    "failed/timed out (write persistence at risk): %s", exc,
+                )
 
     # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
     # UI passes the FlexTools report object through. For programmatic API
