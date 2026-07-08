@@ -127,13 +127,17 @@ def test_has_any_false_when_both_categories_empty():
     assert inv.has_any is False
 
 
-def test_gold_rules_excluded():
-    gold = FakeRule("gold01", "MoEndoCompound", is_gold=True)
+def test_rules_inventory_no_gold_filtering():
+    """v7.0.0 GOLD unlock: build_rules_inventory applies NO GOLD-based filter.
+    (Morphology rules are not catalog-backed and never carry a meaningful GOLD
+    flag, so an is_gold fake is an unrealistic case; this confirms the former
+    defensive filter is gone and every rule is listed.)"""
+    other = FakeRule("gold01", "MoEndoCompound", is_gold=True)
     normal = FakeRule("norm01", "MoEndoCompound")
-    src = FakeProject(compound=[gold, normal])
+    src = FakeProject(compound=[other, normal])
     inv = build_rules_inventory(src)
     guids = {r.guid for r in inv.compound.rows}
-    assert "gold01" not in guids
+    assert "gold01" in guids
     assert "norm01" in guids
 
 

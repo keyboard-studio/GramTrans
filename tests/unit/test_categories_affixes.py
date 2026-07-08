@@ -178,15 +178,20 @@ def test_enumerate_source_skips_entries_without_morphtype() -> None:
     assert [e.guid for e in items] == ["aff-1"]
 
 
-def test_enumerate_source_excludes_gold_affixes() -> None:
+def test_enumerate_source_no_gold_filtering() -> None:
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based functional filter.
+    (A LexEntry affix is not a catalog-backed ontology type and never carries a
+    real CatalogSourceId, so a fake with one set is an unrealistic case; this
+    just confirms the former defensive filter is gone and every affix is
+    enumerated.)"""
     user_aff = _Entry("aff-user", is_affix=True)
-    gold_aff = _Entry("aff-gold", is_affix=True, catalog_source_id="msa:xyz")
-    src = _handle([user_aff, gold_aff])
+    other_aff = _Entry("aff-other", is_affix=True, catalog_source_id="msa:xyz")
+    src = _handle([user_aff, other_aff])
     ctx = _ctx(src, _handle([]))
 
     items = list(_BUNDLE["enumerate_source"](ctx, None))
 
-    assert [e.guid for e in items] == ["aff-user"]
+    assert [e.guid for e in items] == ["aff-user", "aff-other"]
 
 
 def test_enumerate_source_none_selection_transfers_all() -> None:

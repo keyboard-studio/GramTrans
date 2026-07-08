@@ -218,15 +218,19 @@ def test_enumerate_excludes_degenerate_entries_without_form() -> None:
     assert {i.guid for i in items} == {"stem-1"}
 
 
-def test_enumerate_excludes_gold_stems() -> None:
-    """A stem carrying a non-empty CatalogSourceId is GOLD and excluded."""
+def test_enumerate_no_gold_filtering() -> None:
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based functional filter.
+    (A stem LexEntry is not a catalog-backed ontology type and never carries a
+    real CatalogSourceId, so a fake with one set is an unrealistic case; this
+    just confirms the former defensive filter is gone and every stem is
+    enumerated.)"""
     plain = _FakeEntry("stem-1", is_affix=False)
-    gold = _FakeEntry("stem-gold", is_affix=False, catalog_source_id="MGA:xyz")
-    src = _FakeHandle([plain, gold])
+    other = _FakeEntry("stem-other", is_affix=False, catalog_source_id="MGA:xyz")
+    src = _FakeHandle([plain, other])
     ctx = _ctx(src, _FakeHandle())
 
     items = list(_BUNDLE["enumerate_source"](ctx, None))
-    assert {i.guid for i in items} == {"stem-1"}
+    assert {i.guid for i in items} == {"stem-1", "stem-other"}
 
 
 def test_enumerate_none_selection_transfers_all_stems() -> None:

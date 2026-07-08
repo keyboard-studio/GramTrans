@@ -87,9 +87,9 @@ class ConflictMode(enum.Enum):
                 on diverged fields; a target field is NEVER blanked from an
                 empty source (FR-003).  New items are always added regardless.
     OVERWRITE : overwrite the target's existing object with source values,
-                including blanking a target field from an empty source (only
-                offered when structurally possible and not forbidden by
-                Layer-1 kind or Layer-2 IsProtected gating).
+                including blanking a target field from an empty source (offered
+                when structurally possible per the Layer-1 kind; v7.0.0 GOLD
+                unlock removed the Layer-2 IsProtected gating).
     """
     ADD_NEW = "add_new"
     LINK = "link"

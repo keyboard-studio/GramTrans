@@ -19,10 +19,12 @@ Implementation status (2026-06-20):
 - `custom_fields`, `variant_types`, `complex_form_types`, `adhoc_rules`,
   `compound_rules` retain NotImplementedError stubs pending dedicated tasks.
 
-GOLD check (Principle I, FR-022):
-  A piece whose `CatalogSourceId` attribute is non-empty is a GOLD object.
-  `plan_action` yields `Skip(GOLD_INVIOLABLE)` for such pieces; references
-  *to* GOLD objects are not skips — they are resolved refs.
+GOLD status (constitution v7.0.0):
+  GOLD / catalog / reserved items are ORDINARY items. There is NO GOLD-based
+  functional limit here — no field-lock, no enumeration filter, no create gate.
+  The old `CatalogSourceId`-based `_is_gold` skip predicate has been removed.
+  The only protected invariant (concept<->object-GUID binding) is enforced at
+  target-object creation, which is deferred to "Half 2".
 
 LCM API notes (discovered during implementation):
   - `IFsFeatStrucTypeFactory.Create(Guid)` is available for gram_categories.
@@ -76,24 +78,14 @@ else:
 
 
 # ============================================================================
-# Shared GOLD-check helper
+# GUID helper
 # ============================================================================
-
-def _is_gold(obj) -> bool:
-    """Return True iff `obj` is a GOLD LCM object.
-
-    GOLD objects carry a non-empty `CatalogSourceId` string attribute
-    (validated per research.md R6 and spec.md FR-022).  The attribute is
-    defined on IFsClosedFeature, IFsFeatStrucType (gram categories), and
-    related catalog-backed types.  A missing or empty value means the
-    object was created by the user, not from the FW/MGA catalog.
-    """
-    try:
-        csi = getattr(obj, "CatalogSourceId", None)
-        return bool(csi)
-    except Exception:
-        return False
-
+#
+# NOTE (v7.0.0 GOLD unlock): the former `_is_gold(obj)` predicate (non-empty
+# `CatalogSourceId`) has been removed. GOLD/catalog items are ordinary items and
+# no code path filters, skips, or otherwise limits them by GOLD status. Any
+# future Half-2 concept<->GUID binding enforcement should introduce its own
+# detection at that point rather than reviving a global GOLD gate.
 
 
 def _guid_str_from(obj) -> str:
@@ -188,39 +180,34 @@ def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
     return gaps, conflicts
 
 
-def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
-                             materialize_absent_gold=False):
-    """Shared GOLD_RESERVED plan_action helper (spec 017 FR-E10).
+def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
+    """Shared plan_action helper for the ontology/reserved categories (spec 017).
 
-    Constitution v7.0.0 (GOLD unlock, Half 1): GOLD / catalog / reserved items
-    are ORDINARY items. Their fields carry no special immutability and merge /
-    update exactly like any custom item. The former GOLD_INVIOLABLE field-lock
-    and the IsProtected forced-LINK downgrade are removed. The ONLY protected
-    invariant is the ontology concept<->object-GUID binding, whose enforcement
-    (GUID remapping at target-object CREATION) is deferred to "Half 2" and is
-    NOT part of this helper.
+    Constitution v7.0.0 (GOLD unlock): GOLD / catalog / reserved items are
+    ORDINARY items. Their fields carry no special immutability and merge /
+    update exactly like any custom item. All GOLD-based functional limits
+    (the former GOLD_INVIOLABLE field-lock, the IsProtected forced-LINK
+    downgrade, and the flag that gated creation of absent GOLD items) are
+    removed. The ONLY protected invariant is the ontology concept<->object-GUID
+    binding, whose enforcement (GUID remapping at target-object CREATION) is
+    deferred to "Half 2" and is NOT part of this helper.
 
     Behaviour:
     1. target_iter_fn(context.target_handle) -> scan for the source GUID.
        (GUID-equality lookup is binding preservation, not a lock -- KEPT.)
     2. If absent -> return None (caller emits PlannedAction / create).
+       Creation is unconditional, exactly like any ordinary item.
     3. If present, compare Name/Abbreviation/Description per writing system:
        - All slots equal -> Skip(ALREADY_PRESENT_BY_GUID).
        - Any gap (empty in target) and/or any diverged field -> a
          PlannedOverwrite(write_mode="merge"). The executor routes write_mode
          "merge" through apply_update_semantic when the category's ConflictMode
-         is UPDATE (the v7.0.0 default for GOLD/reserved), which fills empty
+         is UPDATE (the v7.0.0 default for these categories), which fills empty
          target fields AND updates diverged fields from a non-empty source,
          while never blanking a populated target from an empty source.
 
     Returns a Skip, PlannedOverwrite, or None.
     - None means "not present in target" -> caller emits PlannedAction.
-
-    materialize_absent_gold: retained for backward compatibility with the seven
-        plan_action callbacks that pass it. Under v7.0.0 an absent item (GOLD or
-        not) always falls through to a create (return None), so this flag is now
-        a no-op. (The SEMANTIC_DOMAINS ~1792-item catalog bulk-copy-vs-guard
-        question is an open Half-2 design decision.)
     """
     src_guid = _guid_str_from(piece)
 
@@ -361,7 +348,6 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
 
     result = _plan_gold_reserved_edit(
         piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
-        materialize_absent_gold=True,
     )
     if result is not None:
         return result
@@ -2153,7 +2139,8 @@ def _rules_enumerate_all(source):
 def adhoc_compound_rules_enumerate_source(context, selection):
     """Enumerate all adhoc/compound rules from source, filtered by leaf_item_picks.
 
-    Absent key => transfer ALL.  GOLD-shipped rules excluded per Constitution I.
+    Absent key => transfer ALL. GOLD/catalog rules are ordinary items (v7.0.0
+    GOLD unlock) and are enumerated like any other rule.
     """
     source = context.source_handle
     if source is None:
@@ -2161,8 +2148,6 @@ def adhoc_compound_rules_enumerate_source(context, selection):
     picks = selection.leaf_picks_for(GrammarCategory.ADHOC_COMPOUND_RULES)
     results = []
     for obj in _rules_enumerate_all(source):
-        if _is_gold(obj):
-            continue
         if picks is not None:
             if _guid_str_from(obj) not in picks:
                 continue
@@ -3324,8 +3309,9 @@ def _run_tail_once(context, target, tag, flag_attr, category, runner):
 def affixes_enumerate_source(context, selection):
     """Filter source LexEntries to affixes (LexemeFormOA.MorphTypeRA.IsAffixType).
 
-    GOLD-shipped entries are excluded (Principle I). Absent leaf-pick subset
-    => transfer ALL; a non-None subset filters to picked GUIDs."""
+    GOLD/catalog entries are ordinary items (v7.0.0 GOLD unlock) and are
+    enumerated like any other affix. Absent leaf-pick subset => transfer ALL; a
+    non-None subset filters to picked GUIDs."""
     source = context.source_handle
     if source is None:
         return ()
@@ -3339,8 +3325,6 @@ def affixes_enumerate_source(context, selection):
     for entry in _iter_lex_entries(source):
         has_form, is_affix = _affix_type_of(entry)
         if not (has_form and is_affix):
-            continue
-        if _is_gold(entry):
             continue
         if picks is not None and _guid_str_from(entry) not in picks:
             continue
@@ -3711,8 +3695,8 @@ def stems_enumerate_source(context, selection):
         has_form, is_affix = _affix_type_of(entry)
         if not has_form or is_affix:
             continue
-        if _is_gold(entry):
-            continue
+        # GOLD/catalog stems are ordinary items (v7.0.0 GOLD unlock) and are
+        # enumerated like any other stem.
         if picks is not None and _guid_str_from(entry) not in picks:
             continue
         results.append(entry)
@@ -3846,18 +3830,12 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
                 except (AttributeError, TypeError):
                     return ()
             return ()
-        # GOLD is a LINKING mechanism, not a copy constraint (user ruling
-        # 2026-07-06): an absent GOLD phonological feature MUST be migrated,
-        # keeping its GOLD GUID, so it links to the FW catalog on the target
-        # side too — otherwise phonemes whose owned feature structures point at
-        # it are stranded (the "phon features not copied / not on phonemes"
-        # bug). materialize_absent_gold=True makes an absent GOLD item fall
-        # through to a GUID-preserving create; a GOLD item ALREADY present in
-        # the target is still skipped (it is already linked). This mirrors the
-        # gram_categories/POS decision of the same date.
+        # v7.0.0 GOLD unlock: an absent ontology/reserved item (including a
+        # catalog phonological feature) is migrated with its GUID preserved,
+        # exactly like any ordinary item -- otherwise phonemes whose owned
+        # feature structures point at it are stranded. Creation is unconditional.
         result = _plan_gold_reserved_edit(
             piece, category, context, _target_iter,
-            materialize_absent_gold=True,
         )
         if result is not None:
             return result

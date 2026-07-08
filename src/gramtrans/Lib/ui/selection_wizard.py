@@ -43,7 +43,6 @@ if __package__:
         WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
-    from ..protection import _is_protected, apply_isprotected_layer2
     from ..selection import (
         PickerState,
         PosGroupedAffixInventory,
@@ -87,7 +86,6 @@ else:
         WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
-    from protection import _is_protected, apply_isprotected_layer2  # type: ignore
     from selection import (  # type: ignore
         PickerState,
         PosGroupedAffixInventory,
@@ -3431,8 +3429,10 @@ class _PageEntryTypes(QtWidgets.QWizardPage):
     Hierarchy: sub-types (SubPossibilitiesOS children) appear as nested tree children
     under their parent item.
 
-    GOLD types are shown as IN TARGET (cross-referencing device per spec 021 FR-009
-    clarification; the engine's plan_action will Skip(GOLD_INVIOLABLE) at Move time).
+    Types already present in the target are shown as IN TARGET (a cross-referencing
+    display device per spec 021 FR-009). This is display only — all rows stay
+    preselected and transferable; under constitution v7.0.0 there is no GOLD-based
+    skip, and a present item merges/updates non-destructively at Move time.
 
     Deliberately renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode control
     (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically when

@@ -151,17 +151,21 @@ def test_grouping_children_filtered_by_subset_pick():
     assert "child01" in guids
 
 
-def test_gold_excluded_regardless_of_picks():
-    gold = FakeRule("gold01", "MoEndoCompound", is_gold=True)
+def test_no_gold_exclusion_all_picks_enumerated():
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based filter, so every
+    picked rule is enumerated. (Rules are not catalog-backed and never carry a
+    real GOLD flag, so an is_gold fake is unrealistic; this confirms the former
+    defensive filter is gone.)"""
+    other = FakeRule("gold01", "MoEndoCompound", is_gold=True)
     normal = FakeRule("norm01", "MoEndoCompound")
-    src = FakeProject(compound=[gold, normal])
+    src = FakeProject(compound=[other, normal])
     sel = Selection(
         categories={GrammarCategory.ADHOC_COMPOUND_RULES: True},
         leaf_item_picks={GrammarCategory.ADHOC_COMPOUND_RULES: frozenset({"gold01", "norm01"})},
     )
     result = categories.adhoc_compound_rules_enumerate_source(_ctx(src), sel)
     guids = {r.guid for r in result}
-    assert "gold01" not in guids
+    assert "gold01" in guids
     assert "norm01" in guids
 
 
