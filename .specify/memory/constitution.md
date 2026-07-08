@@ -1,25 +1,49 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 5.1.0 → 6.0.0
-Bump rationale: MAJOR — Principle IV mode vocabulary redefined. ConflictMode
-  {ADD_NEW, MERGE, OVERWRITE} → mode {ADD_NEW, LINK, UPDATE, OVERWRITE} with a
-  computed per-item disposition {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Adds the
-  non-destructive UPDATE write semantic and field-identity-based true-SKIP.
-  "MERGE" renamed to "LINK" (it never merged — it linked). Data migration: reader
-  shim aliases persisted "merge" → "link" for >=1 release; no value maps to UPDATE.
-Principles modified: IV (Phased Merge Discipline) — mode vocabulary + dispositions.
+Version change: 6.0.0 → 7.0.0
+Bump rationale: MAJOR — Principle I (FLEx Domain Fidelity) redefined. The protected
+  invariant for GOLD / reserved items is changed from "GOLD-item field immutability"
+  to "integrity of the ontology CONCEPT ↔ object GUID binding." The prior wording
+  ("Reserved/GOLD categories and inflection features MUST be retained — never
+  overwritten, renamed, or deleted") mis-aimed the protection at field values and,
+  read literally, forbade the Merge/LINK rework (keyboard-studio/GramTrans issue #22,
+  based on MattGyverLee/GramTrans#22 and
+  specs/020-conflict-mode-field-merge/amendment-disposition-model.md). Corrected
+  model: GOLD items are ORDINARY items whose fields may be merged, updated, and
+  edited freely, exactly like any custom item — fields carry no special immutability.
+  The one thing that MUST be preserved is that an object's ontology GUID always names
+  the CLOSEST ontological match to what the object realizes — a nearest-concept mapping
+  (closely related to / subset of / superset of / closest equivalent), not a strict
+  is-a identity. The failure to prevent is a GUID naming a concept that is not even a
+  reasonable match (a Pronoun object must never carry an Adjective's GUID, or
+  vice-versa). Enforcement: ontology/GOLD GUIDs are remapped at target-object CREATION
+  time so this concept↔GUID mapping stays true on the target side. This constrains the module's transfer/creation behavior,
+  not what a user edits in their own project. Because the principle's normative
+  content is redefined (not merely expanded), the versioning policy classifies this
+  as MAJOR.
+Principles modified: I (FLEx Domain Fidelity) — GOLD reframed as ordinary items;
+  protected invariant is now the concept↔object GUID binding, enforced by GUID
+  remapping at target creation.
+Scope note: this ratifies only Part 1 (real Merge, non-destructive UPDATE) of
+  issue #22. Part 2 (true Overwrite — blocked on an upstream flexicon change) and
+  Part 3 (LINK as identity resolution — needs a further constitution amendment) are
+  explicitly NOT covered by this amendment.
 Templates requiring updates:
-  [WARN] models.py ConflictMode enum + _DEFAULT_CONFLICT_MODES + allowed_modes_for
-  [WARN] conflict.py write-semantic dispatch (add UPDATE policy; true-SKIP downgrade)
-  [WARN] protection.py apply_isprotected_layer2 (LINK is the safe downgrade target)
-  [WARN] specs referencing ConflictMode.MERGE (008/009/010/016/018/019/020/021)
-  [WARN] residue tag reader (merge= alias shim)
+  [OK]   conflict.py apply_update_semantic / compute_disposition (Part 1 real Merge — done)
+  [WARN] Part 2 (true Overwrite) — deferred, blocked on upstream flexicon change
+  [WARN] Part 3 (LINK as identity resolution) — deferred, needs a separate amendment
 
 ---
 
 Prior Sync Impact Reports
 -------------------------
+v5.1.0 → v6.0.0: MAJOR — Principle IV mode vocabulary redefined. ConflictMode
+  {ADD_NEW, MERGE, OVERWRITE} → mode {ADD_NEW, LINK, UPDATE, OVERWRITE} with a
+  computed per-item disposition {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Added the
+  non-destructive UPDATE write semantic and field-identity-based true-SKIP; "MERGE"
+  renamed to "LINK" (it never merged — it linked). Reader shim aliases persisted
+  "merge" → "link" for >=1 release; no value maps to UPDATE. Last Amended 2026-07-05.
 v4.0.0 → v5.1.0: MAJOR (5.0.0) — Principle II redefined. v4.0.0's mandatory
   flavor-adapter contract removed; every Phase 0/1/2 module file imports flexicon
   directly. LibLCM-direct port is a separate fork project. MINOR (5.1.0) — flexicon
@@ -51,8 +75,27 @@ Culture Model (LCM) and the user's mental model in FLEx. Specifically:
 
 - GUIDs are the primary identity for LCM objects; preserve them on transfer whenever the
   target project does not already contain a colliding GUID.
-- Reserved/GOLD categories and inflection features MUST be retained — never overwritten,
-  renamed, or deleted as a side effect of import.
+- The link between an ontology CONCEPT and the OBJECT that realizes it MUST stay true.
+  An ontology (GOLD / catalog) GUID asserts that the object is the CLOSEST ontological
+  match to concept X — i.e. that the object is closely related to, a subset of, a
+  superset of, or the closest equivalent to that concept. It is a nearest-concept
+  mapping, NOT a strict is-a identity. (E.g. adding "Pronoun" from the catalog binds
+  the created object to the Pronoun-concept GUID as its closest match.) GOLD / reserved
+  categories and inflection features are otherwise ORDINARY items: their fields carry NO
+  special immutability and MAY be merged, updated, or edited exactly like any custom
+  item (the non-destructive `update` write semantic of Principle IV applies to them
+  unchanged). What MUST be preserved is the truthfulness/integrity of that mapping — an
+  object MUST NEVER carry an ontology GUID naming a concept that is not even a reasonable
+  match (not closely related, not a subset/superset, not the closest equivalent) for
+  what the object actually realizes. A Pronoun object bearing an Adjective's GUID (or
+  vice-versa) is the specific failure to prevent, because Adjective is not a close /
+  subset / superset / closest-equivalent relationship to Pronoun; rewriting an object's
+  meaning while keeping a GUID that then names an unrelated concept falsifies the
+  mapping. The enforcement mechanism is GUID remapping at target-object CREATION time:
+  when a target object is created for an ontology concept, it is bound to that concept's
+  GUID on the target side, so the mapping remains valid after transfer. This constrains
+  the module's transfer/creation behavior only; it does not lock down what a user may
+  edit in their own project.
 - Writing-system identity (vernacular/analysis mappings) MUST be validated and explicitly
   mapped before any string-bearing field is written.
 - Cross-references (affix → slot, slot → template, allomorph → environment, APR → category,
@@ -307,4 +350,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 6.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-05
+**Version**: 7.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-08

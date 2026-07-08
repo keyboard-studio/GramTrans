@@ -18,7 +18,10 @@ Public surface:
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional, Protocol
+
+_log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
@@ -559,6 +562,34 @@ def compute_field_diff(src_props: dict, tgt_props: dict) -> dict:
     return diff
 
 
+def compute_merge_fillable(src_props: dict, tgt_props: dict) -> dict:
+    """Return {field: (src_value, tgt_value)} for fields the UPDATE (real Merge)
+    write semantic would fill.
+
+    Unlike :func:`compute_field_diff` (which only compares the INTERSECTION of
+    keys and thus never sees a source-only field), this iterates the SOURCE keys
+    and treats a missing target field as empty (``tgt_props.get(key)``).  A field
+    is fillable when the non-empty source value differs from the target value.
+    This mirrors :func:`apply_update_semantic`'s write decision exactly, so the
+    disposition and the writer agree on what counts as a divergence.
+
+    It is used ONLY on the UPDATE disposition path; the OVERWRITE path continues
+    to rely on :func:`compute_field_diff` and is unaffected.
+    """
+    if not isinstance(src_props, dict) or not isinstance(tgt_props, dict):
+        return {}
+    fillable = {}
+    for key in sorted(src_props):
+        src_val = src_props[key]
+        tgt_val = tgt_props.get(key)
+        if src_val == tgt_val:
+            continue  # identical -> nothing to fill
+        if _is_empty(src_val):
+            continue  # non-destructive: an empty source never fills/blanks
+        fillable[key] = (src_val, tgt_val)
+    return fillable
+
+
 def compute_disposition(
     src_props,
     tgt_props,
@@ -616,6 +647,16 @@ def compute_disposition(
         diff = compute_field_diff(src_props, tgt_props)
 
     if not diff:
+        # Zero diverged fields by intersection diff.  Under UPDATE (real Merge),
+        # a source-only or empty-target field that a non-empty source would fill
+        # is still a reason to write, but the intersection diff never sees it.
+        # Detect those fillable fields so the item resolves to UPDATE, not SKIP.
+        # (OVERWRITE and LINK/ADD_NEW keep SKIP here -- their behaviour is
+        # unchanged.)
+        if intent == _ConflictMode.UPDATE and compute_merge_fillable(
+            src_props, tgt_props
+        ):
+            return ItemDisposition.UPDATE
         # Zero diverged fields -> SKIP (no write needed).
         return ItemDisposition.SKIP
 
@@ -636,12 +677,15 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
                           ws_map=None) -> int:
     """Apply the non-destructive UPDATE write semantic (022 FR-003, T011).
 
-    Iterates the syncable-property keys present in both src_props and tgt_props.
-    For each key:
-    - If the source value is empty (None / "" / {} / []) -> SKIP write (never
-      blank a target field from an empty source).
+    Iterates the syncable-property keys present in src_props (a missing target
+    field is treated as empty via ``tgt_props.get(key)``, so a non-empty source
+    fills an empty/absent target -- real Merge).  For each key:
+    - If the source value equals the (possibly empty) target value -> SKIP.
+    - If the source value is empty (None / "" / "***" / {} / []) -> SKIP write
+      (never blank a target field from an empty source).
     - Otherwise write the source value to the target field via
-      ``ops.ApplySyncableProperties(tgt_obj, {key: src_value})``.
+      ``ops.ApplySyncableProperties(tgt_obj, {key: src_value})``.  A per-field
+      write that raises AttributeError/TypeError is logged and NOT counted.
 
     Args:
         src_props: dict returned by GetSyncableProperties on the source object.
@@ -656,9 +700,12 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
         int: number of fields written (0 if all-identical or all-empty-source).
     """
     written = 0
-    for key in sorted(set(src_props) & set(tgt_props)):
+    for key in sorted(src_props):
         src_val = src_props[key]
-        tgt_val = tgt_props[key]
+        # A key absent from the target is treated as empty: real Merge fills it
+        # from a non-empty source (022 Part 1 -- the intersection iteration used
+        # to drop source-only keys, so empty target fields were never filled).
+        tgt_val = tgt_props.get(key)
         if src_val == tgt_val:
             continue  # identical -> skip
         if _is_empty(src_val):
@@ -667,8 +714,12 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
         try:
             ops.ApplySyncableProperties(tgt_obj, {key: src_val}, ws_map=ws_map)
             written += 1
-        except (AttributeError, TypeError):
-            pass  # best-effort; caller's error handling covers the rest
+        except (AttributeError, TypeError) as exc:
+            # Best-effort per field: log and skip; do NOT count a failed write.
+            _log.warning(
+                "apply_update_semantic: failed to write field %r: %s: %s",
+                key, type(exc).__name__, exc,
+            )
     return written
 
 
