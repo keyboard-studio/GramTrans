@@ -245,16 +245,19 @@ def test_enumerate_source_empty_frozenset_returns_none():
     assert result == []
 
 
-def test_enumerate_source_excludes_gold():
-    """GOLD-reserved items are excluded regardless of picks."""
-    gold = FakeRule("gold-guid", "MoEndoCompound", is_gold=True)
+def test_enumerate_source_no_gold_filtering():
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based filter; every rule
+    is enumerated. (Rules are not catalog-backed and never carry a real GOLD
+    flag, so an is_gold fake is unrealistic; this confirms the defensive filter
+    is gone.)"""
+    other = FakeRule("gold-guid", "MoEndoCompound", is_gold=True)
     normal = FakeRule("norm-guid", "MoEndoCompound", is_gold=False)
-    src = FakeSource(compound=[gold, normal])
+    src = FakeSource(compound=[other, normal])
     tgt = FakeTarget()
     sel = Selection(categories={GrammarCategory.ADHOC_COMPOUND_RULES: True})
     result = categories.adhoc_compound_rules_enumerate_source(_ctx(src, tgt), sel)
     guids = {r.guid for r in result}
-    assert "gold-guid" not in guids
+    assert "gold-guid" in guids
     assert "norm-guid" in guids
 
 

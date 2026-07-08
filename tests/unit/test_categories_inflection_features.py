@@ -75,7 +75,10 @@ def test_dependencies_returns_empty_tuple() -> None:
     assert tuple(_BUNDLE["dependencies"](piece=feat)) == ()
 
 
-def test_plan_action_gold_feature_yields_gold_inviolable_skip() -> None:
+def test_plan_action_gold_feature_absent_yields_planned_action() -> None:
+    """v7.0.0 GOLD unlock: a GOLD inflection feature is an ordinary item. When
+    absent from the target it transfers (PlannedAction), not a GOLD_INVIOLABLE
+    skip."""
     gold_feat = _FakeFeature("f-001", catalog_source_id="fDeg")
     src = _FakeProject("src", features=(gold_feat,))
     tgt = _FakeProject("tgt")
@@ -83,10 +86,8 @@ def test_plan_action_gold_feature_yields_gold_inviolable_skip() -> None:
 
     result = _BUNDLE["plan_action"](piece=gold_feat, context=ctx, ws_mapping=WSMapping())
 
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
     assert result.category == GrammarCategory.INFLECTION_FEATURES
-    assert "fDeg" in result.detail
 
 
 def test_plan_action_none_catalog_source_id_is_not_gold() -> None:

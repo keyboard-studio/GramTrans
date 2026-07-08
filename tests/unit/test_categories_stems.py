@@ -218,15 +218,19 @@ def test_enumerate_excludes_degenerate_entries_without_form() -> None:
     assert {i.guid for i in items} == {"stem-1"}
 
 
-def test_enumerate_excludes_gold_stems() -> None:
-    """A stem carrying a non-empty CatalogSourceId is GOLD and excluded."""
+def test_enumerate_no_gold_filtering() -> None:
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based functional filter.
+    (A stem LexEntry is not a catalog-backed ontology type and never carries a
+    real CatalogSourceId, so a fake with one set is an unrealistic case; this
+    just confirms the former defensive filter is gone and every stem is
+    enumerated.)"""
     plain = _FakeEntry("stem-1", is_affix=False)
-    gold = _FakeEntry("stem-gold", is_affix=False, catalog_source_id="MGA:xyz")
-    src = _FakeHandle([plain, gold])
+    other = _FakeEntry("stem-other", is_affix=False, catalog_source_id="MGA:xyz")
+    src = _FakeHandle([plain, other])
     ctx = _ctx(src, _FakeHandle())
 
     items = list(_BUNDLE["enumerate_source"](ctx, None))
-    assert {i.guid for i in items} == {"stem-1"}
+    assert {i.guid for i in items} == {"stem-1", "stem-other"}
 
 
 def test_enumerate_none_selection_transfers_all_stems() -> None:
@@ -401,16 +405,19 @@ def test_plan_action_callable_positional() -> None:
     assert result.source_guid == "stem-1"
 
 
-def test_plan_action_gold_skip() -> None:
+def test_plan_action_gold_stem_transfers() -> None:
+    """v7.0.0 GOLD unlock: a GOLD stem is an ordinary item. With its GUID absent
+    from the target the plan_action's defense-in-depth GOLD_INVIOLABLE skip is
+    gone, so it transfers like any stem (PlannedAction, GUID preserved)."""
     gold = _FakeEntry("stem-gold", is_affix=False, catalog_source_id="MGA:xyz")
     ctx, _m, _r = _ctx_with_stash(_FakeHandle([gold]), _FakeHandle())
 
     result = _BUNDLE["plan_action"](piece=gold, context=ctx, ws_mapping=WSMapping())
 
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
     assert result.category == GrammarCategory.STEMS
     assert result.source_guid == "stem-gold"
+    assert result.intended_target_guid == "stem-gold"
 
 
 def test_plan_action_collision_already_present_by_guid() -> None:

@@ -80,26 +80,27 @@ def test_dependencies_returns_empty_tuple() -> None:
     assert tuple(_BUNDLE["dependencies"](piece=cat)) == ()
 
 
-def test_plan_action_gold_object_present_in_target_yields_skip() -> None:
-    """A GOLD gram category ALREADY PRESENT in the target is not edited
-    (GOLD_INVIOLABLE)."""
+def test_plan_action_gold_object_present_and_identical_yields_apbg_skip() -> None:
+    """v7.0.0 GOLD unlock: a GOLD gram category is an ordinary item. When it is
+    already present in the target and IDENTICAL there is nothing to write, so it
+    resolves to ALREADY_PRESENT_BY_GUID (not the retired GOLD_INVIOLABLE)."""
     gold_cat = _FakeCat("aaa-111", catalog_source_id="fPerson")
     src = _FakeProject("src", gram_cats=(gold_cat,))
-    tgt = _FakeProject("tgt", gram_cats=(gold_cat,))  # present in target
+    tgt = _FakeProject("tgt", gram_cats=(gold_cat,))  # present + identical
     ctx = _ctx(src, tgt)
 
     result = _BUNDLE["plan_action"](piece=gold_cat, context=ctx, ws_mapping=WSMapping())
 
     assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
     assert result.category == GrammarCategory.GRAM_CATEGORIES
 
 
 def test_plan_action_gold_object_absent_from_target_is_materialized() -> None:
-    """An ABSENT GOLD gram category (a required dependency -- e.g. a GOLD POS
-    like Numeral referenced by an affix MSA that the target lacks) is CREATED,
-    not skipped (2026-07-06 materialize-absent-gold decision, POS-scoped).
-    Creating a canonical item is not editing one, so Principle I still holds."""
+    """An ABSENT GOLD gram category is CREATED, not skipped. Under v7.0.0 GOLD
+    items are ordinary items, so any absent item (GOLD or custom) falls through
+    to a create -- the same PlannedAction the pre-unlock materialize path
+    produced. (Binding enforcement at creation is Half 2.)"""
     gold_cat = _FakeCat("aaa-111", catalog_source_id="fPerson")
     src = _FakeProject("src", gram_cats=(gold_cat,))
     tgt = _FakeProject("tgt")  # GOLD dependency absent from target

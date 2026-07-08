@@ -1,15 +1,20 @@
-"""Unit tests for spec 017: GOLD_RESERVED edit-copy (fill-gaps on APBG items).
+"""Unit tests for spec 017: GOLD_RESERVED edit path.
 
-Test matrix per spec:
-  (a) GOLD -> Skip(GOLD_INVIOLABLE)
+Constitution v7.0.0 (GOLD unlock, Half 1): GOLD / catalog / reserved items are
+ORDINARY items -- their fields carry no special immutability and merge / update
+like any custom item. The old GOLD_INVIOLABLE field-lock and the IsProtected
+forced-LINK downgrade are gone. The GUID-equality lookup (binding preservation)
+is KEPT. Concept<->GUID binding enforcement at creation is deferred to Half 2.
+
+Test matrix (post-unlock):
+  (a) GOLD item present + diverges -> PlannedOverwrite(write_mode="merge")
   (b) present + equal -> Skip(ALREADY_PRESENT_BY_GUID)
-  (c) present + edited -> PlannedOverwrite(write_mode="merge")
-  (d) absent -> PlannedAction (ADD, unchanged from today)
-  (e) present + conflict (all non-empty-differ, no gaps) -> Skip(ALREADY_PRESENT_BY_GUID) + conflict detail
-  (f) present + mixed (gap + conflict) -> PlannedOverwrite for gap slots, conflict in summary
-  (g) IsProtected + non-GOLD -> Skip(ALREADY_PRESENT_BY_GUID) with IsProtected note
+  (c) present + gap -> PlannedOverwrite(write_mode="merge")
+  (d) absent -> PlannedAction (ADD, unchanged)
+  (e) present + diverged field (no gaps) -> PlannedOverwrite(merge) [was Skip]
+  (f) present + mixed (gap + diverged) -> PlannedOverwrite(merge)
+  (g) IsProtected + present + diverges -> PlannedOverwrite(merge) [was Skip-LINK]
 
-Coverage: 7 GOLD_RESERVED categories x 7 cases = 49 cells minimum.
 Shared helper _plan_gold_reserved_edit is exercised through each category's
 plan_action function.
 
@@ -270,22 +275,29 @@ def _make_tgt_with(kwarg, items):
 
 
 # ============================================================================
-# (a) GOLD -> Skip(GOLD_INVIOLABLE)
+# (a) GOLD present + diverges -> PlannedOverwrite(merge) [v7.0.0 unlock]
 # ============================================================================
 
 @pytest.mark.parametrize("category,plan_fn,src_kw,tgt_kw", _CATEGORY_PLAN_FNS)
-def test_a_gold_item_skips_inviolable(category, plan_fn, src_kw, tgt_kw):
-    """Case (a): GOLD item (non-empty CatalogSourceId) present in target ->
-    GOLD_INVIOLABLE (never edited). Item placed IN the target so GRAM_CATEGORIES,
-    which now materializes ABSENT GOLD dependencies (2026-07-06), still skips a
-    PRESENT one; the absent-materialize case is covered in
-    test_categories_gram_categories."""
-    item = _make_item("gold-001", catalog_source_id="fPerson")
-    src = _make_src_with(src_kw, [item])
-    tgt = _make_tgt_with(tgt_kw, [item])
-    result = plan_fn(item, src, tgt)
-    assert isinstance(result, Skip), f"{category}: expected Skip, got {result!r}"
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+def test_a_gold_item_merges_like_ordinary(category, plan_fn, src_kw, tgt_kw):
+    """Case (a) post-unlock: a GOLD item (non-empty CatalogSourceId) is an
+    ORDINARY item. When its fields diverge from the target it merges/updates
+    exactly like a custom item -> PlannedOverwrite(write_mode="merge"), NOT a
+    GOLD_INVIOLABLE skip. The concept<->GUID binding is preserved by the
+    GUID-equality lookup (same source and target GUID)."""
+    src_item = _make_item("gold-001", catalog_source_id="fPerson",
+                          name_en="Person", name_fr="Personne")
+    tgt_item = _make_item("gold-001", catalog_source_id="fPerson",
+                          name_en="Person")  # FR gap in target
+    src = _make_src_with(src_kw, [src_item])
+    tgt = _make_tgt_with(tgt_kw, [tgt_item])
+    result = plan_fn(src_item, src, tgt)
+    assert isinstance(result, PlannedOverwrite), (
+        f"{category}: GOLD item should merge, got {result!r}"
+    )
+    assert result.write_mode == "merge"
+    assert result.source_guid == "gold-001"
+    assert result.target_guid == "gold-001"
     assert result.category == category
 
 
@@ -345,22 +357,27 @@ def test_d_absent_emits_planned_action(category, plan_fn, src_kw, tgt_kw):
 
 
 # ============================================================================
-# (e) present + conflict (no gaps) -> Skip(ALREADY_PRESENT_BY_GUID) + detail
+# (e) present + diverged field (no gaps) -> PlannedOverwrite(merge) [v7.0.0]
 # ============================================================================
 
 @pytest.mark.parametrize("category,plan_fn,src_kw,tgt_kw", _CATEGORY_PLAN_FNS)
-def test_e_present_conflict_no_gaps_skips(category, plan_fn, src_kw, tgt_kw):
-    """Case (e): source and target both have EN name, but different text -> conflict -> Skip."""
+def test_e_present_diverged_field_merges(category, plan_fn, src_kw, tgt_kw):
+    """Case (e) post-unlock: source and target both have an EN name that differ
+    (a diverged field, no empty gaps). Under UPDATE semantics the non-empty
+    source now UPDATES the diverged target field -> PlannedOverwrite(merge),
+    where the old behavior skipped it as ALREADY_PRESENT_BY_GUID."""
     src_item = _make_item("conf-001", name_en="Verb")
     tgt_item = _make_item("conf-001", name_en="VerbDifferent")
     src = _make_src_with(src_kw, [src_item])
     tgt = _make_tgt_with(tgt_kw, [tgt_item])
     result = plan_fn(src_item, src, tgt)
-    assert isinstance(result, Skip), f"{category}: expected Skip for all-conflict, got {result!r}"
-    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
-    # Detail should mention conflicts.
-    assert "conflict" in result.detail.lower() or "vs" in result.detail.lower(), (
-        f"{category}: conflict detail missing from {result.detail!r}"
+    assert isinstance(result, PlannedOverwrite), (
+        f"{category}: diverged field should merge, got {result!r}"
+    )
+    assert result.write_mode == "merge"
+    # Summary should describe the diverged update.
+    assert "update" in result.summary.lower() or "Verb" in result.summary, (
+        f"{category}: diverged update missing from summary {result.summary!r}"
     )
 
 
@@ -385,9 +402,10 @@ def test_f_present_mixed_gap_conflict_emits_overwrite_with_note(
         f"{category}: expected PlannedOverwrite for mixed case, got {result!r}"
     )
     assert result.write_mode == "merge"
-    # Conflict should appear in summary.
-    assert "conflict" in result.summary.lower() or "vs" in result.summary.lower(), (
-        f"{category}: conflict note absent from summary {result.summary!r}"
+    # Diverged EN update should appear in summary (both the gap and the update
+    # are now written by the executor's non-destructive merge pass).
+    assert "update" in result.summary.lower(), (
+        f"{category}: diverged update note absent from summary {result.summary!r}"
     )
     # Gap fill should appear in summary.
     assert "Verbe" in result.summary or "fr" in result.summary.lower(), (
@@ -396,24 +414,25 @@ def test_f_present_mixed_gap_conflict_emits_overwrite_with_note(
 
 
 # ============================================================================
-# (g) IsProtected + non-GOLD -> Skip(ALREADY_PRESENT_BY_GUID) with note
+# (g) IsProtected + present + diverges -> PlannedOverwrite(merge) [v7.0.0]
 # ============================================================================
 
 @pytest.mark.parametrize("category,plan_fn,src_kw,tgt_kw", _CATEGORY_PLAN_FNS)
-def test_g_is_protected_non_gold_skips_with_note(category, plan_fn, src_kw, tgt_kw):
-    """Case (g): non-GOLD item in target with IsProtected=True -> Skip + IsProtected note."""
+def test_g_is_protected_item_still_merges(category, plan_fn, src_kw, tgt_kw):
+    """Case (g) post-unlock: an IsProtected=True target item is an ORDINARY
+    item -- Layer-2 no longer downgrades it to LINK. A source gap therefore
+    still produces a PlannedOverwrite(merge); IsProtected no longer suppresses
+    the edit."""
     src_item = _make_item("prot-001", name_en="Verb", name_fr="Verbe")  # has gap
     tgt_item = _make_item("prot-001", is_protected=True, name_en="Verb")
     src = _make_src_with(src_kw, [src_item])
     tgt = _make_tgt_with(tgt_kw, [tgt_item])
     result = plan_fn(src_item, src, tgt)
-    assert isinstance(result, Skip), (
-        f"{category}: expected Skip for IsProtected, got {result!r}"
+    assert isinstance(result, PlannedOverwrite), (
+        f"{category}: IsProtected item should still merge, got {result!r}"
     )
-    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
-    assert "isprotected" in result.detail.lower() or "protected" in result.detail.lower(), (
-        f"{category}: IsProtected note absent from {result.detail!r}"
-    )
+    assert result.write_mode == "merge"
+    assert result.category == category
 
 
 # ============================================================================
@@ -441,14 +460,14 @@ def test_phonemes_plan_action_apbg_unchanged():
     assert "conflict" not in result.detail.lower()
 
 
-def test_phon_feat_gold_skips_before_edit_check():
-    """PHONOLOGICAL_FEATURES: GOLD item skips before any edit-detection."""
+def test_phon_feat_gold_merges_like_ordinary():
+    """PHONOLOGICAL_FEATURES: a GOLD item is ordinary and merges (v7.0.0)."""
     item = _make_item("phf-gold", catalog_source_id="fVoiced", name_en="Voiced", name_fr="Voise")
     src = _FakeSrcProject(phon_feats=[item])
     tgt = _FakeTgtProject(phon_feats=[_make_item("phf-gold", name_en="Voiced")])
     result = categories.phonological_features_plan_action(item, _ctx(src, tgt), WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedOverwrite)
+    assert result.write_mode == "merge"
 
 
 def test_phon_feat_present_with_gap_emits_overwrite():
@@ -483,10 +502,12 @@ def test_no_ws_info_falls_back_to_skip():
 # Helper isolation: _plan_gold_reserved_edit directly
 # ============================================================================
 
-def test_helper_gold_check_first():
-    """_plan_gold_reserved_edit: GOLD check fires before target lookup."""
+def test_helper_gold_is_ordinary():
+    """_plan_gold_reserved_edit: a GOLD item is treated as ordinary (v7.0.0).
+    With a source EN name filling an empty target slot it produces a merge, not
+    a GOLD_INVIOLABLE skip."""
     gold = _make_item("g-001", catalog_source_id="fX", name_en="Foo")
-    # Target iter would find the item — but GOLD check must fire first.
+    # Target has the GUID (binding preserved) but an empty Name.
     def _target_iter(tgt):
         return [_make_item("g-001")]
 
@@ -494,8 +515,8 @@ def test_helper_gold_check_first():
     result = categories._plan_gold_reserved_edit(
         gold, GrammarCategory.GRAM_CATEGORIES, _ctx(src, object()), _target_iter
     )
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedOverwrite)
+    assert result.write_mode == "merge"
 
 
 def test_helper_absent_returns_none():
@@ -545,8 +566,10 @@ def test_helper_gap_returns_planned_overwrite():
     assert "Verbe" in result.summary
 
 
-def test_helper_all_conflict_no_gaps_returns_skip_with_conflict():
-    """_plan_gold_reserved_edit: all slots differ, none empty -> Skip + conflict detail."""
+def test_helper_all_diverged_no_gaps_returns_merge():
+    """_plan_gold_reserved_edit: all slots differ, none empty -> PlannedOverwrite
+    (merge). Under UPDATE semantics diverged fields are updated from the
+    non-empty source (v7.0.0), where the old rule skipped them."""
     item = _make_item("cf-999", name_en="NewVerb")
     tgt_item = _make_item("cf-999", name_en="OldVerb")
 
@@ -557,15 +580,16 @@ def test_helper_all_conflict_no_gaps_returns_skip_with_conflict():
     result = categories._plan_gold_reserved_edit(
         item, GrammarCategory.GRAM_CATEGORIES, _ctx(src, object()), _target_iter
     )
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
-    assert "conflict" in result.detail.lower()
+    assert isinstance(result, PlannedOverwrite)
+    assert result.write_mode == "merge"
+    assert "update" in result.summary.lower()
 
 
-def test_helper_mixed_gap_and_conflict():
-    """_plan_gold_reserved_edit: EN conflicts + FR gap -> merge action with conflict note."""
+def test_helper_mixed_gap_and_diverged():
+    """_plan_gold_reserved_edit: EN diverged + FR gap -> merge action noting both
+    the diverged update and the gap fill."""
     item = _make_item("mx-999", name_en="NewVerb", name_fr="Verbe")
-    tgt_item = _make_item("mx-999", name_en="OldVerb")  # EN conflict, FR gap
+    tgt_item = _make_item("mx-999", name_en="OldVerb")  # EN diverged, FR gap
 
     def _target_iter(tgt):
         return [tgt_item]
@@ -576,7 +600,7 @@ def test_helper_mixed_gap_and_conflict():
     )
     assert isinstance(result, PlannedOverwrite)
     assert result.write_mode == "merge"
-    assert "conflict" in result.summary.lower()
+    assert "update" in result.summary.lower()  # diverged update noted
     assert "Verbe" in result.summary  # gap fill present
 
 

@@ -178,15 +178,20 @@ def test_enumerate_source_skips_entries_without_morphtype() -> None:
     assert [e.guid for e in items] == ["aff-1"]
 
 
-def test_enumerate_source_excludes_gold_affixes() -> None:
+def test_enumerate_source_no_gold_filtering() -> None:
+    """v7.0.0 GOLD unlock: enumeration applies NO GOLD-based functional filter.
+    (A LexEntry affix is not a catalog-backed ontology type and never carries a
+    real CatalogSourceId, so a fake with one set is an unrealistic case; this
+    just confirms the former defensive filter is gone and every affix is
+    enumerated.)"""
     user_aff = _Entry("aff-user", is_affix=True)
-    gold_aff = _Entry("aff-gold", is_affix=True, catalog_source_id="msa:xyz")
-    src = _handle([user_aff, gold_aff])
+    other_aff = _Entry("aff-other", is_affix=True, catalog_source_id="msa:xyz")
+    src = _handle([user_aff, other_aff])
     ctx = _ctx(src, _handle([]))
 
     items = list(_BUNDLE["enumerate_source"](ctx, None))
 
-    assert [e.guid for e in items] == ["aff-user"]
+    assert [e.guid for e in items] == ["aff-user", "aff-other"]
 
 
 def test_enumerate_source_none_selection_transfers_all() -> None:
@@ -317,7 +322,10 @@ def test_plan_action_can_be_called_positionally_and_by_keyword() -> None:
     assert kw.source_guid == "aff-kw"
 
 
-def test_plan_action_gold_affix_skipped() -> None:
+def test_plan_action_gold_affix_transfers() -> None:
+    """v7.0.0 GOLD unlock: a GOLD affix is an ordinary item. With its GUID
+    absent from the target the plan_action's defense-in-depth GOLD_INVIOLABLE
+    skip is gone, so it transfers like any affix (PlannedAction, GUID preserved)."""
     entry = _Entry("aff-gold", catalog_source_id="msa:catalog",
                    msas=[_MSA("m-1", pos=_POS("pos-verb"))])
     ctx = _ctx(_handle([entry]), _handle([]))
@@ -325,9 +333,10 @@ def test_plan_action_gold_affix_skipped() -> None:
 
     result = _BUNDLE["plan_action"](entry, ctx, WSMapping())
 
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
+    assert result.category == GrammarCategory.AFFIXES
     assert result.source_guid == "aff-gold"
+    assert result.intended_target_guid == "aff-gold"
 
 
 def test_plan_action_already_present_by_guid_skipped() -> None:

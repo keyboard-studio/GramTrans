@@ -45,11 +45,12 @@ def apply_isprotected_layer2(
 ) -> "ConflictMode":
     """Apply Layer-2 per-item IsProtected refinement.
 
-    If the item is protected, downgrade to LINK (link-only, no field writes)
-    regardless of category default.  Non-protected items keep `current_mode`.
+    Constitution v7.0.0 (GOLD unlock): an IsProtected item is an ordinary item
+    whose fields carry no special immutability, so this layer no longer
+    downgrades to LINK.  The item keeps `current_mode` (typically the
+    non-destructive UPDATE merge) exactly like any custom item.  `_is_protected`
+    is retained for display/reporting callers.
 
     Failed cast / absent attribute -> permissive (return `current_mode` unchanged).
     """
-    if _is_protected(lcm_item):
-        return ConflictMode.LINK  # 022: was MERGE; renamed to LINK (same semantics)
     return current_mode

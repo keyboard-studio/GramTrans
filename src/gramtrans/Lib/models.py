@@ -87,9 +87,9 @@ class ConflictMode(enum.Enum):
                 on diverged fields; a target field is NEVER blanked from an
                 empty source (FR-003).  New items are always added regardless.
     OVERWRITE : overwrite the target's existing object with source values,
-                including blanking a target field from an empty source (only
-                offered when structurally possible and not forbidden by
-                Layer-1 kind or Layer-2 IsProtected gating).
+                including blanking a target field from an empty source (offered
+                when structurally possible per the Layer-1 kind; v7.0.0 GOLD
+                unlock removed the Layer-2 IsProtected gating).
     """
     ADD_NEW = "add_new"
     LINK = "link"
@@ -102,7 +102,7 @@ class ConflictMode(enum.Enum):
 # Maps each GrammarCategory to its default ConflictMode per kind:
 #   MULTI_INSTANCE     -> UPDATE (non-destructive; all four modes offered)
 #   SINGLETON_NONDELETABLE -> LINK (ADD_NEW hidden)
-#   GOLD_RESERVED      -> LINK (ADD_NEW hidden, OVERWRITE/UPDATE forbidden)
+#   GOLD_RESERVED      -> UPDATE (v7.0.0 GOLD unlock: ordinary items; all modes offered)
 #   CUSTOM_FIELDS      -> LINK (ADD_NEW hidden, OVERWRITE/UPDATE forbidden, conservative default)
 # ---------------------------------------------------------------------------
 
@@ -130,7 +130,11 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.MSA,
         GrammarCategory.ALLOMORPH,
     }
-    # GOLD_RESERVED categories (ADD_NEW hidden, OVERWRITE/UPDATE forbidden -> LINK default)
+    # GOLD_RESERVED categories: constitution v7.0.0 -- GOLD items are ordinary
+    # items whose fields carry no special immutability, so they default to the
+    # non-destructive UPDATE (Merge) semantic like any custom item. The only
+    # protected invariant (concept<->object-GUID binding) is enforced at target
+    # creation time (GOLD unlock "Half 2"), not by a field lock here.
     gold_reserved = {
         GrammarCategory.GRAM_CATEGORIES,
         GrammarCategory.INFLECTION_FEATURES,
@@ -153,7 +157,7 @@ def _build_default_conflict_modes() -> dict:
         if cat in multi_instance:
             result[cat] = ConflictMode.UPDATE  # 022: UPDATE is the new MULTI_INSTANCE default
         elif cat in gold_reserved:
-            result[cat] = ConflictMode.LINK
+            result[cat] = ConflictMode.UPDATE  # 022 GOLD unlock: non-destructive merge
         elif cat in singleton:
             result[cat] = ConflictMode.LINK
         elif cat in custom_fields:
@@ -459,21 +463,22 @@ class Selection:
 
         Backward-compat shim (022-disposition-model, T004):
         A persisted value of "merge" (written by pre-022 code) is remapped to
-        LINK at this single read point.  Log a deprecation notice so operators
-        can identify and re-save stale selections.
+        UPDATE at this single read point.  Log a deprecation notice so operators
+        can identify and re-save stale selections.  (Under constitution v7.0.0
+        the "merge" semantic is the non-destructive UPDATE, not LINK.)
         """
         explicit = self.category_conflict_modes.get(category)
         if explicit is not None:
-            # Backward-compat shim: persisted "merge" -> LINK (one shim point only).
+            # Backward-compat shim: persisted "merge" -> UPDATE (one shim point only).
             # The residue.py "merge=" wire format is a DISTINCT MergeDecisionLog
             # encoding and is NOT touched here -- see residue.py:27,96,179.
             if isinstance(explicit, str) and explicit == "merge":
                 _logging.getLogger(__name__).warning(
                     "Deprecated persisted ConflictMode value 'merge' for %s; "
-                    "resolving to LINK.  Re-save the selection to update.",
+                    "resolving to UPDATE.  Re-save the selection to update.",
                     category,
                 )
-                return ConflictMode.LINK
+                return ConflictMode.UPDATE
             return explicit
         return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.LINK)
 

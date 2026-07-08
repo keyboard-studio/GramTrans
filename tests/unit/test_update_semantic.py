@@ -262,6 +262,37 @@ class TestApplyUpdateSemantic:
             "UPDATE must never blank a target field from an empty source (FR-003)"
         )
 
+    def test_gold_reserved_item_merges_like_ordinary(self):
+        """GOLD unlock (constitution v7.0.0): a GOLD / catalog / reserved item
+        is an ORDINARY item and merges under UPDATE exactly like any custom
+        item -- it FILLS an empty target field AND UPDATES a diverged field
+        from a non-empty source, while NEVER blanking a populated target field
+        from an empty source. GOLD-ness has no bearing on the write decision.
+        """
+        # A POS/catalog-shaped item: Name diverges, Abbreviation is empty in the
+        # target (a gap to fill), Description is empty in the source (must be
+        # preserved), CatalogSourceId (the GOLD marker) is identical (skipped).
+        src_props = {
+            "Name": "Pronoun",           # diverged -> updated
+            "Abbreviation": "pro",       # empty in target -> filled
+            "Description": "",           # empty source -> must NOT blank target
+            "CatalogSourceId": "fPro",   # identical -> skipped
+        }
+        tgt_props = {
+            "Name": "Pron",              # will be updated to "Pronoun"
+            "Abbreviation": "",          # empty -> filled with "pro"
+            "Description": "keep me",    # populated -> preserved
+            "CatalogSourceId": "fPro",
+        }
+        ops = _FakeOps()
+        tgt = _FakeTgtObj()
+        count = apply_update_semantic(src_props, tgt_props, ops, tgt)
+        assert count == 2, "only Name (diverged) and Abbreviation (gap) written"
+        assert ops.written.get("Name") == "Pronoun"      # diverged updated
+        assert ops.written.get("Abbreviation") == "pro"  # empty gap filled
+        assert "Description" not in ops.written           # empty source preserved target
+        assert "CatalogSourceId" not in ops.written       # identical, no write
+
 
 # ---------------------------------------------------------------------------
 # compute_disposition for UPDATE intent

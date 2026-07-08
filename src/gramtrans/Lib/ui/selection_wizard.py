@@ -43,7 +43,6 @@ if __package__:
         WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
-    from ..protection import _is_protected, apply_isprotected_layer2
     from ..selection import (
         PickerState,
         PosGroupedAffixInventory,
@@ -87,7 +86,6 @@ else:
         WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
-    from protection import _is_protected, apply_isprotected_layer2  # type: ignore
     from selection import (  # type: ignore
         PickerState,
         PosGroupedAffixInventory,
@@ -186,10 +184,11 @@ _CATEGORY_TOGGLES = [
 
 def _allowed_modes(cat: GrammarCategory) -> list:
     """Return the list of ConflictMode values offered for `cat` per Layer 1."""
-    if cat in _GOLD_RESERVED or cat in _CUSTOM_FIELDS_ONLY:
-        # ADD_NEW hidden, OVERWRITE/UPDATE forbidden (GOLD safety rail, 022 T005)
+    if cat in _CUSTOM_FIELDS_ONLY:
+        # CUSTOM_FIELDS remains conservative (LINK-only); not a GOLD category.
         return [ConflictMode.LINK]
-    # MULTI_INSTANCE or SINGLETON_NONDELETABLE that isn't GOLD -> all four modes
+    # Constitution v7.0.0 GOLD unlock: GOLD_RESERVED categories are ordinary
+    # items and offer the full mode set (default UPDATE via _DEFAULT_CONFLICT_MODES).
     return [ConflictMode.ADD_NEW, ConflictMode.LINK, ConflictMode.UPDATE, ConflictMode.OVERWRITE]
 
 
@@ -3430,8 +3429,10 @@ class _PageEntryTypes(QtWidgets.QWizardPage):
     Hierarchy: sub-types (SubPossibilitiesOS children) appear as nested tree children
     under their parent item.
 
-    GOLD types are shown as IN TARGET (cross-referencing device per spec 021 FR-009
-    clarification; the engine's plan_action will Skip(GOLD_INVIOLABLE) at Move time).
+    Types already present in the target are shown as IN TARGET (a cross-referencing
+    display device per spec 021 FR-009). This is display only — all rows stay
+    preselected and transferable; under constitution v7.0.0 there is no GOLD-based
+    skip, and a present item merges/updates non-destructively at Move time.
 
     Deliberately renders NO ADD_NEW/MERGE/OVERWRITE conflict-mode control
     (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically when

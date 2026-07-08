@@ -147,14 +147,17 @@ def test_p1a_guid_str_from_normalizes_lowercase():
     assert result == 'aabb-ccdd'
 
 
-def test_p1b_gold_piece_returns_gold_inviolable_skip():
+def test_p1b_gold_piece_transfers_like_ordinary():
+    """v7.0.0 GOLD unlock: a GOLD adhoc/compound rule is an ordinary item; the
+    plan_action defense-in-depth GOLD_INVIOLABLE skip is removed. Absent from
+    the target it transfers (PlannedAction)."""
     gold_rule = FakeRule('gold-skip', 'MoEndoCompound', is_gold=True)
     src = FakeProject(compound=[gold_rule])
     tgt = FakeProject()
     ctx = _ctx(src, tgt)
     result = categories.adhoc_compound_rules_plan_action(gold_rule, ctx, WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
+    assert result.category == GrammarCategory.ADHOC_COMPOUND_RULES
 
 
 def test_p2b_execute_action_raises_on_missing_source_guid():

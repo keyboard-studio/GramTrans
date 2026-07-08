@@ -2813,14 +2813,9 @@ _COMPOUND_SUBCLASSES = frozenset((
 ))
 
 
-def _is_gold_rule(obj) -> bool:
-    """True when an object has GOLD-shipped status (Constitution I guard)."""
-    # Reuse the IsProtected / GOLD pattern from categories.py
-    try:
-        from SIL.LCModel import ICmObject
-        return ICmObject(obj).IsProtected
-    except Exception:  # noqa: BLE001
-        return bool(getattr(obj, "IsProtected", False))
+# NOTE (v7.0.0 GOLD unlock): the former `_is_gold_rule(obj)` predicate (keyed on
+# IsProtected) and the filtering it drove in build_rules_inventory are removed.
+# Morphology rules are ordinary items and are never filtered by GOLD status.
 
 
 def build_rules_inventory(source, target=None) -> RulesInventory:
@@ -2855,8 +2850,9 @@ def build_rules_inventory(source, target=None) -> RulesInventory:
     if source is not None:
         try:
             for obj, parent_group_guid in _rules_walk_adhoc(source):
-                if _is_gold_rule(obj):
-                    continue
+                # v7.0.0 GOLD unlock: no GOLD-based functional filtering. (Rules
+                # are not catalog-backed and never carry a meaningful GOLD flag,
+                # so this filter was defensive/dead in any case.)
                 class_name = _rule_class_name(obj)
                 if class_name not in _ADHOC_SUBCLASSES:
                     continue  # unexpected subclass: skip silently (enumeration only)
@@ -2882,8 +2878,7 @@ def build_rules_inventory(source, target=None) -> RulesInventory:
     if source is not None:
         try:
             for obj in _rules_walk_compound(source):
-                if _is_gold_rule(obj):
-                    continue
+                # v7.0.0 GOLD unlock: no GOLD-based functional filtering (see above).
                 class_name = _rule_class_name(obj)
                 if class_name not in _COMPOUND_SUBCLASSES:
                     continue
@@ -3159,10 +3154,12 @@ _ET_CATEGORY_ACCESSORS = [
 def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
     """Enumerate the two entry-type categories + inflection-feat dep maps.
 
-    Pure/read-only. All user-defined items preselected. Target-status is by-GUID
-    (in_target) or None when no target bound. GOLD types (catalog_source_id set)
-    are shown as in_target -- they are cross-referencing devices that link to the
-    target's GOLD by identity (spec 021 clarification / FR-009).
+    Pure/read-only. ALL items are enumerated and preselected (v7.0.0 GOLD unlock:
+    catalog/ontology types are ordinary items and are never filtered out).
+    Target-status is by-GUID (in_target) or None when no target bound; a type
+    already present in the target is shown as in_target purely as a
+    cross-referencing display device (spec 021 clarification / FR-009), which
+    does not deselect it or block transfer.
 
     Reference maps:
       variant_infl_feat_deps: variant_type_guid -> frozenset[infl_feat_val_guid]
