@@ -184,6 +184,67 @@ class TestApplyUpdateSemantic:
         assert "B" not in ops.written
         assert "D" not in ops.written
 
+    # --- 022 Part 1: real Merge fills source-only / empty-target fields ---
+
+    def test_source_only_key_absent_from_target_is_written(self):
+        """022 Part 1: a key present in source but ABSENT from tgt_props is
+        treated as an empty target and filled from a non-empty source."""
+        src_props = {"Name": "Same", "Gloss": "New gloss"}
+        tgt_props = {"Name": "Same"}  # Gloss key absent entirely
+        ops = _FakeOps()
+        tgt = _FakeTgtObj()
+        count = apply_update_semantic(src_props, tgt_props, ops, tgt)
+        assert count == 1
+        assert ops.written.get("Gloss") == "New gloss"
+
+    def test_target_only_key_absent_from_source_is_preserved(self):
+        """A key present in target but absent from source is never touched."""
+        src_props = {"Name": "Same"}
+        tgt_props = {"Name": "Same", "Note": "keep me"}
+        ops = _FakeOps()
+        tgt = _FakeTgtObj()
+        count = apply_update_semantic(src_props, tgt_props, ops, tgt)
+        assert count == 0
+        assert "Note" not in ops.written
+
+    def test_empty_target_field_filled_from_nonempty_source(self):
+        """A target field that is present-but-empty ("", "***", {}) is filled
+        by a non-empty source value."""
+        src_props = {"A": "real_A", "B": "real_B", "C": {"en": "real_C"}}
+        tgt_props = {"A": "", "B": "***", "C": {}}
+        ops = _FakeOps()
+        tgt = _FakeTgtObj()
+        count = apply_update_semantic(src_props, tgt_props, ops, tgt)
+        assert count == 3
+        assert ops.written.get("A") == "real_A"
+        assert ops.written.get("B") == "real_B"
+        assert ops.written.get("C") == {"en": "real_C"}
+
+    def test_field_write_failure_is_logged_and_not_counted(self, caplog):
+        """A per-field write raising AttributeError/TypeError is logged as a
+        warning and is NOT counted in `written`."""
+
+        class _RaisingOps:
+            def ApplySyncableProperties(self, tgt_obj, props, ws_map=None,
+                                        fill_gaps=False):
+                key = next(iter(props))
+                if key == "Bad":
+                    raise TypeError("simulated flexicon type error")
+                # "Good" succeeds silently.
+
+        src_props = {"Good": "ok", "Bad": "boom"}
+        tgt_props = {"Good": "old", "Bad": "old"}
+        ops = _RaisingOps()
+        tgt = _FakeTgtObj()
+        with caplog.at_level("WARNING"):
+            count = apply_update_semantic(src_props, tgt_props, ops, tgt)
+        # Only the successful "Good" write is counted; "Bad" failed.
+        assert count == 1
+        assert any(
+            "Bad" in rec.getMessage() and rec.levelname == "WARNING"
+            for rec in caplog.records
+        ), f"expected a WARNING log mentioning 'Bad'; got {caplog.records!r}"
+
     def test_overwrite_contrast_would_blank(self):
         """SC-003: OVERWRITE semantics differ -- this test documents the contrast.
 
@@ -243,6 +304,37 @@ class TestComputeDispositionUpdate:
             intent=ConflictMode.OVERWRITE,
         )
         assert disp == ItemDisposition.OVERWRITE
+
+    def test_source_only_fillable_field_is_update_not_skip(self):
+        """022 Part 1: when the ONLY divergence is a source-only key (absent from
+        target), UPDATE must resolve to UPDATE, not SKIP -- otherwise the writer
+        is never invoked and the empty target field is never filled."""
+        disp = compute_disposition(
+            src_props={"Name": "Same", "Gloss": "fill me"},
+            tgt_props={"Name": "Same"},  # Gloss absent
+            intent=ConflictMode.UPDATE,
+        )
+        assert disp == ItemDisposition.UPDATE
+
+    def test_empty_target_field_only_divergence_is_update(self):
+        """A present-but-empty target field with a non-empty source is the only
+        divergence -> UPDATE, not SKIP."""
+        disp = compute_disposition(
+            src_props={"Name": "Same", "Gloss": "fill me"},
+            tgt_props={"Name": "Same", "Gloss": "***"},
+            intent=ConflictMode.UPDATE,
+        )
+        assert disp == ItemDisposition.UPDATE
+
+    def test_source_only_field_under_overwrite_still_skip(self):
+        """OVERWRITE behaviour is unchanged: a source-only field that the
+        intersection diff does not see still yields SKIP (no field-diff)."""
+        disp = compute_disposition(
+            src_props={"Name": "Same", "Gloss": "fill me"},
+            tgt_props={"Name": "Same"},  # Gloss absent
+            intent=ConflictMode.OVERWRITE,
+        )
+        assert disp == ItemDisposition.SKIP
 
     def test_link_intent_with_diverged_is_skip(self):
         """LINK intent on existing item with differences -> SKIP (no writes)."""
