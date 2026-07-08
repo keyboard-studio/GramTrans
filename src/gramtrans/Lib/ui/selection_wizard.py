@@ -702,7 +702,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         )
         self._stem_tree.header().setStretchLastSection(False)
         self._stem_tree.setAlternatingRowColors(True)
-        stems_layout.addWidget(self._stem_tree, 1)
+        # Merge-preview pane docked to the right, mirroring the Affixes tab.
+        # Each tab needs its own pane instance (a QWidget has one parent).
+        self._stem_pane = MergePreviewPane(stems_tab)
+        stem_splitter = _make_tree_pane_splitter(self._stem_tree, self._stem_pane)
+        stems_layout.addWidget(stem_splitter, 1)
         self._tabs.addTab(stems_tab, "Stems")
         # Stem inventory + per-guid item registry (mirrors the affix tree).
         self._stem_inventory: Optional[PosGroupedAffixInventory] = None
@@ -796,11 +800,14 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         except Exception:  # noqa: BLE001
             stem_inventory = None  # type: ignore[assignment]
         self._stem_inventory = stem_inventory
-        attach_ws_font_delegate(
-            self._stem_tree, [0, 2, 3], WsFontRegistry.from_project(source)
-        )
+        stem_registry = WsFontRegistry.from_project(source)
+        attach_ws_font_delegate(self._stem_tree, [0, 2, 3], stem_registry)
         if stem_inventory is not None:
             self.populate_stem_tree(stem_inventory)
+        # Stem pane shares the preview service; stems carry no SIMILAR
+        # resolution combo (R5: resolvable is affix-only) so candidates
+        # stay empty.  set_context() also clears the pane.
+        self._stem_pane.set_context(self._preview_service, stem_registry, [])
         # Wire stem tree selection to the shared preview handler (Lane 4).
         if self._stem_tree.receivers(self._stem_tree.currentItemChanged) == 0:
             self._stem_tree.currentItemChanged.connect(self._on_tree_selection_changed)
@@ -903,13 +910,17 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def _on_tree_selection_changed(self, current, previous) -> None:
         """T009: build PreviewRequest from selected row and call pane.show_item."""
+        # Both trees share this handler; route to the pane docked in the
+        # same tab as the tree that emitted the signal.
+        tree = current.treeWidget() if current is not None else self.sender()
+        pane = self._stem_pane if tree is self._stem_tree else self._pane
         if current is None:
-            self._pane.clear()
+            pane.clear()
             return
         kind = current.data(0, _KIND_ROLE)
         if kind not in ("affix", "stem"):
             # Group or subgroup header -> clear pane
-            self._pane.clear()
+            pane.clear()
             return
 
         source_guid = current.data(0, _GUID_ROLE) or ""
@@ -932,11 +943,12 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                 target_guid = ""
                 mode = NEW
         else:
-            self._pane.clear()
+            pane.clear()
             return
 
-        # resolvable if status=="similar" (store entry implies candidate was found)
-        resolvable = status == "similar"
+        # resolvable only for affix SIMILAR rows (R5); the resolution store
+        # and candidate combo are affix-scoped, so stems are never resolvable.
+        resolvable = status == "similar" and kind == "affix"
 
         current_resolution = self._resolution_store.get(source_guid)
         cat_str = category.value if category is not None else GrammarCategory.AFFIXES.value
@@ -951,7 +963,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             current_resolution=current_resolution,
             owner_guid="",
         )
-        self._pane.show_item(request)
+        pane.show_item(request)
 
     def _on_resolution_changed(self, entry_guid: str, resolution) -> None:
         """T010: update the resolution store and reflect in Target column."""

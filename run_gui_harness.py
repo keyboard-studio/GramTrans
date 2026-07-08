@@ -58,7 +58,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="GramTrans standalone GUI harness")
     ap.add_argument(
         "--source",
-        default="Ejagham Mini",
+        # default="Ejagham Mini",
+        default="Mbugwe LizzieHC practice",
         help="source project, opened read-only (default: 'Ejagham Mini')",
     )
     ap.add_argument(
