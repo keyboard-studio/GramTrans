@@ -158,3 +158,48 @@ fields are in scope (spec edge-cases mention `ReferenceAtom`/`ReferenceCollectio
 the engine's `_ensure_custom_fields` must branch: list types → 7-arg with `destinationClass=7` +
 `fieldListRoot=record.list_root_guid`. The Ejagham corpus has no list custom fields, so this is a
 correctness-completeness fix, not a blocker for the Ejagham verification.
+
+## ADDENDUM (2026-07-07): the "custom-field deadlock" root cause — Nil-typed fields
+
+The recurring freeze attributed to a co-held `CloseProject()` was finally root-caused live
+(managed stacks via ClrMD on a wedged run). It was **not** primarily co-ownership. The chain:
+
+1. Shipping flexicon `CustomFields.GetAllFields` returns bare 2-tuples `(flid, label)` — no type.
+2. `categories._enumerate_custom_fields` defaulted the missing type to **0 = CellarPropertyType.Nil**.
+3. `IFwMetaDataCacheManaged.AddCustomField` accepts Nil without complaint (in-memory only).
+4. At commit time, `BackendProvider.GetFlidTypeAsString(Nil)` THROWS
+   ("Property element name not recognized") while writing `<AdditionalFields>` on the
+   commit-writer thread; the catch path is `ReportProblem` -> `m_ui.DisplayMessage` ->
+   WinForms `Control.Invoke` — which a pump-less headless host can NEVER service.
+5. The commit writer wedges forever; every subsequent `Save()`/`CloseProject()` queues behind it.
+   From the outside this looked exactly like a co-held-close deadlock (CPU=0, lock held).
+
+Captured consumer-thread stack (abridged):
+
+    Control.Invoke -> WaitForWaitHandle            (blocked forever)
+    XMLBackendProvider.ReportProblem
+    XMLBackendProvider.WriteCommitWork
+      <- threw in BackendProvider.GetFlidTypeAsString(CellarPropertyType)
+
+Contributing hazards found and fixed along the way:
+
+- **SharedXML backend**: `projectSharing="true"` in `SharedSettings/LexiconSettings.plsx`
+  silently upgrades a kXML open to kSharedXML (LcmCache.GetProviderTypeFromProjectId).
+  SharedXML's `WriteCommitWork` holds the cross-process commit-log mutex during the whole
+  fwdata rewrite, so a wedged writer also deadlocks `Commit()` itself. GramTrans requires
+  exclusive access; `api._disable_project_sharing` now forces the plain XML backend at bind.
+- **LCM thread affinity**: running `Save()`/`CloseProject()` on a watchdog thread deadlocks
+  LCM (event handlers marshal to the opening thread). The close watchdog is now a passive
+  hang-labeling watcher; all LCM calls stay on the opening thread.
+- **Persist-without-close**: FLEx parity confirmed — custom-field schema rides on every
+  normal commit; `EndNonUndoableTask -> IUndoStackManager.Save -> BeginNonUndoableTask`
+  persists `<AdditionalFields>` to disk with NO close/reopen (verified on disk mid-session).
+  The PATH-CLOSE-REBIND close/reopen dance is retired.
+
+Engine defenses now in place:
+
+- `categories._harvest_field_shape`: 2-tuple rows are enriched from the MDC
+  (`GetFieldType & 0x1F`, `GetFieldWs`, `GetFieldListRoot`).
+- `api._ensure_custom_fields`: fail-loud whitelist — refuses any CellarPropertyType outside
+  `GetFlidTypeAsString`'s exhaustive case list (esp. Nil=0) BEFORE mutating the schema.
+- All custom fields are created with the 7-arg overload so the source `wsSelector` carries over.

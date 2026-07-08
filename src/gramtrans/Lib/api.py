@@ -58,55 +58,157 @@ else:
 
 _log = logging.getLogger(__name__)
 
-# PATH-CLOSE-REBIND anti-deadlock backstop.
+# Anti-deadlock diagnostics for LCM calls that can block cross-process.
 #
 # FLExProject.CloseProject() "saves pending changes and disposes the LCM object"
 # (releasing the file lock). When the target is co-held by another process (a
-# second FLExTools/MCP session or the FLEx GUI), the shared-XML-backend Save
-# inside CloseProject can block INDEFINITELY -- the deadlock that froze
-# coverage_report.py mid-run on the custom-field schema-write handle. A
-# co-holder is NOT reliably detectable up front: co-open succeeds and the Palaso
-# FileLock records only one owner (probe-results.md op 009). So rather than
-# hanging forever we bound every write-handle close and FAIL LOUD.
+# second FLExTools/MCP session or the FLEx GUI), the dispose step
+# (SharedXMLBackendProvider.ShutdownInternal takes the commit-log mutex with NO
+# timeout) can block INDEFINITELY -- the deadlock that froze coverage_report.py
+# mid-run on the custom-field schema-write handle. A co-holder is NOT reliably
+# detectable up front: co-open succeeds and the Palaso FileLock records only
+# one owner (probe-results.md op 009).
+#
+# CRITICAL THREAD-AFFINITY CONSTRAINT (learned the hard way): LCM calls that
+# raise events (Save, CloseProject) MUST run on the thread that opened the
+# project. flexicon creates the LCM ThreadHelper on the opening thread, and
+# event handlers marshal to it via ISynchronizeInvoke.Invoke; a pump-less
+# Python host never services invokes queued from another thread, so running
+# Save/Close on a watchdog thread deadlocks LCM itself (observed live: a
+# post-transfer Save with 169 gathered changes wedged on a daemon thread
+# while a schema-only Save, which gathers nothing and raises nothing,
+# sailed through). So we do NOT bound these calls by running them off-thread.
+# Instead a passive WATCHER thread labels a hang in the log/console after
+# the deadline, converting a mystery freeze into an actionable diagnosis
+# while the call runs on the correct thread.
 _SCHEMA_CLOSE_TIMEOUT_S = float(
     os.environ.get("GRAMTRANS_SCHEMA_CLOSE_TIMEOUT", "90")
 )
 
 
-def _close_project_watchdog(proj, timeout_s: float, what: str) -> None:
-    """Call ``proj.CloseProject()`` under a bounded watchdog.
+def _watched_call(fn, timeout_s: float, what: str, diagnose=None):
+    """Run ``fn()`` ON THIS THREAD with a passive hang-labeling watcher.
 
-    Runs CloseProject on a daemon thread; if it does not return within
-    ``timeout_s`` seconds, raises ``RuntimeError`` instead of hanging forever.
-    The daemon thread is abandoned on timeout (a wedged .NET call cannot be
-    safely aborted from Python) but, being a daemon, will not block interpreter
-    exit. Any exception raised by CloseProject itself is re-raised on the
-    caller's thread, preserving the previous propagate-on-error behavior.
+    LCM thread affinity forbids moving the call to a watchdog thread (see the
+    module comment above). If ``fn`` has not returned within ``timeout_s``
+    seconds, a daemon watcher emits a WARNING naming the operation and the
+    likely cause (a co-holder of the target project) -- it cannot abort the
+    call (a wedged .NET call cannot be safely interrupted from Python), but
+    the operator sees exactly what is stuck and why instead of a silent
+    freeze. Exceptions from ``fn`` propagate unchanged.
+
+    ``diagnose``: optional zero-arg callable returning extra diagnostic text
+    for the timeout warning (run on the watcher thread; exceptions swallowed).
     """
-    result: dict = {}
+    done = threading.Event()
 
-    def _runner() -> None:
-        try:
-            proj.CloseProject()
-            result["ok"] = True
-        except BaseException as exc:  # noqa: BLE001 -- re-raised on caller thread
-            result["exc"] = exc
+    def _watch() -> None:
+        if not done.wait(timeout_s):
+            msg = (
+                f"{what} has not completed after {timeout_s:g}s -- the target "
+                f"is almost certainly open in another process (a second "
+                f"FLExTools/MCP session or the FLEx GUI). Close every other "
+                f"holder of the project; if this process stays stuck, kill it "
+                f"and re-run single-owner. (Deadline via the "
+                f"GRAMTRANS_SCHEMA_CLOSE_TIMEOUT env var.)"
+            )
+            if diagnose is not None:
+                try:
+                    msg += f"\n[DIAG] {diagnose()}"
+                except Exception as exc:  # noqa: BLE001 -- diagnostics only
+                    msg += f"\n[DIAG] unavailable: {exc!r}"
+            _log.warning("%s", msg)
+            print(f"[WARN] {msg}", flush=True)
 
-    t = threading.Thread(
-        target=_runner, name=f"gramtrans-close-{what}", daemon=True
+    w = threading.Thread(
+        target=_watch, name=f"gramtrans-watch-{what}", daemon=True
     )
-    t.start()
-    t.join(timeout_s)
-    if t.is_alive():
-        raise RuntimeError(
-            f"CloseProject() for {what} did not complete within {timeout_s:g}s "
-            f"-- the target is almost certainly open in another process (a "
-            f"second FLExTools/MCP session or the FLEx GUI). Close every other "
-            f"holder of the project and re-run. (Adjust the deadline via the "
-            f"GRAMTRANS_SCHEMA_CLOSE_TIMEOUT env var.)"
+    w.start()
+    try:
+        return fn()
+    finally:
+        done.set()
+
+
+def _close_project_watchdog(proj, timeout_s: float, what: str) -> None:
+    """Call ``proj.CloseProject()`` on this thread with a hang-labeling watcher."""
+    _watched_call(proj.CloseProject, timeout_s, f"CloseProject() for {what}")
+
+
+def _persist_without_close(proj, what: str) -> None:
+    """Persist all pending changes -- INCLUDING custom-field schema -- to disk
+    without disposing the LCM cache. This is FLEx's own persist path: custom
+    fields ride on every normal commit (BackendProvider.HaveAnythingToCommit
+    pulls the full list from the metadata cache; XMLBackendProvider.
+    WriteCommitWork writes the <AdditionalFields> element), so no
+    CloseProject() is needed to make a schema write durable.
+
+    flexicon's non-undoable open (the mode every GramTrans handle uses) holds
+    an ambient NonUndoableTask from OpenProject onward, and
+    UnitOfWorkService.Save() throws "Commit at wrong place" (and rolls back!)
+    while any task is open. So the persist step is the same triplet
+    CloseProject() runs minus the deadlock-prone Dispose():
+    EndNonUndoableTask -> IUndoStackManager.Save -> BeginNonUndoableTask
+    (restoring the ambient-task invariant CloseProject expects later).
+
+    Everything runs on the CALLER'S thread (LCM thread affinity: event
+    handlers raised during Save marshal to the opening thread via
+    ThreadHelper.Invoke -- see _watched_call); the watcher only labels a
+    hang, it never moves the call off-thread.
+    """
+    from SIL.LCModel import IUndoStackManager  # lazy -- unavailable in unit tests
+
+    mca = proj.project.MainCacheAccessor
+    usm = proj.ObjectRepository(IUndoStackManager)
+    _log.debug(
+        "_persist_without_close: End/Save/Begin checkpoint for %s "
+        "(handle id=%s)", what, id(proj),
+    )
+    def _diagnose_backend() -> str:
+        """Reflect the XML backend's private state (watcher-thread safe: field
+        reads only, no LCM calls that marshal). Names the wedge when Save
+        blocks: a stale-mtime mismatch means the commit consumer bailed into
+        ReportProblem's UI marshal, which a pump-less host never services."""
+        from System.IO import File as DotNetFile  # noqa: PLC0415
+        from SIL.LCModel.Utils import ReflectionHelper  # noqa: PLC0415
+
+        parts = []
+        bep = ReflectionHelper.GetField(usm, "m_dataStorer")
+        parts.append(f"backend={bep.GetType().Name}")
+        try:
+            recorded = ReflectionHelper.GetField(bep, "m_lastWriteTime")
+            path = str(proj.project.ProjectId.Path)
+            current = DotNetFile.GetLastWriteTimeUtc(path)
+            parts.append(f"m_lastWriteTime={recorded.ToString('o')}")
+            parts.append(f"fwdata_mtime_utc={current.ToString('o')}")
+            parts.append(f"mtime_match={recorded.Equals(current)}")
+        except Exception as exc:  # noqa: BLE001
+            parts.append(f"mtime_reflect_failed={exc!r}")
+        try:
+            ct = ReflectionHelper.GetProperty(bep, "CommitThread")
+            if ct is None:
+                parts.append("CommitThread=None")
+            else:
+                parts.append(f"CommitThread.m_isIdle={ReflectionHelper.GetField(ct, 'm_isIdle')}")
+        except Exception as exc:  # noqa: BLE001
+            parts.append(f"commit_thread_reflect_failed={exc!r}")
+        return " ".join(str(p) for p in parts)
+
+    mca.EndNonUndoableTask()
+    try:
+        _watched_call(
+            usm.Save, _SCHEMA_CLOSE_TIMEOUT_S, f"Save() for {what}",
+            diagnose=_diagnose_backend,
         )
-    if "exc" in result:
-        raise result["exc"]
+    finally:
+        # Always restore the ambient task, even if Save raised -- the handle
+        # stays usable and CloseProject()'s EndNonUndoableTask still has a
+        # task to end.
+        mca.BeginNonUndoableTask()
+    _log.debug(
+        "_persist_without_close: checkpoint for %s persisted (handle id=%s)",
+        what, id(proj),
+    )
 
 
 # ============================================================================
@@ -123,6 +225,20 @@ _LIST_FIELD_TYPES: frozenset = frozenset((24, 26))
 # reference fields in the 7-arg AddCustomField overload.
 # See probe-results.md §"Corrected API facts" and LCM class registry.
 _CM_POSSIBILITY_CLASS_ID: int = 7  # CmPossibility
+
+# CellarPropertyType values LibLCM's commit serializer can actually write
+# (the exhaustive case list of BackendProvider.GetFlidTypeAsString; anything
+# else THROWS "Property element name not recognized" at commit time, and the
+# serializer's catch path -- ReportProblem -> WinForms Control.Invoke --
+# wedges a headless host forever). AddCustomField itself does NOT validate,
+# so we must: a Nil(0)-typed field is a delayed-action process killer.
+# Boolean=1 Integer=2 Numeric=3 Float=4 Time=5 Guid=6 Image=7 GenDate=8
+# Binary=9 String=13 MultiString=14 Unicode=15 MultiUnicode=16
+# OwningAtomic=23 ReferenceAtomic=24 OwningCollection=25
+# ReferenceCollection=26 OwningSequence=27 ReferenceSequence=28
+_SERIALIZABLE_FIELD_TYPES: frozenset = frozenset(
+    (1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28)
+)
 
 # ============================================================================
 # Stub + candidate types (contracts/module-ui.md)
@@ -232,6 +348,53 @@ def list_target_candidates(stub: RunContextStub,
     return candidates
 
 
+def _disable_project_sharing(project_path: str, project_name: str) -> bool:
+    """Force the plain (exclusive) XML backend for a write session by turning
+    OFF the target's project-sharing flag before it is opened.
+
+    LibLCM silently upgrades a kXML open to kSharedXML whenever
+    <project>/SharedSettings/LexiconSettings.plsx says projectSharing="true"
+    (LcmCache.GetProviderTypeFromProjectId -> LcmSettings.IsProjectSharingEnabled).
+    The SharedXML backend is a multi-process peer protocol (global commit-log
+    mutex, cross-peer reconciliation, UI marshals on its writer thread) that
+    a pump-less headless host cannot safely participate in: observed live, a
+    large commit wedged the mutex-holding writer and every subsequent Save()
+    deadlocked. GramTrans's contract is EXCLUSIVE write access to the target
+    (bind_target refuses locked targets), so sharing buys nothing here and
+    the plain XML backend is the proven-correct path. As a bonus, with
+    sharing off a co-holder (FLEx GUI / second session) makes OpenProject
+    fail FAST with a lock error instead of deadlocking mid-run.
+
+    Returns True if the flag was flipped, False if it was already off / the
+    settings file does not exist. Fail-loud on unexpected file content.
+    """
+    import re
+
+    plsx = os.path.join(project_path, "SharedSettings", "LexiconSettings.plsx")
+    if not os.path.isfile(plsx):
+        return False
+    with open(plsx, encoding="utf-8") as fh:
+        text = fh.read()
+    new_text, n = re.subn(
+        r'(<ProjectLexiconSettings\b[^>]*\bprojectSharing=")true(")',
+        r"\g<1>false\g<2>",
+        text,
+        count=1,
+    )
+    if n == 0:
+        return False
+    with open(plsx, "w", encoding="utf-8") as fh:
+        fh.write(new_text)
+    _log.warning(
+        "bind_target: disabled projectSharing on %r (%s) -- GramTrans "
+        "requires exclusive write access; the SharedXML backend deadlocks "
+        "headless hosts. Re-enable sharing in FLEx (Project Properties > "
+        "Sharing) if you use it.",
+        project_name, plsx,
+    )
+    return True
+
+
 def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
     """Open the chosen target for write, raise on lock/read-only/same-project.
 
@@ -256,6 +419,17 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
     except ImportError:
         raise TargetUnavailable(
             "flexicon is not installed; cannot open the target project."
+        )
+
+    # Exclusive-backend guard: must run BEFORE OpenProject (the backend type
+    # is chosen at open from the on-disk sharing flag).
+    try:
+        _disable_project_sharing(choice.project_path, choice.project_name)
+    except Exception as exc:  # noqa: BLE001 — diagnose-don't-block
+        _log.warning(
+            "bind_target: could not check/disable projectSharing for %r: %s "
+            "(a shared-backend open may deadlock on Save under a co-holder)",
+            choice.project_name, exc,
         )
 
     target = FLExProject()
@@ -315,21 +489,27 @@ def compute_preview(context: RunContext,
     return (PreviewState.PREVIEW_READY, plan)
 
 
-def _ensure_custom_fields(target_project_name: str,
-                           create_actions: list,
-                           ) -> list:
-    """PATH-CLOSE-REBIND pre-pass: create missing custom field definitions.
+def _ensure_custom_fields(proj, create_actions: list) -> list:
+    """Custom-field pre-pass: create missing field definitions on the OPEN
+    target handle, then persist the schema WITHOUT closing.
 
-    Called by execute_move BEFORE transfer.execute, after the Phase-1 preview
-    handle has been closed.  Opens a FRESH undoable FLExProject, creates each
-    field via IFwMetaDataCacheManaged.AddCustomField in a
-    NonUndoableUnitOfWorkHelper.Do block, then closes it so the schema change
-    persists to disk.
+    Called by execute_move BEFORE transfer.execute. Creates each field via
+    IFwMetaDataCacheManaged.AddCustomField on ``proj`` (the caller's target
+    handle), then checkpoints via _persist_without_close so the schema is on
+    disk before any value write. This is FLEx parity: AddCustomFieldDlg runs
+    AddCustomField in-memory and lets a normal commit write the
+    <AdditionalFields> element -- it never closes the project, which is why
+    FLEx never hangs here. The old PATH-CLOSE-REBIND close/reopen dance
+    deadlocked whenever anything co-held the target, because only the
+    Dispose() step (not Save) takes the SharedXML commit-log mutex without a
+    timeout.
 
     Parameters
     ----------
-    target_project_name:
-        Name of the target project as passed to FLExProject.OpenProject.
+    proj:
+        The already-open write-enabled (non-undoable) target FLExProject.
+        AddCustomField is purely an in-memory metadata-cache mutation, so the
+        new flids are immediately usable by this same handle -- no reopen.
     create_actions:
         List of CreateDefinitionAction instances from the plan.  Only NEW
         fields (plan_action returned CreateDefinitionAction) reach here;
@@ -344,113 +524,98 @@ def _ensure_custom_fields(target_project_name: str,
 
     Notes
     -----
-    - flids renumber on reload; DO NOT cache flids across this boundary.
+    - No reload happens anymore, so the flids AddCustomField returns stay
+      valid for this session. (The old flids-renumber-on-reload warning only
+      applied to the retired close/reopen dance.)
+    - Crash-safety: a crash between the schema checkpoint and the value
+      writes leaves a valid project with empty custom fields -- same as
+      creating a field in FLEx and never filling it in. The reverse order
+      (values before schema) would be the ghost-field corruption trap.
     - Idempotency: if the field already exists (FindField truthy) when this
       runs, skip AddCustomField for that field -- safe for re-run.
     - 4th arg to AddCustomField is destinationClass (Int32), NOT
       list_root_guid.  For non-list types pass 0; for list types pass
       GetClassId(list_root_class).  list_root_guid is the 7th arg of the
       extended overload (probe-results.md).
-    - This helper has no unit-test coverage for the live LCM path; the
-      FLExProject boundary is mocked/stubbed in tests per the task memo.
-      Flag for main-session MCP value-round-trip verification.
     """
-    try:
-        from flexicon import FLExProject  # lazy -- unavailable in unit tests
-        from SIL.LCModel.Infrastructure import IFwMetaDataCacheManaged
-    except ImportError as exc:
-        raise RuntimeError(
-            f"flexicon / SIL.LCModel.Infrastructure not available: {exc}"
-        ) from exc
-
     created: list = []
     if not create_actions:
         return created
 
-    proj = FLExProject()
-    _log.debug(
-        "_ensure_custom_fields: opening %r writeEnabled=True (fresh handle id=%s) "
-        "-- if this is the last log line, the re-open is blocked on the Phase-1 "
-        "write-lock not yet released by the OS/backend",
-        target_project_name, id(proj),
-    )
     try:
-        proj.OpenProject(projectName=target_project_name, writeEnabled=True)
-    except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
+        from SIL.LCModel.Infrastructure import IFwMetaDataCacheManaged
+    except ImportError as exc:
         raise RuntimeError(
-            f"_ensure_custom_fields: could not open {target_project_name!r} "
-            f"for schema write: {exc!s}"
+            f"SIL.LCModel.Infrastructure not available: {exc}"
         ) from exc
-    _log.debug(
-        "_ensure_custom_fields: opened %r (handle id=%s); running AddCustomField "
-        "pre-pass for %d action(s)",
-        target_project_name, id(proj), len(create_actions),
-    )
-    try:
-        mdc_managed = IFwMetaDataCacheManaged(proj.Cache.MetaDataCacheAccessor)
-        cf_ops = proj.CustomFields
 
-        def _do_creates():
-            for act in create_actions:
-                # Idempotency: skip if already present (re-run safety).
-                existing = cf_ops.FindField(act.owner_class, act.field_name)
-                if existing:
-                    continue
-                # AddCustomField's 3rd arg is a CellarPropertyType enum, not a
-                # raw int; pythonnet won't coerce int->Enum implicitly (TypeError
-                # "Use Enum(int_value)"). Wrap the stored int field_type.
-                from SIL.LCModel.Core.Cellar import CellarPropertyType  # noqa: PLC0415
-                field_type_enum = CellarPropertyType(act.field_type)
-                if act.field_type in _LIST_FIELD_TYPES:
-                    # 7-arg overload for list-backed reference fields:
-                    #   (className, fieldName, fieldType, destinationClass=CmPossibility,
-                    #    fieldHelp, fieldWs, fieldListRoot: Guid)
-                    from System import Guid as DotNetGuid  # noqa: PLC0415
-                    list_root_guid = DotNetGuid.Parse(act.list_root_guid)
-                    flid = mdc_managed.AddCustomField(
-                        act.owner_class, act.field_name, field_type_enum,
-                        _CM_POSSIBILITY_CLASS_ID, "", 0, list_root_guid,
-                    )
-                else:
-                    # 4-arg overload for value types:
-                    #   (className, fieldName, fieldType, destinationClass=0)
-                    flid = mdc_managed.AddCustomField(
-                        act.owner_class, act.field_name, field_type_enum, 0
-                    )
-                if not flid:
-                    raise RuntimeError(
-                        f"AddCustomField returned flid=0 for "
-                        f"{act.owner_class}.{act.field_name!r} "
-                        f"(type {act.field_type}); schema write failed."
-                    )
-                created.append(act.field_name)
-
-        # NonUndoableUnitOfWorkHelper.Do equivalent via flexicon's UoW context.
-        # Schema (MDC) writes are non-undoable by LCM design; flexicon exposes
-        # this via the project's ActionHandler at CurrentDepth==0.
-        #
-        # Citation: probe-results.md §"Evidence" op-005 confirms CurrentDepth==0
-        # at snippet start (undoable open, before any UndoableOperation block).
-        # probe-results.md §"Required engine flow (Option B, PATH-CLOSE-REBIND)"
-        # step 2 states: "run the create-definition pre-pass at CurrentDepth==0,
-        # before any value-write UndoableOperation block."  The PATH-CLOSE-REBIND
-        # single-owner contract guarantees this: we close the Phase-1 handle
-        # before opening here, so no other UoW owner can be active.
-        _do_creates()
-        _log.debug(
-            "_ensure_custom_fields: AddCustomField pre-pass done (created=%r); "
-            "closing schema-write handle id=%s to persist to disk",
-            created, id(proj),
-        )
-    finally:
-        # Bounded close: a co-held target makes this Save/dispose hang forever.
-        _close_project_watchdog(
-            proj, _SCHEMA_CLOSE_TIMEOUT_S, "custom-field schema write"
-        )
     _log.debug(
-        "_ensure_custom_fields: schema-write handle id=%s CloseProject() returned",
-        id(proj),
+        "_ensure_custom_fields: running AddCustomField pre-pass for %d "
+        "action(s) on the caller's target handle id=%s",
+        len(create_actions), id(proj),
     )
+    mdc_managed = IFwMetaDataCacheManaged(proj.Cache.MetaDataCacheAccessor)
+    cf_ops = proj.CustomFields
+
+    for act in create_actions:
+        # Idempotency: skip if already present (re-run safety).
+        existing = cf_ops.FindField(act.owner_class, act.field_name)
+        if existing:
+            continue
+        # FAIL-LOUD type guard: AddCustomField accepts ANY CellarPropertyType
+        # (including Nil=0) but the commit serializer only writes the types in
+        # _SERIALIZABLE_FIELD_TYPES -- anything else detonates LATER on the
+        # commit-writer thread and wedges the process (see the frozenset's
+        # comment). Refuse here, before any schema mutation.
+        if act.field_type not in _SERIALIZABLE_FIELD_TYPES:
+            raise RuntimeError(
+                f"Refusing to create custom field "
+                f"{act.owner_class}.{act.field_name!r}: CellarPropertyType "
+                f"{act.field_type} is not serializable by LibLCM "
+                f"(GetFlidTypeAsString would throw at commit time and wedge "
+                f"the process). A type of 0 means the source field's type "
+                f"was never harvested -- check "
+                f"categories._harvest_field_shape / GetAllFields."
+            )
+        # AddCustomField's 3rd arg is a CellarPropertyType enum, not a
+        # raw int; pythonnet won't coerce int->Enum implicitly (TypeError
+        # "Use Enum(int_value)"). Wrap the stored int field_type.
+        from SIL.LCModel.Core.Cellar import CellarPropertyType  # noqa: PLC0415
+        from System import Guid as DotNetGuid  # noqa: PLC0415
+        field_type_enum = CellarPropertyType(act.field_type)
+        field_ws = getattr(act, "field_ws", 0)
+        if act.field_type in _LIST_FIELD_TYPES:
+            # 7-arg overload for list-backed reference fields:
+            #   (className, fieldName, fieldType, destinationClass=CmPossibility,
+            #    fieldHelp, fieldWs, fieldListRoot: Guid)
+            list_root_guid = DotNetGuid.Parse(act.list_root_guid)
+            flid = mdc_managed.AddCustomField(
+                act.owner_class, act.field_name, field_type_enum,
+                _CM_POSSIBILITY_CLASS_ID, "", field_ws, list_root_guid,
+            )
+        else:
+            # 7-arg overload so the source's wsSelector carries over
+            # (String/MultiUnicode fields need it for FLEx display):
+            #   (className, fieldName, fieldType, destinationClass=0,
+            #    fieldHelp, fieldWs, fieldListRoot=Guid.Empty)
+            flid = mdc_managed.AddCustomField(
+                act.owner_class, act.field_name, field_type_enum, 0,
+                "", field_ws, DotNetGuid.Empty,
+            )
+        if not flid:
+            raise RuntimeError(
+                f"AddCustomField returned flid=0 for "
+                f"{act.owner_class}.{act.field_name!r} "
+                f"(type {act.field_type}); schema write failed."
+            )
+        created.append(act.field_name)
+
+    _log.debug(
+        "_ensure_custom_fields: AddCustomField pre-pass done (created=%r); "
+        "checkpointing schema to disk without closing (handle id=%s)",
+        created, id(proj),
+    )
+    _persist_without_close(proj, "custom-field schema write")
 
     return created
 
@@ -467,14 +632,17 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     argument and re-map at execute time — that would let the committed result
     diverge from the previewed one. The plan is the single source of truth.
 
-    PATH-CLOSE-REBIND (T017): if the plan contains CreateDefinitionActions
-    for new custom fields, this function:
+    Custom-field create path (T017, reworked): if the plan contains
+    CreateDefinitionActions for new custom fields, this function:
       1. Collects those actions from plan.actions.
-      2. Calls _ensure_custom_fields() to close the Phase-1 handle, open a
-         fresh undoable project, AddCustomField each new field, then close.
-         (The Phase-1 handle in context.target_handle is the preview handle
-         opened by bind_target; it is stale after schema writes.)
-      3. Re-opens the target and re-binds context before calling transfer.execute.
+      2. Calls _ensure_custom_fields(context.target_handle, ...) to
+         AddCustomField each new field on the existing handle and checkpoint
+         the schema to disk via _persist_without_close. No close, no reopen,
+         no handle rebind -- the flids are live in the in-memory metadata
+         cache immediately (FLEx-parity; see _persist_without_close).
+      3. After transfer.execute, checkpoints again so the VALUE writes are on
+         disk even if the caller's final CloseProject later wedges on a
+         co-held target.
     transfer.execute internals are unchanged (Principle: zero edits to transfer).
     """
     # Honor GRAMTRANS_DEBUG on the export path (idempotent, no-op when off).
@@ -497,7 +665,7 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         timestamp=context.started_at,
     )
 
-    # PATH-CLOSE-REBIND: handle CreateDefinitionActions for new custom fields.
+    # Custom-field create path: CreateDefinitionActions for new custom fields.
     create_actions = [
         a for a in plan.actions
         if isinstance(a, CreateDefinitionAction)
@@ -505,103 +673,20 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     if _log.isEnabledFor(logging.DEBUG):
         _log.debug(
             "execute_move: entry  actions=%d create_actions=%d "
-            "source=%r target=%r target_handle_id=%s tag=%r "
-            "PATH-CLOSE-REBIND=%s",
+            "source=%r target=%r target_handle_id=%s tag=%r",
             len(plan.actions), len(create_actions),
             context.source_project_name, context.target_project_name,
             id(getattr(context, "target_handle", None)),
             tag.serialize() if hasattr(tag, "serialize") else str(tag),
-            bool(create_actions),
         )
     if create_actions:
-        phase1_handle = context.target_handle
-        _log.debug(
-            "execute_move PATH-CLOSE-REBIND: closing Phase-1 preview handle "
-            "id=%s (the handle stored on the caller's context)",
-            id(phase1_handle),
-        )
-        # Step 1: close the Phase-1 preview handle.
-        try:
-            context.target_handle.CloseProject()
-        except Exception:
-            pass  # already closed or unavailable
-        _log.debug(
-            "execute_move PATH-CLOSE-REBIND: Phase-1 handle id=%s CloseProject() "
-            "returned; entering _ensure_custom_fields pre-pass",
-            id(phase1_handle),
-        )
-
-        # Step 2: open fresh undoable handle, run AddCustomField pre-pass, close.
-        _ensure_custom_fields(context.target_project_name, create_actions)
-        _log.debug(
-            "execute_move PATH-CLOSE-REBIND: _ensure_custom_fields pre-pass "
-            "returned; re-opening target for the value-write phase",
-        )
-
-        # Step 3: re-open the target (fresh handle now sees persisted fields).
-        try:
-            from flexicon import FLExProject  # lazy
-            fresh_target = FLExProject()
-            fresh_target.OpenProject(
-                projectName=context.target_project_name, writeEnabled=True
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Re-open of target {context.target_project_name!r} after "
-                f"custom-field schema write failed: {exc}"
-            ) from exc
-
-        # Handle divergence is a prime suspect for the persist bug: writes go to
-        # `fresh_target` (created locally here), but the wizard cleanup in
-        # gramtrans._run_gui closes the ORIGINAL handle stored on its context.
-        _log.debug(
-            "execute_move PATH-CLOSE-REBIND: opened fresh_target id=%s "
-            "(created locally). Writes below target THIS handle; the caller's "
-            "context still references the disposed Phase-1 handle id=%s. This "
-            "branch owns closing fresh_target (see Step 5).",
-            id(fresh_target), id(phase1_handle),
-        )
-
-        # Step 4: re-bind context with the fresh handle (frozen dataclass replace).
-        import dataclasses
-        context = dataclasses.replace(context, target_handle=fresh_target)
-        # Also update the plan's embedded context so execute() sees the fresh handle.
-        plan = dataclasses.replace(plan, context=context)
-
-        # Step 5: run the transfer and CLOSE the fresh handle ourselves.
-        # The wizard's cleanup (gramtrans.py _run_gui) closes the ORIGINAL
-        # target_handle, which we disposed in Step 1; closing a disposed handle
-        # is a silent no-op. FLEx only persists writes on CloseProject()
-        # (EndNonUndoableTask + usm.Save), so this branch must own closing
-        # fresh_target or every object write below is discarded on exit.
-        _log.debug(
-            "execute_move PATH-CLOSE-REBIND: calling execute() with a "
-            "_NullReportSink — per-item .Warning() reports are DISCARDED "
-            "(fresh_target id=%s)", id(fresh_target),
-        )
-        try:
-            return execute(
-                plan, context.source_handle, context.target_handle,
-                _NullReportSink(), tag,
-            )
-        finally:
-            _log.debug(
-                "execute_move PATH-CLOSE-REBIND: closing fresh_target id=%s "
-                "(this branch owns the disk-write for the create path)",
-                id(fresh_target),
-            )
-            try:
-                # Bounded close (same co-held-hang risk as the schema handle);
-                # a close failure/timeout must not mask the execute result.
-                _close_project_watchdog(
-                    fresh_target, _SCHEMA_CLOSE_TIMEOUT_S,
-                    "fresh target write handle",
-                )
-            except Exception as exc:  # noqa: BLE001
-                _log.warning(
-                    "execute_move PATH-CLOSE-REBIND: fresh_target close "
-                    "failed/timed out (write persistence at risk): %s", exc,
-                )
+        # Schema pre-pass on the caller's own handle: AddCustomField is an
+        # in-memory metadata-cache mutation; the checkpoint inside persists
+        # the <AdditionalFields> schema to disk with NO close/reopen (the
+        # close-to-persist dance was the co-held deadlock). The caller's
+        # context keeps the one true handle, so the wizard cleanup in
+        # gramtrans._run_gui closes the right object.
+        _ensure_custom_fields(context.target_handle, create_actions)
 
     # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
     # UI passes the FlexTools report object through. For programmatic API
@@ -612,7 +697,22 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         ".Warning() reports are DISCARDED (target_handle id=%s)",
         id(getattr(context, "target_handle", None)),
     )
-    return execute(plan, context.source_handle, context.target_handle, sink, tag)
+    try:
+        return execute(plan, context.source_handle, context.target_handle, sink, tag)
+    finally:
+        if create_actions:
+            # Persist the value writes NOW, decoupled from the caller's final
+            # CloseProject: even if a co-held close later wedges (and the
+            # watchdog abandons it), the transferred data is already on disk.
+            try:
+                _persist_without_close(
+                    context.target_handle, "post-transfer value writes"
+                )
+            except Exception as exc:  # noqa: BLE001 — must not mask execute()
+                _log.warning(
+                    "execute_move: post-transfer checkpoint failed/timed out "
+                    "(final CloseProject becomes the persist point): %s", exc,
+                )
 
 
 class _NullReportSink:
