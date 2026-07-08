@@ -1,19 +1,28 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 6.0.0 → 6.1.0
-Bump rationale: MINOR — Principle I (FLEx Domain Fidelity) materially expanded to
-  permit a NON-DESTRUCTIVE UPDATE merge on GOLD-identified items. Previously GOLD
-  categories / inflection features could never be modified as a side effect of
-  import ("never overwritten, renamed, or deleted"), which blocked the Merge/LINK
-  rework (keyboard-studio/GramTrans issue #22, based on MattGyverLee/GramTrans#22
-  and specs/020-conflict-mode-field-merge/amendment-disposition-model.md). The
-  expansion authorizes fill-empty / update-diverged writes (the Principle IV
-  `update` write semantic) to GOLD items while preserving their GOLD GUID identity
-  — "merge-not-blank on GOLD." Destructive OVERWRITE (empty-source blanking),
-  rename, and delete of GOLD items remain forbidden; GUID identity is never
-  changed. No principle removed or redefined; no phase reordered.
-Principles modified: I (FLEx Domain Fidelity) — GOLD non-destructive-merge carve-out.
+Version change: 6.0.0 → 7.0.0
+Bump rationale: MAJOR — Principle I (FLEx Domain Fidelity) redefined. The protected
+  invariant for GOLD / reserved items is changed from "GOLD-item field immutability"
+  to "integrity of the ontology CONCEPT ↔ object GUID binding." The prior wording
+  ("Reserved/GOLD categories and inflection features MUST be retained — never
+  overwritten, renamed, or deleted") mis-aimed the protection at field values and,
+  read literally, forbade the Merge/LINK rework (keyboard-studio/GramTrans issue #22,
+  based on MattGyverLee/GramTrans#22 and
+  specs/020-conflict-mode-field-merge/amendment-disposition-model.md). Corrected
+  model: GOLD items are ORDINARY items whose fields may be merged, updated, and
+  edited freely, exactly like any custom item — fields carry no special immutability.
+  The one thing that MUST be preserved is that an object's ontology GUID always
+  correctly identifies the concept the object actually realizes (a Pronoun object
+  must never carry an Adjective's GUID, or vice-versa). Enforcement: ontology/GOLD
+  GUIDs are remapped at target-object CREATION time so the concept↔GUID binding stays
+  true on the target side. This constrains the module's transfer/creation behavior,
+  not what a user edits in their own project. Because the principle's normative
+  content is redefined (not merely expanded), the versioning policy classifies this
+  as MAJOR.
+Principles modified: I (FLEx Domain Fidelity) — GOLD reframed as ordinary items;
+  protected invariant is now the concept↔object GUID binding, enforced by GUID
+  remapping at target creation.
 Scope note: this ratifies only Part 1 (real Merge, non-destructive UPDATE) of
   issue #22. Part 2 (true Overwrite — blocked on an upstream flexicon change) and
   Part 3 (LINK as identity resolution — needs a further constitution amendment) are
@@ -64,16 +73,22 @@ Culture Model (LCM) and the user's mental model in FLEx. Specifically:
 
 - GUIDs are the primary identity for LCM objects; preserve them on transfer whenever the
   target project does not already contain a colliding GUID.
-- Reserved/GOLD categories and inflection features MUST be retained — never renamed,
-  deleted, or destructively overwritten as a side effect of import, and their GOLD GUID
-  identity MUST be preserved. A GOLD-identified item MAY, however, receive a
-  **non-destructive UPDATE merge** (the `update` write semantic defined in Principle IV):
-  a non-empty source value MAY fill an empty or absent target field, or replace a
-  divergent non-empty target field, but a GOLD field MUST NEVER be blanked from an empty
-  source, and the item's GOLD GUID is never changed. This is *merge-not-blank on GOLD* —
-  it adds or corrects field data without disturbing the object's reserved identity.
-  Destructive OVERWRITE (empty-source blanking) and any rename or delete of a GOLD item
-  remain forbidden.
+- The link between an ontology CONCEPT and the OBJECT that realizes it MUST stay true.
+  An ontology (GOLD / catalog) GUID asserts "this object IS concept X" — e.g. adding
+  "Pronoun" from the catalog binds the created object to the Pronoun-concept GUID.
+  GOLD / reserved categories and inflection features are otherwise ORDINARY items:
+  their fields carry NO special immutability and MAY be merged, updated, or edited
+  exactly like any custom item (the non-destructive `update` write semantic of
+  Principle IV applies to them unchanged). What MUST be preserved is the integrity of
+  the concept↔GUID binding — an object MUST NEVER carry an ontology GUID that names a
+  different concept than the one it actually realizes (a Pronoun object must never bear
+  an Adjective's GUID, or vice-versa; rewriting an object's meaning while keeping a GUID
+  that then falsely asserts a different concept is the specific failure to prevent).
+  The enforcement mechanism is GUID remapping at target-object CREATION time: when a
+  target object is created for an ontology concept, it is bound to that concept's GUID
+  on the target side, so the binding remains valid after transfer. This constrains the
+  module's transfer/creation behavior only; it does not lock down what a user may edit
+  in their own project.
 - Writing-system identity (vernacular/analysis mappings) MUST be validated and explicitly
   mapped before any string-bearing field is written.
 - Cross-references (affix → slot, slot → template, allomorph → environment, APR → category,
@@ -328,4 +343,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 6.1.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-08
+**Version**: 7.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-08
