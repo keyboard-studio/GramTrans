@@ -149,13 +149,14 @@ def test_variant_types_dependencies_empty_for_base_type() -> None:
     assert tuple(categories.variant_types_dependencies(vt)) == ()
 
 
-def test_variant_types_plan_action_gold_skips() -> None:
+def test_variant_types_plan_action_gold_absent_transfers() -> None:
+    """v7.0.0 GOLD unlock: a GOLD variant type is an ordinary item; absent from
+    the target it transfers (PlannedAction), not a GOLD_INVIOLABLE skip."""
     gold = _Node("vt-gold", catalog_source_id="varent-gold-spelling")
     src = _Project()
     tgt = _Project()
     result = categories.variant_types_plan_action(gold, _ctx(src, tgt), WSM)
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
     assert result.category == GrammarCategory.VARIANT_TYPES
 
 
@@ -196,13 +197,14 @@ def test_complex_form_types_dependencies_is_leaf() -> None:
     assert categories.complex_form_types_dependencies(_Node("cft-x")) == ()
 
 
-def test_complex_form_types_plan_action_gold_skips() -> None:
+def test_complex_form_types_plan_action_gold_absent_transfers() -> None:
+    """v7.0.0 GOLD unlock: a GOLD complex-form type is ordinary; absent from the
+    target it transfers (PlannedAction), not a GOLD_INVIOLABLE skip."""
     gold = _Node("cft-gold", catalog_source_id="cmpd")
     result = categories.complex_form_types_plan_action(
         gold, _ctx(_Project(), _Project()), WSM
     )
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
 
 
 def test_complex_form_types_plan_action_user_defined_emits_action() -> None:
@@ -238,15 +240,17 @@ def test_semantic_domains_enumerate_recursive() -> None:
     assert {n.guid for n in items} == {"sd-parent", "sd-leaf"}
 
 
-def test_semantic_domains_plan_action_skips_gold_catalog() -> None:
-    """FR-326: every standard FW catalog entry (CatalogSourceId set)
-    skips with GOLD_INVIOLABLE."""
+def test_semantic_domains_plan_action_gold_catalog_absent_transfers() -> None:
+    """v7.0.0 GOLD unlock: a standard FW catalog entry (CatalogSourceId set) is
+    an ordinary item -- absent from the target it now transfers (PlannedAction)
+    instead of a GOLD_INVIOLABLE skip. NOTE: whether the ~1792-item SEMANTIC_DOMAINS
+    catalog should be guarded against bulk-copy is an open Half-2 design decision."""
     catalog = _Node("sd-1.2.3", catalog_source_id="SemDom-1.2.3")
     result = categories.semantic_domains_plan_action(
         catalog, _ctx(_Project(), _Project()), WSM
     )
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
+    assert result.category == GrammarCategory.SEMANTIC_DOMAINS
 
 
 def test_semantic_domains_plan_action_custom_emits_action() -> None:

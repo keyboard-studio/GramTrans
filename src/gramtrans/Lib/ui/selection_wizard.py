@@ -186,10 +186,11 @@ _CATEGORY_TOGGLES = [
 
 def _allowed_modes(cat: GrammarCategory) -> list:
     """Return the list of ConflictMode values offered for `cat` per Layer 1."""
-    if cat in _GOLD_RESERVED or cat in _CUSTOM_FIELDS_ONLY:
-        # ADD_NEW hidden, OVERWRITE/UPDATE forbidden (GOLD safety rail, 022 T005)
+    if cat in _CUSTOM_FIELDS_ONLY:
+        # CUSTOM_FIELDS remains conservative (LINK-only); not a GOLD category.
         return [ConflictMode.LINK]
-    # MULTI_INSTANCE or SINGLETON_NONDELETABLE that isn't GOLD -> all four modes
+    # Constitution v7.0.0 GOLD unlock: GOLD_RESERVED categories are ordinary
+    # items and offer the full mode set (default UPDATE via _DEFAULT_CONFLICT_MODES).
     return [ConflictMode.ADD_NEW, ConflictMode.LINK, ConflictMode.UPDATE, ConflictMode.OVERWRITE]
 
 

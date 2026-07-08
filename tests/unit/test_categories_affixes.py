@@ -317,7 +317,10 @@ def test_plan_action_can_be_called_positionally_and_by_keyword() -> None:
     assert kw.source_guid == "aff-kw"
 
 
-def test_plan_action_gold_affix_skipped() -> None:
+def test_plan_action_gold_affix_transfers() -> None:
+    """v7.0.0 GOLD unlock: a GOLD affix is an ordinary item. With its GUID
+    absent from the target the plan_action's defense-in-depth GOLD_INVIOLABLE
+    skip is gone, so it transfers like any affix (PlannedAction, GUID preserved)."""
     entry = _Entry("aff-gold", catalog_source_id="msa:catalog",
                    msas=[_MSA("m-1", pos=_POS("pos-verb"))])
     ctx = _ctx(_handle([entry]), _handle([]))
@@ -325,9 +328,10 @@ def test_plan_action_gold_affix_skipped() -> None:
 
     result = _BUNDLE["plan_action"](entry, ctx, WSMapping())
 
-    assert isinstance(result, Skip)
-    assert result.reason == SkipReason.GOLD_INVIOLABLE
+    assert isinstance(result, PlannedAction)
+    assert result.category == GrammarCategory.AFFIXES
     assert result.source_guid == "aff-gold"
+    assert result.intended_target_guid == "aff-gold"
 
 
 def test_plan_action_already_present_by_guid_skipped() -> None:

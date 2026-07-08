@@ -47,7 +47,6 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
-        ConflictMode,
         CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
@@ -59,11 +58,9 @@ if __package__:
         WSKind,
         WSMapping,
     )
-    from .protection import apply_isprotected_layer2
     from .residue import ImportResidueTag
 else:
     from models import (  # type: ignore
-        ConflictMode,
         CreateDefinitionAction,
         GrammarCategory,
         PlannedAction,
@@ -75,7 +72,6 @@ else:
         WSKind,
         WSMapping,
     )
-    from protection import apply_isprotected_layer2  # type: ignore
     from residue import ImportResidueTag  # type: ignore
 
 
@@ -196,50 +192,37 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
                              materialize_absent_gold=False):
     """Shared GOLD_RESERVED plan_action helper (spec 017 FR-E10).
 
-    Guard chain (FR-E01 to FR-E03):
-    1. _is_gold -> Skip(GOLD_INVIOLABLE) if GOLD *and present in target*.
-       When `materialize_absent_gold` is True, a GOLD item that is ABSENT from
-       the target falls through to a create instead (see below).
-    2. target_iter_fn(context.target_handle) -> scan for GUID.
-    3. If absent -> return None (caller emits PlannedAction).
-    4. apply_isprotected_layer2 -> if LINK, Skip(ALREADY_PRESENT_BY_GUID)
-       with IsProtected note.
-    5. LINK-per-WS edit detection on Name, Abbreviation, Description.
-       - Any gaps -> PlannedOverwrite(write_mode="merge").
-       - All equal -> Skip(ALREADY_PRESENT_BY_GUID).
-       - All conflicts (no gaps) -> Skip(ALREADY_PRESENT_BY_GUID) + conflict detail.
-       - Mixed gaps+conflicts -> PlannedOverwrite for gaps; conflicts in summary.
+    Constitution v7.0.0 (GOLD unlock, Half 1): GOLD / catalog / reserved items
+    are ORDINARY items. Their fields carry no special immutability and merge /
+    update exactly like any custom item. The former GOLD_INVIOLABLE field-lock
+    and the IsProtected forced-LINK downgrade are removed. The ONLY protected
+    invariant is the ontology concept<->object-GUID binding, whose enforcement
+    (GUID remapping at target-object CREATION) is deferred to "Half 2" and is
+    NOT part of this helper.
+
+    Behaviour:
+    1. target_iter_fn(context.target_handle) -> scan for the source GUID.
+       (GUID-equality lookup is binding preservation, not a lock -- KEPT.)
+    2. If absent -> return None (caller emits PlannedAction / create).
+    3. If present, compare Name/Abbreviation/Description per writing system:
+       - All slots equal -> Skip(ALREADY_PRESENT_BY_GUID).
+       - Any gap (empty in target) and/or any diverged field -> a
+         PlannedOverwrite(write_mode="merge"). The executor routes write_mode
+         "merge" through apply_update_semantic when the category's ConflictMode
+         is UPDATE (the v7.0.0 default for GOLD/reserved), which fills empty
+         target fields AND updates diverged fields from a non-empty source,
+         while never blanking a populated target from an empty source.
 
     Returns a Skip, PlannedOverwrite, or None.
     - None means "not present in target" -> caller emits PlannedAction.
 
-    materialize_absent_gold (2026-07-06 decision, gram_categories/POS only):
-        GOLD items are canonical and normally already in the target, so we never
-        edit/overwrite them (GOLD_INVIOLABLE). But a required GOLD *dependency*
-        that is ABSENT (e.g. a GOLD POS like Numeral/Demonstrative referenced by
-        an affix MSA that the target lacks) must be created, or the reference is
-        stranded. When True, an absent GOLD item falls through to a create with
-        its canonical GUID + CatalogSourceId. Creating a canonical item is not
-        editing one, so Principle I (never mutate GOLD) still holds. Default
-        False preserves always-skip for every other GOLD_RESERVED category
-        (notably semantic_domains, whose 1792-item GOLD list must NOT bulk-copy).
+    materialize_absent_gold: retained for backward compatibility with the seven
+        plan_action callbacks that pass it. Under v7.0.0 an absent item (GOLD or
+        not) always falls through to a create (return None), so this flag is now
+        a no-op. (The SEMANTIC_DOMAINS ~1792-item catalog bulk-copy-vs-guard
+        question is an open Half-2 design decision.)
     """
     src_guid = _guid_str_from(piece)
-    if _is_gold(piece):
-        if materialize_absent_gold:
-            target_iter = target_iter_fn(context.target_handle)
-            if _find_target_obj_by_guid(target_iter, src_guid) is None:
-                return None  # absent GOLD dependency -> caller creates it
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Item is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
 
     target_iter = target_iter_fn(context.target_handle)
     tgt_obj = _find_target_obj_by_guid(target_iter, src_guid)
@@ -247,20 +230,7 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
     if tgt_obj is None:
         return None  # absent -> caller emits PlannedAction
 
-    # IsProtected guard (FR-E02): downgrade to LINK = link-only, no edit.
-    mode = apply_isprotected_layer2(category, tgt_obj, ConflictMode.OVERWRITE)
-    if mode == ConflictMode.LINK:
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=(
-                f"GUID {src_guid[:8]}... present in target; "
-                "edit copy suppressed by IsProtected=True."
-            ),
-        )
-
-    # LINK-per-WS edit detection (FR-E04 to FR-E07).
+    # Per-WS edit detection (FR-E04 to FR-E07).
     # Enumerate writing systems from source side.
     source = context.source_handle
     ws_list = []
@@ -293,22 +263,8 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
         for ws_handle, src_text, tgt_text in conflicts:
             all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
 
-    if not all_gaps:
-        # No empty-in-target slots. Either all equal or all conflicts.
-        if all_conflicts:
-            conflict_lines = "; ".join(
-                f"{f}@ws={wh}: src={s!r} vs tgt={t!r}"
-                for f, wh, s, t in all_conflicts
-            )
-            return Skip(
-                category=category,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=(
-                    f"GUID {src_guid[:8]}... present; per-WS conflicts (not overwritten): "
-                    f"{conflict_lines}"
-                ),
-            )
+    if not all_gaps and not all_conflicts:
+        # Fully identical across every WS slot -> nothing to write.
         return Skip(
             category=category,
             source_guid=src_guid,
@@ -316,19 +272,25 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn,
             detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
         )
 
-    # Gaps exist -> emit merge action.
-    gap_summary = ", ".join(
-        f"{f}@ws={wh}: +{s!r}" for f, wh, s in all_gaps
-    )
-    conflict_note = ""
+    # Any divergence -> non-destructive UPDATE merge (constitution v7.0.0).
+    # Both empty-target gaps AND diverged (both-non-empty-differ) fields are
+    # written by the executor's apply_update_semantic pass. An empty source
+    # never blanks a populated target field.
+    summary_parts = []
+    if all_gaps:
+        gap_summary = ", ".join(
+            f"{f}@ws={wh}: +{s!r}" for f, wh, s in all_gaps
+        )
+        summary_parts.append(f"fill gaps {gap_summary}")
     if all_conflicts:
-        conflict_note = " | conflicts (not written): " + "; ".join(
-            f"{f}@ws={wh}: src={s!r} vs tgt={t!r}"
+        diverged_summary = "; ".join(
+            f"{f}@ws={wh}: {t!r} -> {s!r}"
             for f, wh, s, t in all_conflicts
         )
+        summary_parts.append(f"update diverged {diverged_summary}")
     summary = (
-        f"Edit-copy GUID {src_guid[:8]}... [{category.value}]: "
-        f"fill gaps {gap_summary}{conflict_note}"
+        f"Merge GUID {src_guid[:8]}... [{category.value}]: "
+        + " | ".join(summary_parts)
     )
     return PlannedOverwrite(
         category=category,
@@ -2336,18 +2298,8 @@ def adhoc_compound_rules_required_writing_systems(piece):
 
 def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
     """GUID-first Skip-if-present / PlannedAction for each rule subclass."""
-    # FR-003 defense-in-depth: skip GOLD pieces even if enumerate missed them.
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.ADHOC_COMPOUND_RULES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Item is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
+    # Constitution v7.0.0: GOLD items are ordinary items and transfer normally;
+    # the former GOLD_INVIOLABLE defense-in-depth skip is removed.
     # _phonology_simple_plan does GUID-first skip/add against a target iterator;
     # for rules the target collection is CompoundRulesOS + AdhocCoProhibitionsOC.
     # We reuse the existing helper by providing a synthetic ops_attr; however
@@ -3410,17 +3362,7 @@ def affixes_plan_action(piece, context, ws_mapping):
     """One PlannedAction per affix LexEntry. Side effect (FR-333/FR-340):
     stash MSA->slot and EntryRef component bindings into the plan for the
     deferred 17.1 sub-pass + post-pass A."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.AFFIXES,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Item is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
+    # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
     if _target_has_guid(_iter_lex_entries(context.target_handle), src_guid):
@@ -3803,17 +3745,7 @@ def stems_required_writing_systems(piece):
 def stems_plan_action(piece, context, ws_mapping):
     """One PlannedAction per stem entry. Side effect: same lexentry_ref_bindings
     stash as AFFIXES for any EntryRefs on the stem entry (FR-340)."""
-    if _is_gold(piece):
-        return Skip(
-            category=GrammarCategory.STEMS,
-            source_guid=_guid_str_from(piece),
-            reason=SkipReason.GOLD_INVIOLABLE,
-            detail=(
-                f"Item is a GOLD object (CatalogSourceId="
-                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
-                "not transferred per FR-022 / Principle I."
-            ),
-        )
+    # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
     if _target_has_guid(_iter_lex_entries(context.target_handle), src_guid):

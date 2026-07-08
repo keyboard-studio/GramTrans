@@ -1,4 +1,25 @@
-"""T035: FR-022 GOLD inviolability — integration scaffold against Ejagham Mini -> Ejagham Full GT-Test."""
+"""GOLD invariant integration scaffold (Ejagham Mini -> Ejagham Full GT-Test).
+
+Constitution v7.0.0 (GOLD unlock) RETIRED the old byte-identical rule that this
+module used to encode. GOLD / catalog / reserved objects are now ORDINARY items:
+their fields (Name, Abbreviation, Description, LiftResidue, ...) MAY change and
+merge/update like any custom item. The former assertion -- that every GOLD object
+is byte-for-byte identical before and after a Move -- is therefore WRONG under
+v7.0.0 and has been removed.
+
+The single protected invariant is now the ontology concept<->object-GUID binding
+(a closest-match assertion): a created target object must be bound to its
+concept's canonical GUID and must never carry a GUID naming a non-matching
+concept. Enforcing that binding via GUID remapping at target-object CREATION is
+"GOLD unlock Half 2" and is NOT part of the Half 1 field-unlock. Until Half 2
+lands there is no creation-time binding machinery to exercise here, so this
+scaffold is skipped rather than asserting either the retired byte-identical rule
+or an as-yet-unbuilt invariant.
+
+See the source rework https://github.com/MattGyverLee/GramTrans/issues/22
+(Parts 2 & 3) and the "GOLD unlock Half 2" tracking issue for the binding-
+enforcement design.
+"""
 from __future__ import annotations
 
 import pytest
@@ -9,65 +30,20 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_gold_objects_byte_identical_before_and_after_move() -> None:
-    """FR-022: every GOLD object in the target shows zero modifications byte-for-byte after Move.
+def test_gold_concept_guid_binding_preserved_after_move() -> None:
+    """NEW invariant (constitution v7.0.0): after a Move, each GOLD/ontology
+    object on the target must still be bound to its concept's canonical GUID
+    (closest-match). GOLD *fields* MAY differ before/after -- only the
+    concept<->GUID binding is protected.
 
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini
-    - Ejagham Full GT-Test freshly restored from backups/Ejagham Full.fwbackup
-      (the restored target must contain at least some GOLD objects so the test
-      is non-vacuous; confirm via FLEx Grammar > Gram. Categories before running)
-
-    Asserts: a pre-run snapshot of all GOLD-tagged objects in the target
-    (serialised field-by-field) is compared byte-for-byte against a post-run
-    snapshot taken immediately after execute_move() returns.  Any difference —
-    including Description field appends, GUID field changes, or LiftResidue
-    mutations — is a FR-022 violation.  The module must detect GOLD status
-    during preview and emit a Skip(reason=GOLD_VIOLATION) rather than writing.
-
-    GOLD = objects in the LangProject.PartsOfSpeech hierarchy that carry the
-    'gold' annotation per the GOLD Community of Practice ontology import.
-    Identification method: flexicon object attribute or Description field
-    containing the GOLD marker string (per research.md R8).
+    Deferred: the creation-time GUID-remapping/binding step that this test would
+    assert is "GOLD unlock Half 2" and is not yet implemented. The old
+    byte-identical assertion is retired under v7.0.0 and must NOT be reinstated.
     """
     pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
+        "GOLD unlock Half 2 not yet implemented: the concept<->GUID binding is "
+        "enforced by GUID remapping at target-object creation, which does not "
+        "exist yet. The retired v6.x byte-identical GOLD rule is intentionally "
+        "not asserted here (constitution v7.0.0). Track: GOLD unlock Half 2 / "
+        "https://github.com/MattGyverLee/GramTrans/issues/22 (Parts 2 & 3)."
     )
-
-    if False:
-        from gramtrans.Lib.api import (  # noqa: F401
-            bind_target,
-            compute_preview,
-            execute_move,
-            initialize_run,
-        )
-        from gramtrans.Lib.models import GrammarCategory  # noqa: F401
-
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        bind_target(ctx, target_name="Ejagham Full GT-Test")
-
-        # Snapshot only GOLD objects before the run.
-        pre_gold_snapshot: dict = ctx.target_project.snapshot_gold_objects()
-
-        # Non-vacuous guard: the test is meaningless if there are no GOLD objects.
-        assert pre_gold_snapshot, (
-            "FR-022: no GOLD objects found in target — restore a target that "
-            "contains GOLD ontology imports before running this test."
-        )
-
-        preview_result = compute_preview(ctx, categories=list(GrammarCategory), include_closure=True)
-        execute_move(ctx, plan=preview_result.plan)
-
-        post_gold_snapshot: dict = ctx.target_project.snapshot_gold_objects()
-
-        for guid, pre_repr in pre_gold_snapshot.items():
-            assert guid in post_gold_snapshot, (
-                f"FR-022: GOLD object {guid} vanished after Move"
-            )
-            assert post_gold_snapshot[guid] == pre_repr, (
-                f"FR-022 violated: GOLD object {guid} was modified during Move.\n"
-                f"  before: {pre_repr!r}\n"
-                f"  after:  {post_gold_snapshot[guid]!r}"
-            )

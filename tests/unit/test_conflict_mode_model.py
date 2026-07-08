@@ -5,10 +5,10 @@ Covers:
 - category_conflict_modes field on Selection (back-compat)
 - Selection.conflict_mode_for() Layer-1 defaults
 - _DEFAULT_CONFLICT_MODES Layer-1 table correctness
-- Layer-2 per-item IsProtected gating (protected -> LINK; non-protected -> full set;
-  failed-cast -> permissive)
+- Layer-2 per-item IsProtected gating (v7.0.0 GOLD unlock: no longer downgrades
+  to LINK -- keeps current_mode; failed-cast -> permissive)
 - apply_isprotected_layer2 helper
-- Backward-compat shim: persisted "merge" -> LINK (022 T004)
+- Backward-compat shim: persisted "merge" -> UPDATE (022 T004; v7.0.0)
 - Confirm-on-Move gate: excluded_lossy_count() > 0 triggers confirmation
 """
 from __future__ import annotations
@@ -102,8 +102,8 @@ class TestSelectionConflictModesBackCompat:
 
     def test_conflict_mode_for_falls_back_to_layer1_default(self):
         sel = Selection()
-        # POS is GOLD_RESERVED -> default LINK (022: was MERGE)
-        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK
+        # POS is GOLD_RESERVED -> default UPDATE (v7.0.0 GOLD unlock; was LINK)
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.UPDATE
 
     def test_conflict_mode_for_explicit_overrides_default(self):
         sel = Selection(
@@ -160,8 +160,9 @@ class TestLayer1DefaultTable:
                 f"{_DEFAULT_CONFLICT_MODES[cat]}"
             )
 
-    def test_gold_reserved_default_link(self):
-        """022: GOLD_RESERVED default is LINK (was MERGE)."""
+    def test_gold_reserved_default_update(self):
+        """v7.0.0 GOLD unlock: GOLD_RESERVED default is UPDATE (was LINK).
+        GOLD/reserved items are ordinary items and merge non-destructively."""
         gold = [
             GrammarCategory.GRAM_CATEGORIES,
             GrammarCategory.INFLECTION_FEATURES,
@@ -172,8 +173,8 @@ class TestLayer1DefaultTable:
             GrammarCategory.SEMANTIC_DOMAINS,
         ]
         for cat in gold:
-            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.LINK, (
-                f"{cat} should be LINK (GOLD_RESERVED, 022) but got "
+            assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (
+                f"{cat} should be UPDATE (GOLD unlock v7.0.0) but got "
                 f"{_DEFAULT_CONFLICT_MODES[cat]}"
             )
 
@@ -193,14 +194,21 @@ class TestLayer1DefaultTable:
 class TestAllowedModesLayer1:
     """_allowed_modes is in the wizard (Qt) layer; imported lazily here."""
 
-    def test_gold_reserved_only_link_offered(self):
-        """022: GOLD_RESERVED offers only LINK (was MERGE)."""
+    def test_gold_reserved_offers_all_four(self):
+        """v7.0.0 GOLD unlock: GOLD_RESERVED offers the full mode set
+        (ADD_NEW, LINK, UPDATE, OVERWRITE), not just LINK."""
         _allowed_modes, _GOLD_RESERVED = _get_wizard_helpers()
         for cat in _GOLD_RESERVED:
             modes = _allowed_modes(cat)
-            assert modes == [ConflictMode.LINK], (
-                f"GOLD_RESERVED {cat} should offer only LINK, got {modes}"
+            assert modes == [
+                ConflictMode.ADD_NEW,
+                ConflictMode.LINK,
+                ConflictMode.UPDATE,
+                ConflictMode.OVERWRITE,
+            ], (
+                f"GOLD_RESERVED {cat} should offer all four modes, got {modes}"
             )
+            assert ConflictMode.UPDATE in modes
 
     def test_multi_instance_offers_all_four(self):
         """022: MULTI_INSTANCE offers ADD_NEW, LINK, UPDATE, OVERWRITE."""
@@ -270,13 +278,14 @@ class TestIsProtectedHelper:
 
 
 class TestApplyIsProtectedLayer2:
-    def test_protected_item_downgrades_to_link(self):
-        """022: A protected item -> LINK (was MERGE) regardless of category default."""
+    def test_protected_item_keeps_current_mode(self):
+        """v7.0.0 GOLD unlock: a protected item is ordinary -- Layer-2 NO LONGER
+        downgrades it to LINK; current_mode is kept."""
         obj = _FakeLCMObj(True)
         result = apply_isprotected_layer2(
             GrammarCategory.AFFIXES, obj, ConflictMode.ADD_NEW
         )
-        assert result == ConflictMode.LINK
+        assert result == ConflictMode.ADD_NEW
 
     def test_non_protected_item_keeps_current_mode(self):
         """Non-protected item -> current_mode unchanged."""
@@ -301,21 +310,23 @@ class TestApplyIsProtectedLayer2:
             result = apply_isprotected_layer2(GrammarCategory.AFFIXES, obj, mode)
             assert result == mode
 
-    def test_protected_overrides_overwrite(self):
-        """Protected + OVERWRITE -> downgraded to LINK (022: was MERGE)."""
+    def test_protected_keeps_overwrite(self):
+        """v7.0.0 GOLD unlock: Protected + OVERWRITE is no longer downgraded;
+        OVERWRITE is kept (the item is ordinary)."""
         obj = _FakeLCMObj(True)
         result = apply_isprotected_layer2(
             GrammarCategory.POS, obj, ConflictMode.OVERWRITE
         )
-        assert result == ConflictMode.LINK
+        assert result == ConflictMode.OVERWRITE
 
-    def test_protected_overrides_update(self):
-        """Protected + UPDATE -> downgraded to LINK (GOLD safety rail, 022 T013)."""
+    def test_protected_keeps_update(self):
+        """v7.0.0 GOLD unlock: Protected + UPDATE is no longer downgraded to
+        LINK; UPDATE (non-destructive merge) is kept."""
         obj = _FakeLCMObj(True)
         result = apply_isprotected_layer2(
             GrammarCategory.POS, obj, ConflictMode.UPDATE
         )
-        assert result == ConflictMode.LINK
+        assert result == ConflictMode.UPDATE
 
 
 # ===========================================================================
@@ -368,20 +379,21 @@ class TestConfirmOnMoveGateConflictMode:
 
 
 # ===========================================================================
-# 022 T004: Backward-compat shim -- persisted "merge" -> LINK
+# 022 T004: Backward-compat shim -- persisted "merge" -> UPDATE (v7.0.0)
 # ===========================================================================
 
 class TestBackwardCompatShim:
-    """conflict_mode_for MUST remap the legacy "merge" string to LINK (T004)."""
+    """conflict_mode_for MUST remap the legacy "merge" string. Under
+    constitution v7.0.0 the "merge" semantic is the non-destructive UPDATE."""
 
-    def test_shim_string_merge_returns_link(self):
-        """A stored string "merge" (old enum value) resolves to ConflictMode.LINK."""
+    def test_shim_string_merge_returns_update(self):
+        """A stored string "merge" (old enum value) resolves to ConflictMode.UPDATE."""
         sel = Selection(
             category_conflict_modes={GrammarCategory.POS: "merge"}  # type: ignore[dict-item]
         )
         result = sel.conflict_mode_for(GrammarCategory.POS)
-        assert result == ConflictMode.LINK, (
-            f"Backward-compat shim must map 'merge' -> LINK, got {result!r}"
+        assert result == ConflictMode.UPDATE, (
+            f"Backward-compat shim must map 'merge' -> UPDATE, got {result!r}"
         )
 
     def test_shim_does_not_affect_link(self):
@@ -424,8 +436,9 @@ class TestUpdateMemberExists:
         assert sel.conflict_mode_for(GrammarCategory.STEMS) == ConflictMode.UPDATE
         assert sel.conflict_mode_for(GrammarCategory.AFFIXES) == ConflictMode.UPDATE
 
-    def test_gold_default_is_link_not_update(self):
-        """022 Ruling: GOLD_RESERVED categories default to LINK (not UPDATE)."""
+    def test_gold_default_is_update(self):
+        """v7.0.0 GOLD unlock: GOLD_RESERVED categories default to UPDATE
+        (ordinary-item non-destructive merge), not LINK."""
         sel = Selection()
-        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.LINK
-        assert sel.conflict_mode_for(GrammarCategory.GRAM_CATEGORIES) == ConflictMode.LINK
+        assert sel.conflict_mode_for(GrammarCategory.POS) == ConflictMode.UPDATE
+        assert sel.conflict_mode_for(GrammarCategory.GRAM_CATEGORIES) == ConflictMode.UPDATE
