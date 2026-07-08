@@ -12,11 +12,13 @@ Bump rationale: MAJOR — Principle I (FLEx Domain Fidelity) redefined. The prot
   specs/020-conflict-mode-field-merge/amendment-disposition-model.md). Corrected
   model: GOLD items are ORDINARY items whose fields may be merged, updated, and
   edited freely, exactly like any custom item — fields carry no special immutability.
-  The one thing that MUST be preserved is that an object's ontology GUID always
-  correctly identifies the concept the object actually realizes (a Pronoun object
-  must never carry an Adjective's GUID, or vice-versa). Enforcement: ontology/GOLD
-  GUIDs are remapped at target-object CREATION time so the concept↔GUID binding stays
-  true on the target side. This constrains the module's transfer/creation behavior,
+  The one thing that MUST be preserved is that an object's ontology GUID always names
+  the CLOSEST ontological match to what the object realizes — a nearest-concept mapping
+  (closely related to / subset of / superset of / closest equivalent), not a strict
+  is-a identity. The failure to prevent is a GUID naming a concept that is not even a
+  reasonable match (a Pronoun object must never carry an Adjective's GUID, or
+  vice-versa). Enforcement: ontology/GOLD GUIDs are remapped at target-object CREATION
+  time so this concept↔GUID mapping stays true on the target side. This constrains the module's transfer/creation behavior,
   not what a user edits in their own project. Because the principle's normative
   content is redefined (not merely expanded), the versioning policy classifies this
   as MAJOR.
@@ -74,21 +76,26 @@ Culture Model (LCM) and the user's mental model in FLEx. Specifically:
 - GUIDs are the primary identity for LCM objects; preserve them on transfer whenever the
   target project does not already contain a colliding GUID.
 - The link between an ontology CONCEPT and the OBJECT that realizes it MUST stay true.
-  An ontology (GOLD / catalog) GUID asserts "this object IS concept X" — e.g. adding
-  "Pronoun" from the catalog binds the created object to the Pronoun-concept GUID.
-  GOLD / reserved categories and inflection features are otherwise ORDINARY items:
-  their fields carry NO special immutability and MAY be merged, updated, or edited
-  exactly like any custom item (the non-destructive `update` write semantic of
-  Principle IV applies to them unchanged). What MUST be preserved is the integrity of
-  the concept↔GUID binding — an object MUST NEVER carry an ontology GUID that names a
-  different concept than the one it actually realizes (a Pronoun object must never bear
-  an Adjective's GUID, or vice-versa; rewriting an object's meaning while keeping a GUID
-  that then falsely asserts a different concept is the specific failure to prevent).
-  The enforcement mechanism is GUID remapping at target-object CREATION time: when a
-  target object is created for an ontology concept, it is bound to that concept's GUID
-  on the target side, so the binding remains valid after transfer. This constrains the
-  module's transfer/creation behavior only; it does not lock down what a user may edit
-  in their own project.
+  An ontology (GOLD / catalog) GUID asserts that the object is the CLOSEST ontological
+  match to concept X — i.e. that the object is closely related to, a subset of, a
+  superset of, or the closest equivalent to that concept. It is a nearest-concept
+  mapping, NOT a strict is-a identity. (E.g. adding "Pronoun" from the catalog binds
+  the created object to the Pronoun-concept GUID as its closest match.) GOLD / reserved
+  categories and inflection features are otherwise ORDINARY items: their fields carry NO
+  special immutability and MAY be merged, updated, or edited exactly like any custom
+  item (the non-destructive `update` write semantic of Principle IV applies to them
+  unchanged). What MUST be preserved is the truthfulness/integrity of that mapping — an
+  object MUST NEVER carry an ontology GUID naming a concept that is not even a reasonable
+  match (not closely related, not a subset/superset, not the closest equivalent) for
+  what the object actually realizes. A Pronoun object bearing an Adjective's GUID (or
+  vice-versa) is the specific failure to prevent, because Adjective is not a close /
+  subset / superset / closest-equivalent relationship to Pronoun; rewriting an object's
+  meaning while keeping a GUID that then names an unrelated concept falsifies the
+  mapping. The enforcement mechanism is GUID remapping at target-object CREATION time:
+  when a target object is created for an ontology concept, it is bound to that concept's
+  GUID on the target side, so the mapping remains valid after transfer. This constrains
+  the module's transfer/creation behavior only; it does not lock down what a user may
+  edit in their own project.
 - Writing-system identity (vernacular/analysis mappings) MUST be validated and explicitly
   mapped before any string-bearing field is written.
 - Cross-references (affix → slot, slot → template, allomorph → environment, APR → category,
