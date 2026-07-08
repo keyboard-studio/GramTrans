@@ -1,25 +1,38 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 5.1.0 → 6.0.0
-Bump rationale: MAJOR — Principle IV mode vocabulary redefined. ConflictMode
-  {ADD_NEW, MERGE, OVERWRITE} → mode {ADD_NEW, LINK, UPDATE, OVERWRITE} with a
-  computed per-item disposition {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Adds the
-  non-destructive UPDATE write semantic and field-identity-based true-SKIP.
-  "MERGE" renamed to "LINK" (it never merged — it linked). Data migration: reader
-  shim aliases persisted "merge" → "link" for >=1 release; no value maps to UPDATE.
-Principles modified: IV (Phased Merge Discipline) — mode vocabulary + dispositions.
+Version change: 6.0.0 → 6.1.0
+Bump rationale: MINOR — Principle I (FLEx Domain Fidelity) materially expanded to
+  permit a NON-DESTRUCTIVE UPDATE merge on GOLD-identified items. Previously GOLD
+  categories / inflection features could never be modified as a side effect of
+  import ("never overwritten, renamed, or deleted"), which blocked the Merge/LINK
+  rework (keyboard-studio/GramTrans issue #22, based on MattGyverLee/GramTrans#22
+  and specs/020-conflict-mode-field-merge/amendment-disposition-model.md). The
+  expansion authorizes fill-empty / update-diverged writes (the Principle IV
+  `update` write semantic) to GOLD items while preserving their GOLD GUID identity
+  — "merge-not-blank on GOLD." Destructive OVERWRITE (empty-source blanking),
+  rename, and delete of GOLD items remain forbidden; GUID identity is never
+  changed. No principle removed or redefined; no phase reordered.
+Principles modified: I (FLEx Domain Fidelity) — GOLD non-destructive-merge carve-out.
+Scope note: this ratifies only Part 1 (real Merge, non-destructive UPDATE) of
+  issue #22. Part 2 (true Overwrite — blocked on an upstream flexicon change) and
+  Part 3 (LINK as identity resolution — needs a further constitution amendment) are
+  explicitly NOT covered by this amendment.
 Templates requiring updates:
-  [WARN] models.py ConflictMode enum + _DEFAULT_CONFLICT_MODES + allowed_modes_for
-  [WARN] conflict.py write-semantic dispatch (add UPDATE policy; true-SKIP downgrade)
-  [WARN] protection.py apply_isprotected_layer2 (LINK is the safe downgrade target)
-  [WARN] specs referencing ConflictMode.MERGE (008/009/010/016/018/019/020/021)
-  [WARN] residue tag reader (merge= alias shim)
+  [OK]   conflict.py apply_update_semantic / compute_disposition (Part 1 real Merge — done)
+  [WARN] Part 2 (true Overwrite) — deferred, blocked on upstream flexicon change
+  [WARN] Part 3 (LINK as identity resolution) — deferred, needs a separate amendment
 
 ---
 
 Prior Sync Impact Reports
 -------------------------
+v5.1.0 → v6.0.0: MAJOR — Principle IV mode vocabulary redefined. ConflictMode
+  {ADD_NEW, MERGE, OVERWRITE} → mode {ADD_NEW, LINK, UPDATE, OVERWRITE} with a
+  computed per-item disposition {IGNORE, SKIP, ADD, UPDATE, OVERWRITE}. Added the
+  non-destructive UPDATE write semantic and field-identity-based true-SKIP; "MERGE"
+  renamed to "LINK" (it never merged — it linked). Reader shim aliases persisted
+  "merge" → "link" for >=1 release; no value maps to UPDATE. Last Amended 2026-07-05.
 v4.0.0 → v5.1.0: MAJOR (5.0.0) — Principle II redefined. v4.0.0's mandatory
   flavor-adapter contract removed; every Phase 0/1/2 module file imports flexicon
   directly. LibLCM-direct port is a separate fork project. MINOR (5.1.0) — flexicon
@@ -51,8 +64,16 @@ Culture Model (LCM) and the user's mental model in FLEx. Specifically:
 
 - GUIDs are the primary identity for LCM objects; preserve them on transfer whenever the
   target project does not already contain a colliding GUID.
-- Reserved/GOLD categories and inflection features MUST be retained — never overwritten,
-  renamed, or deleted as a side effect of import.
+- Reserved/GOLD categories and inflection features MUST be retained — never renamed,
+  deleted, or destructively overwritten as a side effect of import, and their GOLD GUID
+  identity MUST be preserved. A GOLD-identified item MAY, however, receive a
+  **non-destructive UPDATE merge** (the `update` write semantic defined in Principle IV):
+  a non-empty source value MAY fill an empty or absent target field, or replace a
+  divergent non-empty target field, but a GOLD field MUST NEVER be blanked from an empty
+  source, and the item's GOLD GUID is never changed. This is *merge-not-blank on GOLD* —
+  it adds or corrects field data without disturbing the object's reserved identity.
+  Destructive OVERWRITE (empty-source blanking) and any rename or delete of a GOLD item
+  remain forbidden.
 - Writing-system identity (vernacular/analysis mappings) MUST be validated and explicitly
   mapped before any string-bearing field is written.
 - Cross-references (affix → slot, slot → template, allomorph → environment, APR → category,
@@ -307,4 +328,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 6.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-05
+**Version**: 6.1.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-08
